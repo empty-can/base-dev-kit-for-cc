@@ -1,0 +1,37 @@
+# Claude Code: 作業一時ファイル（セッション管理用）
+.claude/work/
+
+# Claude Code: ローカル個人設定（チームで共有しない）
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Claude Code: ローカル専用エージェントメモリ（memory: local スコープの sub-agent 用）
+.claude/agent-memory-local/
+
+# 環境変数・機密情報
+.env
+.env.*
+!.env.example
+secrets/
+
+# 言語別・環境別（新規プロジェクト適用時は必要に応じて調整）
+# 本ベースキットは言語中立を原則とするが、一般的なエントリを同梱
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+vendor/
+dist/
+build/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
