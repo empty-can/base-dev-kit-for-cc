@@ -1,6 +1,6 @@
 # Skill 作成依頼書（依頼者記入欄）
 
-> **使い方**: 各セクションを埋めて Claude Code に渡してください。  
+> **本テンプレートの使い方**: 各セクションを埋めて Claude Code に渡してください。  
 > Claude Code からの質問・提案は `skill-cc-response.md` に記入されます。
 
 ---
