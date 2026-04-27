@@ -76,10 +76,12 @@
 
 ```
 .claude/
-├── agents/       (空または最小限)
-├── commands/     (空または最小限)
+├── agents/       （ディレクトリは存在確認済み・内容は GitHub Web UI では個別確認が必要）
+├── commands/     （同上）
 └── settings.json (231 bytes)
 ```
+
+> **補足**: git は空ディレクトリを管理しないため、ディレクトリが存在する場合は `.gitkeep` または実ファイルが配置されているはず。「空」という表記は不正確だった。GitHub API での個別確認が必要（調査時点では未実施）。
 
 **settings.json の内容**:
 ```json

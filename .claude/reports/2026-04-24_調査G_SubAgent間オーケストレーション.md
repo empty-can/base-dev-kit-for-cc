@@ -7,7 +7,7 @@
 
 ## 🔑 決定的な発見
 
-公式ドキュメント（Sub-agents ページ 714 行目）に明記：
+公式ドキュメント（`https://code.claude.com/docs/en/sub-agents`）に明記：
 
 > **「Subagents cannot spawn other subagents」**
 >
@@ -36,13 +36,13 @@
 ## C. Agent Teams 機能の詳細
 
 - **ステータス**: 実験的（Experimental）
-- **有効化**: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`
-- **制限**:
-  - Session resumption with in-process teammates 非サポート
-  - Task status lag あり
-  - Shutdown が遅い
-  - One team per session
-  - No nested teams
+- **有効化**: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`（または settings.json の `env` プロパティ）
+- **制限**（出典: `https://code.claude.com/docs/en/agent-teams#limitations`）:
+  - No session resumption with in-process teammates（`/resume`・`/rewind` でチームメイトが復元されない）
+  - Task status can lag（タスク完了マーク漏れにより依存タスクがブロックされる場合あり）
+  - Shutdown can be slow（現在のリクエスト・ツール呼び出しを完了してからシャットダウン）
+  - One team per session（リードは同時に1チームのみ管理可能）
+  - No nested teams（チームメイトが自分のチームやチームメイトを spawn 不可）
 
 **結論**: 実験段階のため **ベースキットには含めない**（CLAUDE.md で参考情報として言及する程度）
 
