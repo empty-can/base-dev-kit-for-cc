@@ -4,6 +4,9 @@
 # Claude Code: 個人作業ログ・調査レポート（セッション成果物）
 .claude/reports/
 
+# Claude Code: 進行中の作業ファイル（作業完了後に削除・将来的にGit管理化の可能性あり）
+.claude/workspace/
+
 # Claude Code: ローカル個人設定（チームで共有しない）
 .claude/settings.local.json
 CLAUDE.local.md
