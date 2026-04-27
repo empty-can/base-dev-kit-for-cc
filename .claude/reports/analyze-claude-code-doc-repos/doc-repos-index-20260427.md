@@ -169,13 +169,59 @@ src/
 
 ## Memory MCP への登録サマリー
 
-本走査の結果、以下をナレッジグラフに登録済み:
+本走査の結果（初回: 2026-04-27 / cloudnative-co 追加: 2026-04-28）、以下をナレッジグラフに登録済み:
 
 | エンティティタイプ | 登録数 | 主なエンティティ名 |
 |-----------------|--------|-----------------|
 | `MCPServer` | 7 | mcp-server-fetch, mcp-server-filesystem, mcp-server-git, mcp-server-memory, mcp-server-sequentialthinking, mcp-server-time, mcp-server-everything |
 | `Announcement` | 3 | announcement-sse-deprecation, announcement-session-changes, announcement-auth-metadata-deprecation |
 | `ClaudePlugin` | 22 | plugin-dev, mcp-server-dev, agent-sdk-dev, hookify, ralph-loop, commit-commands, code-review, pr-review-toolkit, feature-dev, claude-code-setup, claude-md-management, lsp-plugins-bundle, explanatory-output-style, learning-output-style, frontend-design, math-olympiad, playground, skill-creator, session-report, external-plugin-discord, external-plugin-telegram, external-plugin-imessage, external-plugin-greptile, external-plugin-fakechat |
+| `StarterKit` | 1 | cloudnative-co-claude-code-starter-kit |
+
+---
+
+## 4. cloudnative-co/claude-code-starter-kit
+
+**概要**: Cloud Native Inc. CEO による Claude Code 環境構築ワンコマンドキット（公式 Anthropic 製品ではない。ユーザー企業の実践的実装）
+
+### ファイル構成
+
+```
+README.md / README.en.md  — 英語・日本語ドキュメント
+install.sh / install.ps1   — ワンライナーインストール (macOS / Windows WSL2)
+setup.sh                   — メインセットアップウィザード
+agents/                    — 9エージェント定義
+rules/                     — 10ルールファイル
+commands/                  — 17スラッシュコマンド
+skills/                    — 12スキルモジュール
+features/                  — オプション機能モジュール（フックJSON付き）
+memory/                    — ベストプラクティス参照ドキュメント（5ファイル）
+config/                    — settings.json/permissions.json テンプレート
+profiles/                  — minimal / standard / full プロファイル定義
+i18n/                      — 英語・日本語テンプレート
+```
+
+### 注目すべき機能
+
+| 機能 | 概要 | 公式裏取り |
+|------|------|-----------|
+| **Pre-compact Auto-commit** | `PreCompact` フック発火時に `git add -A && git commit -m 'checkpoint: ...'` を自動実行。`/compact` 前に成果物を確実に保存 | `PreCompact` フック: ✅ 公式確認済み |
+| **Safety Net フック** | `PreToolUse` フックで `git reset --hard` / `rm -rf` / `git push --force` 等の破壊的コマンドをブロック（`cc-safety-net` npm パッケージ使用） | `PreToolUse` フック: ✅ 公式確認済み |
+| **Memory Persistence** | `PreCompact` / `PostCompact` / `SessionStart` / `Stop` フックでセッション状態を保存・復元 | 4フックすべて: ✅ 公式確認済み |
+| **`/checkpoint` コマンド** | 名前付きで `git stash/commit` + `.claude/checkpoints.log` に記録。`create / verify / list` サブコマンド | 公式 `/checkpoint` ではなく cloudnative-co 独自実装 |
+| **`/handover` コマンド** | 現 git 状態・完了作業・残タスク・コンテキストファイルを HANDOVER.md に出力。`claude -r <name>` での再開を前提 | `/rename` `-n` `--resume -r`: ✅ 公式確認済み |
+| **strategic-compact スキル** | 探索後/実装前・マイルストーン後・コンテキスト切替前を最適コンパクションタイミングとして提案 | — |
+| **Doc Size Guard** | CLAUDE.md / AGENTS.md が推奨行数を超えると警告（Full プロファイルのみ） | — |
+| **スクリーンショット貼り付け** | macOS: `Cmd+Shift+Ctrl+4` → `Ctrl+V`、Windows: `Win+Shift+S` → `Ctrl+V` | `[未確認]`: 公式ドキュメントへの明示的記載なし |
+
+### memory/ ドキュメント概要
+
+| ファイル | 内容 |
+|---------|------|
+| `best-practices.md` | CLAUDE.md <150行推奨（公式は 200行。cloudnative-co はより保守的）、コミット戦略、サブエージェント規則 |
+| `context-engineering.md` | CLAUDE.md 祖先ロード（即時）/ 子孫ロード（遅延）の仕組み、フックイベント一覧 |
+| `architecture.md` | Command → Agent → Skills 三層構造、RPI ワークフロー |
+| `settings-reference.md` | モデルエイリアス、環境変数、パーミッションパターン |
 
 ---
 
@@ -188,3 +234,5 @@ src/
 3. **`plugin-dev` の hook-development スキル**: `validate-hook-schema.sh` / `test-hook.sh` / `hook-linter.sh` の3スクリプト付き。フック設計の品質向上に活用可能。
 
 4. **`ralph-loop`**: Stop フックを利用した自律反復ループ。Claude が完了条件を満たすまで自動継続する仕組みで、Windows でも動作確認済み。本キットのフック設計に参考になる可能性あり。
+
+5. **cloudnative-co の Pre-compact Auto-commit**: `PreCompact` フックを使ったコミット自動化パターン。中間成果物保護の実践的アプローチとして `2026-04-28_インタラクション改善と成果物管理調査.md` に追記済み（2026-04-28）。
