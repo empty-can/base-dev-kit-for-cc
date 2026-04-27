@@ -1,6 +1,9 @@
 # Claude Code: 作業一時ファイル（セッション管理用）
 .claude/work/
 
+# Claude Code: 個人作業ログ・調査レポート（セッション成果物）
+.claude/reports/
+
 # Claude Code: ローカル個人設定（チームで共有しない）
 .claude/settings.local.json
 CLAUDE.local.md
