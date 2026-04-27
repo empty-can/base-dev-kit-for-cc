@@ -240,7 +240,7 @@ description: Validate Claude model references in code. Check that all model name
 ```markdown
 ---
 name: my-task
-description: [Action] [what]. Use when [trigger condition].
+description: <機能・目的の名詞句説明>. Use when [trigger condition].
 disable-model-invocation: true
 allowed-tools: Bash(git *), Read, Write
 ---
