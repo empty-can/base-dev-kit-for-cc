@@ -2,8 +2,8 @@
 .claude/work/
 
 # Claude Code: 個人作業ログ・調査レポート（セッション成果物）
-# tmp/design-importantest-consideration ブランチの作業のために一時的にコメントアウト
-# .claude/reports/
+# <Share> キットには成果物を含めない（各利用先リポジトリ側で生成・管理する）
+.claude/reports/
 
 # Claude Code: 進行中の作業ファイル（作業完了後に削除・将来的にGit管理化の可能性あり）
 .claude/workspace/
