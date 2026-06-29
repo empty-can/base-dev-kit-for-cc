@@ -1,15 +1,10 @@
 ---
 name: win-file-encoding
 description: >
-  日本語を含む Windows 向けスクリプト（`.ps1` / `.bat` / `.cmd` / `.reg` / `.ini`、例: backup.cmd /
-  deploy.ps1 / run.bat / setup.ps1）を新規作成・編集するときは必ずこの skill を使う。echo・Write-Host・
-  コメント・ログ・メッセージ等に日本語が一文字でも入る場合、文字コード指定（Shift-JIS / CP932）の明示有無に
-  関わらず対象。「メモ帳で開いても化けない」「波ダッシュ・全角チルダ・円マークが化ける」「CRLF を保ちたい」
-  「既存の cp932 ファイルを壊さず1行直す」も該当。理由: Claude のネイティブ Read / Edit / Write / Grep は
-  UTF-8 前提で、CP932/CRLF の Windows ファイルを直接触ると日本語が文字化け・破損する。本 skill が UTF-8/LF ⇄
-  CP932/CRLF を安全に往復変換し、化け文字を正規化する手順とスクリプトを提供する。発火しない例: 英語のみの
-  Windows スクリプト、Python/CSV/Excel の文字化け対処、Linux/bash 向けスクリプト、`.gitattributes` 単独設定、
-  Markdown 文書。
+  日本語を含む Windows 向けスクリプト（`.ps1` / `.bat` / `.cmd` / `.reg` / `.ini`）を CP932・CRLF で
+  安全に新規作成・編集するための skill。Claude のネイティブ Read / Edit / Write は UTF-8 前提のため、
+  CP932 ファイルを直接読み書きすると日本語が文字化け・破損する。UTF-8/LF ⇄ CP932/CRLF を安全に往復変換し、
+  波ダッシュ・円マーク等の化け文字を正規化する手順とスクリプトを提供する。
 ---
 
 # win-file-encoding（Windows 向けファイルの安全な作成・編集）
