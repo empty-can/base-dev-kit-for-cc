@@ -12,12 +12,18 @@
 .claude/settings.local.json
 CLAUDE.local.md
 
+# Claude Code ランチャー: テンプレから作る個人実体（テンプレ option-settings.*.template は launcher/ 配下で追跡継続）
+.claude/option-settings.sh
+.claude/option-settings.ps1
+
 # Claude Code: ローカル専用エージェントメモリ（memory: local スコープの sub-agent 用）
 .claude/agent-memory-local/
 
 # 環境変数・機密情報
 .env
 .env.*
+# ランチャーの個人 env 実体（custom.env 等）。テンプレ *.env.template は追跡継続
+*.env
 !.env.example
 secrets/
 
