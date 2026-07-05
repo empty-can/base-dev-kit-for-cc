@@ -1,0 +1,110 @@
+# =============================================================================
+# option-settings.sh.template  ―  claude 起動時オプションの雛型（分類D・bash 版）
+# =============================================================================
+# 使い方:
+#   1) このファイルを .claude/ 直下に「option-settings.sh」としてコピーする。
+#      （option-settings.sh は .gitignore 済み＝個人実体）
+#   2) 使いたいオプションの行頭 "#" を外して値を設定する。不要な行はコメントのまま。
+#      値を取らないフラグ（--verbose 等）は値を "true" にする。
+#   3) start_claude_code がこの OPTS を読み、`claude` コマンドを組み立てて起動する。
+#
+# ここはユーザが自由に変えてよい起動オプション（分類D）。チームで統制したい
+# オプション（分類C）は start_claude_code 側の TEAM_OPTS に定義されている。
+#
+# 網羅方針: Claude Code の起動オプションを（危険系を除き）ほぼ全量掲載。公式デフォルト値は
+# コメントで明記。詳細は公式 docs の CLI reference を参照。
+# =============================================================================
+
+declare -A OPTS=(
+  # ===== モデル =====
+  # 使用モデル（公式デフォルト: 起動時に対話選択 / 設定の既定モデル）
+  # [--model]="claude-opus-4-8"
+  # 過負荷・失敗時のフォールバックモデル
+  # [--fallback-model]="claude-sonnet-5"
+
+  # ===== 設定ソース・作業ディレクトリ =====
+  # 追加の作業ディレクトリ（複数指定は空白区切りで文字列化）
+  # [--add-dir]="C:/other/repo"
+  # 追加で読む settings ファイル
+  # [--settings]="./.claude/settings.extra.json"
+  # 読み込む設定ソースの限定（例: project,user,local）
+  # [--setting-sources]="project,user"
+
+  # ===== MCP =====
+  # 追加の MCP 設定ファイル
+  # [--mcp-config]="./.mcp.extra.json"
+  # 指定した --mcp-config のみ使用し他の MCP 設定を無視（値不要フラグ）
+  # [--strict-mcp-config]="true"
+
+  # ===== 権限 =====
+  # 権限モード（default / acceptEdits / plan / bypassPermissions など）
+  # [--permission-mode]="default"
+  # 権限確認を委譲する外部ツール
+  # [--permission-prompt-tool]="mcp__approval__prompt"
+
+  # ===== エージェント / プラグイン / システムプロンプト =====
+  # 追加エージェント定義（JSON 文字列またはファイル）
+  # [--agents]="./agents.json"
+  # 単一エージェントの指定
+  # [--agent]="my-agent"
+  # システムプロンプトへ追記（ファイル指定）
+  # [--append-system-prompt-file]="./prompt-append.txt"
+  # システムプロンプトへ追記（文字列指定）
+  # [--append-system-prompt]="追加の指示"
+  # ローカルのプラグインディレクトリを読み込む
+  # [--plugin-dir]="./my-plugins"
+  # URL からプラグインを読み込む
+  # [--plugin-url]="https://example.com/plugin"
+  # 使用ツールの限定
+  # [--tools]="Read,Grep,Edit"
+
+  # ===== セッション継続 =====
+  # 直近のセッションを継続（値不要フラグ）
+  # [--continue]="true"
+  # セッション ID を指定して再開
+  # [--resume]="<session-id>"
+  # セッション ID を明示指定
+  # [--session-id]="<uuid>"
+  # 再開時に新しいブランチ的セッションへ分岐（値不要フラグ）
+  # [--fork-session]="true"
+  # 指定 PR からセッションを開始
+  # [--from-pr]="123"
+
+  # ===== IDE / 表示 / デバッグ =====
+  # IDE 連携で起動（値不要フラグ）
+  # [--ide]="true"
+  # 詳細ログ（値不要フラグ）
+  # [--verbose]="true"
+  # デバッグ出力（カテゴリ指定可 / 値不要でも可）
+  # [--debug]="true"
+  # 部分メッセージのストリーム表示（値不要フラグ）
+  # [--include-partial-messages]="true"
+
+  # ===== 思考 / 予算 / ターン制御 =====
+  # 推論の努力度（low / medium / high / xhigh / max）
+  # [--effort]="high"
+  # セッションのコスト上限（USD）
+  # [--max-budget-usd]="5"
+  # 最大ターン数
+  # [--max-turns]="50"
+
+  # ===== 非対話 / print モード（ヘッドレス実行向け・通常の対話起動では不要）=====
+  # 標準出力へ一括応答して終了（値不要フラグ）
+  # [--print]="true"
+  # 出力フォーマット（text / json / stream-json）
+  # [--output-format]="text"
+  # 入力フォーマット（text / stream-json）
+  # [--input-format]="text"
+  # スラッシュコマンドを無効化（値不要フラグ）
+  # [--disable-slash-commands]="true"
+  # チームメイトモード
+  # [--teammate-mode]="..."
+  # 有効化するベータ機能
+  # [--betas]="..."
+  # 隔離した git worktree で起動
+  # [--worktree]="..."
+
+  # ===== ⚠⚠ 非推奨・破壊的（内容を理解した上でのみ有効化）⚠⚠ =====
+  # 権限確認をすべてスキップする。誤操作・情報漏えいのリスクを理解した上で。
+  # [--dangerously-skip-permissions]="true"
+)

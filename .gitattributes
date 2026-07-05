@@ -1,0 +1,15 @@
+# =============================================================================
+# .gitattributes  ―  ランチャースクリプトの改行コードを固定
+# =============================================================================
+# 既存の scripts/*.ps1 等に副作用を与えないよう、ランチャーのパスに限定して指定する。
+#
+# ランチャー PowerShell: UTF-8 BOM + CRLF（Windows PowerShell 5.1 / 7 両対応・
+#   日本語コメント文字化け回避）。BOM は Git が触らずコンテンツとして保持される。
+/start_claude_code.ps1                text eol=crlf
+/.claude/launcher/*.ps1               text eol=crlf
+/.claude/launcher/*.ps1.template      text eol=crlf
+
+# ランチャー shell: UTF-8 + LF（Windows で core.autocrlf=true でも CRLF 化させない）
+/start_claude_code.sh                 text eol=lf
+/.claude/launcher/*.sh                text eol=lf
+/.claude/launcher/*.sh.template       text eol=lf
