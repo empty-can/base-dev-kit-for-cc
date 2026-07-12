@@ -66,15 +66,47 @@ check_personal ".claude/option-settings.sh"  ".claude/option-settings.sh"
 check_personal ".claude/option-settings.ps1" ".claude/option-settings.ps1"
 
 # 2-c. セッション成果物・作業一時物の混入（内部レポートの公開リポ流出を止める最後の砦）
-#      payload に実在したら理由を問わず FAIL。gitignore や追跡解除の漏れをここで捕まえる。
-#      「追跡解除したから大丈夫」は publish する ref を取り違えた瞬間に崩れる（未 groom の
-#      ref を publish すると成果物ごと配布される）。実体ベースで検査すること。
+#      判定は個人ファイル（check_personal）と同じ二層基準:
+#        - 非 git（= publish 時に取り出した payload 実体）→ 実在＝FAIL。
+#          実際に配布される中身なので、追跡状態は無関係。「追跡解除したから大丈夫」は
+#          publish する ref を取り違えた瞬間に崩れるため、実体で検査する。
+#        - git リポジトリ（= 開発者が作業ツリーに対して手動で回す場合）→ 追跡されていれば FAIL。
+#          gitignore 済みで実在するだけなら WARN（payload には乗らないため）。
+#          ここを実体基準にすると、work/ を持つ通常の開発マシンで常時 FAIL し、
+#          「いつもの誤検知」として無視される habit を生む（ゲートの信号価値が死ぬ）。
+#
+# 成果物クラスの正本リストは本配列。root/.claude 双方の .gitignore はこれに追随させること。
 for _artifact in ".claude/reports" ".claude/work" ".claude/workspace" ".claude/plans" \
                  ".claude/agent-memory-local" ".claude/work_instructions.txt"; do
-  if [[ -e "$SHARE/$_artifact" ]]; then
-    bad "$_artifact が配布ペイロードに含まれている（内部成果物は配布しない）。grooming 済みの ref を publish すること"
+  if [[ $IS_GIT -eq 1 ]]; then
+    if [[ -n "$(git -C "$SHARE" ls-files -- "$_artifact" 2>/dev/null)" ]]; then
+      bad "$_artifact が Git 追跡されている（payload に乗り配布される）。git rm --cached して .gitignore へ"
+    elif [[ -e "$SHARE/$_artifact" ]]; then
+      warn "$_artifact が実在するが未追跡（配布はされない。掃除推奨）"
+    else
+      pass "$_artifact なし"
+    fi
   else
-    pass "$_artifact なし"
+    if [[ -e "$SHARE/$_artifact" ]]; then
+      bad "$_artifact が配布ペイロードに含まれている（内部成果物は配布しない）。grooming 済みの ref を publish すること"
+    else
+      pass "$_artifact なし"
+    fi
+  fi
+done
+
+# 2-d. 配布先の統制ファイル（payload に無いと配布先から「消える」クラス）
+#      publish-share のミラーは payload に無いものを削除するため、これらを欠いた ref を
+#      publish すると配布先の除外設定・改行保護が黙って失われる（CR-1 の逆行）。
+#      判定は 2-c と同じ二層基準（非 git = 実際に publish する payload → 不在は FAIL。
+#      git = 開発中の作業ツリー → 不在は WARN。開発途中で未マージなだけのことがあるため）。
+for _guard in ".claude/.gitignore" ".claude/.gitattributes"; do
+  if [[ -f "$SHARE/$_guard" ]]; then
+    pass "$_guard あり（配布先の統制ファイル）"
+  elif [[ $IS_GIT -eq 1 ]]; then
+    warn "$_guard が無い（publish 前に必要。この ref を publish すると配布先の除外設定・改行保護が失われる）"
+  else
+    bad "$_guard が payload に無い。このまま publish すると配布先の除外設定・改行保護が失われる"
   fi
 done
 

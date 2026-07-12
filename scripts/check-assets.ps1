@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   check-assets.ps1 — 配布する共有ペイロード <Share> を公開前に機械チェックする
 
@@ -74,15 +74,45 @@ Check-Personal '.claude\option-settings.sh'  '.claude\option-settings.sh'
 Check-Personal '.claude\option-settings.ps1' '.claude\option-settings.ps1'
 
 # 2-c. セッション成果物・作業一時物の混入（内部レポートの公開リポ流出を止める最後の砦）
-#      payload に実在したら理由を問わず FAIL。gitignore や追跡解除の漏れをここで捕まえる。
-#      「追跡解除したから大丈夫」は publish する ref を取り違えた瞬間に崩れる（未 groom の
-#      ref を publish すると成果物ごと配布される）。実体ベースで検査すること。
+#      判定は個人ファイル（Check-Personal）と同じ二層基準:
+#        - 非 git（= publish 時に取り出した payload 実体）→ 実在＝FAIL。
+#        - git リポジトリ（= 作業ツリーへの手動実行）→ 追跡されていれば FAIL / 未追跡の実在は WARN。
+#          実体基準にすると work/ を持つ通常の開発マシンで常時 FAIL し、ゲートの信号価値が死ぬ。
+#
+# 成果物クラスの正本リストは本配列。root/.claude 双方の .gitignore はこれに追随させること。
 foreach ($artifact in @('.claude\reports', '.claude\work', '.claude\workspace', '.claude\plans',
                         '.claude\agent-memory-local', '.claude\work_instructions.txt')) {
-  if (Test-Path (Join-Path $Share $artifact)) {
-    Bad "$artifact が配布ペイロードに含まれている（内部成果物は配布しない）。grooming 済みの ref を publish すること"
+  $abs = Join-Path $Share $artifact
+  if ($isGit) {
+    $tracked = (git -C $Share ls-files -- $artifact 2>$null)
+    if ($tracked) {
+      Bad "$artifact が Git 追跡されている（payload に乗り配布される）。git rm --cached して .gitignore へ"
+    } elseif (Test-Path $abs) {
+      Warn "$artifact が実在するが未追跡（配布はされない。掃除推奨）"
+    } else {
+      Pass "$artifact なし"
+    }
   } else {
-    Pass "$artifact なし"
+    if (Test-Path $abs) {
+      Bad "$artifact が配布ペイロードに含まれている（内部成果物は配布しない）。grooming 済みの ref を publish すること"
+    } else {
+      Pass "$artifact なし"
+    }
+  }
+}
+
+# 2-d. 配布先の統制ファイル（payload に無いと配布先から「消える」クラス）
+#      publish-share のミラーは payload に無いものを削除するため、これらを欠いた ref を
+#      publish すると配布先の除外設定・改行保護が黙って失われる（CR-1 の逆行）。
+#      判定は 2-c と同じ二層基準（非 git = 実際に publish する payload → 不在は FAIL。
+#      git = 開発中の作業ツリー → 不在は WARN）。
+foreach ($guard in @('.claude\.gitignore', '.claude\.gitattributes')) {
+  if (Test-Path -PathType Leaf (Join-Path $Share $guard)) {
+    Pass "$guard あり（配布先の統制ファイル）"
+  } elseif ($isGit) {
+    Warn "$guard が無い（publish 前に必要。この ref を publish すると配布先の除外設定・改行保護が失われる）"
+  } else {
+    Bad "$guard が payload に無い。このまま publish すると配布先の除外設定・改行保護が失われる"
   }
 }
 

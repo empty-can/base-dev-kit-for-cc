@@ -1,4 +1,4 @@
-<#
+﻿<#
   publish-share.ps1 — 指定 ref の .claude を共有本体 basic_dot_claude へ publish（Sync A・手動ゲート）
 
   session 開始時の自動同期（refresh / pull --ff-only）とは別物。release-ready な .claude を
@@ -38,13 +38,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $ShareBody '.git') -PathType Contain
   Write-Host "   .git がディレクトリである独立クローンを指定してください（submodule の checkout は不可）。"
   exit 2
 }
-$shareTop = (git -C $ShareBody rev-parse --show-toplevel 2>$null)
-if ($LASTEXITCODE -ne 0 -or -not $shareTop) { Write-Host "‼ 共有本体が git リポジトリではない: $ShareBody"; exit 2 }
-$shareAbs = (Resolve-Path -LiteralPath $ShareBody).Path.TrimEnd('\', '/')
-$shareTop = (Resolve-Path -LiteralPath $shareTop.Trim()).Path.TrimEnd('\', '/')
-if ($shareAbs -ne $shareTop) {
+# 指定パスがリポジトリの「ルート」かを --show-prefix で判定する（空＝ルート）。
+# ⚠ パス文字列を比較してはいけない。同じ場所を指す表記が複数あるため（Windows 形式 vs MSYS 形式、
+#    マウント別名、symlink）、比較方式では正しい配布先を誤って拒否する。bash 版と同じ判定に揃える。
+$sharePrefix = (git -C $ShareBody rev-parse --show-prefix 2>$null)
+if ($LASTEXITCODE -ne 0) { Write-Host "‼ 共有本体が git リポジトリではない: $ShareBody"; exit 2 }
+if ($sharePrefix -and $sharePrefix.Trim() -ne '') {
   Write-Host "‼ 共有本体はリポジトリのルートを指す必要があります: $ShareBody"
-  Write-Host "   （検出したルート: $shareTop）"
+  Write-Host "   （リポジトリ内のサブディレクトリを指しています: $($sharePrefix.Trim())）"
   exit 2
 }
 
@@ -103,7 +104,7 @@ try {
   #    ⚠ robocopy /MIR /XF は使わない。/XF はファイル名マッチが全階層に効くため、
   #       payload 内の .claude/.gitignore まで除外してしまい、配布先の統制ファイルが
   #       永久に届かなくなる（bash 版とだけ挙動が食い違う）。
-  $keep = @('.git', '.gitignore', 'README.md', 'LICENSE')
+  $keep = @('.git', '.gitignore', '.gitattributes', 'README.md', 'LICENSE')
   Get-ChildItem -Force -LiteralPath $ShareBody |
     Where-Object { $keep -notcontains $_.Name } |
     Remove-Item -Recurse -Force

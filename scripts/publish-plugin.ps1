@@ -1,4 +1,4 @@
-<#
+﻿<#
   publish-plugin.ps1 — <Dev>(C-BDK) の指定 ref のプラグインを Marketplace リポジトリ <C-MKT> へ publish（層2・validate ゲート）
 
   publish-share.ps1（層1 body の publish）の plugin 版。release-ready なプラグインを marketplace

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   clean-test-env.ps1 — クリーン隔離テスト環境を作って Claude Code を起動する（手順書 §5）
 
