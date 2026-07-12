@@ -32,9 +32,9 @@ $Opts = [ordered]@{
     # ===== 設定ソース・作業ディレクトリ =====
     # 追加の作業ディレクトリ。ここに書けるのは 1 値だけ（順序付きハッシュはキーを重複できず、
     # フラグの繰り返し指定を表現できない）。複数ディレクトリを渡したい場合は起動時引数で:
-    #   .\start_claude_code.ps1 --add-dir C:\path\a --add-dir C:\path\b
+    #   .\start_claude_code.ps1 --add-dir <パスA> --add-dir <パスB>
     # 同じ制約は --plugin-dir / --mcp-config 等の反復可能フラグにも当てはまる。
-    # '--add-dir' = 'C:/other/repo'
+    # '--add-dir' = '<参照したいリポジトリのパス>'
     # 追加で読む settings ファイル
     # '--settings' = './.claude/settings.extra.json'
     # 読み込む設定ソースの限定（例: project,user,local）
