@@ -60,15 +60,40 @@ check_personal ".claude/CLAUDE.local.md" ".claude/CLAUDE.local.md"
 # 2. settings.local.json（個人・非共有。共有設定は settings.json へ）
 check_personal ".claude/settings.local.json" ".claude/settings.local.json"
 
+# 2-b. ランチャーの個人実体（テンプレから利用者が作る。配布してはならない）
+check_personal ".claude/custom.env"          ".claude/custom.env"
+check_personal ".claude/option-settings.sh"  ".claude/option-settings.sh"
+check_personal ".claude/option-settings.ps1" ".claude/option-settings.ps1"
+
+# 2-c. セッション成果物・作業一時物の混入（内部レポートの公開リポ流出を止める最後の砦）
+#      payload に実在したら理由を問わず FAIL。gitignore や追跡解除の漏れをここで捕まえる。
+#      「追跡解除したから大丈夫」は publish する ref を取り違えた瞬間に崩れる（未 groom の
+#      ref を publish すると成果物ごと配布される）。実体ベースで検査すること。
+for _artifact in ".claude/reports" ".claude/work" ".claude/workspace" ".claude/plans" \
+                 ".claude/agent-memory-local" ".claude/work_instructions.txt"; do
+  if [[ -e "$SHARE/$_artifact" ]]; then
+    bad "$_artifact が配布ペイロードに含まれている（内部成果物は配布しない）。grooming 済みの ref を publish すること"
+  else
+    pass "$_artifact なし"
+  fi
+done
+
 # 3. settings.json の JSON 構文 ＋ project/local で無視される security キーの検出
 SETTINGS="$SHARE/.claude/settings.json"
 if [[ -f "$SETTINGS" ]]; then
-  if command -v python3 >/dev/null 2>&1; then
-    if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$SETTINGS" >/dev/null 2>&1; then
+  # python3 が無い環境では python を試す。どちらも無ければ「検査していない」ことを明示する
+  # （黙ってスキップすると、検査した結果 PASS したのか未検査なのか区別できない）。
+  PY=""
+  command -v python3 >/dev/null 2>&1 && PY="python3"
+  [[ -z "$PY" ]] && command -v python >/dev/null 2>&1 && PY="python"
+  if [[ -n "$PY" ]]; then
+    if "$PY" -c "import json,sys; json.load(open(sys.argv[1]))" "$SETTINGS" >/dev/null 2>&1; then
       pass "settings.json は valid JSON"
     else
       bad "settings.json が不正な JSON（/doctor でも検出される）"
     fi
+  else
+    warn "python が見つからず settings.json の JSON 構文を検査できなかった（未検査）"
   fi
   hits=""
   grep -Eq '"defaultMode"[[:space:]]*:[[:space:]]*"auto"'  "$SETTINGS" && hits="$hits defaultMode:auto"
@@ -85,12 +110,15 @@ else
 fi
 
 # 4. 共有共通ルールの所在（案1 では .claude/CLAUDE.md。ルート CLAUDE.md は README 隔離の対象）
+#    不在は FAIL。publish-share のミラーは payload に無いファイルを配布先から削除するため、
+#    .claude/CLAUDE.md を持たない ref を publish すると「配布先の共通 CLAUDE.md が消える」。
+#    配る構成を採用済みなので、WARN では止められない。
 if [[ -f "$SHARE/.claude/CLAUDE.md" ]]; then
   pass "共有共通ルール .claude/CLAUDE.md あり（案1 構成）"
 elif [[ -f "$SHARE/CLAUDE.md" ]]; then
-  warn "共有ルールがルート CLAUDE.md にある。案1（README 隔離）では .claude/CLAUDE.md へ移し、リポ固有情報は README.md へ"
+  bad "共有ルールがルート CLAUDE.md にある（.claude/CLAUDE.md が無い）。このまま publish すると配布先の CLAUDE.md が削除される。.claude/CLAUDE.md へ移し、リポ固有情報は README.md へ"
 else
-  warn "共有共通ルール（.claude/CLAUDE.md）が無い（rules/ や skills のみ配る構成なら問題なし）"
+  bad "共有共通ルール .claude/CLAUDE.md が無い。このまま publish すると配布先の CLAUDE.md が削除される。grooming 済みの ref を publish すること"
 fi
 
 # 5. （案1 情報）ルート CLAUDE.md が tracked なら --add-dir+env で参照側へ漏れる旨を通知

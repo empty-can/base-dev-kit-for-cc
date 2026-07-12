@@ -68,6 +68,24 @@ Check-Personal '.claude\CLAUDE.local.md' '.claude\CLAUDE.local.md'
 # 2. settings.local.json
 Check-Personal '.claude\settings.local.json' '.claude\settings.local.json'
 
+# 2-b. ランチャーの個人実体（テンプレから利用者が作る。配布してはならない）
+Check-Personal '.claude\custom.env'          '.claude\custom.env'
+Check-Personal '.claude\option-settings.sh'  '.claude\option-settings.sh'
+Check-Personal '.claude\option-settings.ps1' '.claude\option-settings.ps1'
+
+# 2-c. セッション成果物・作業一時物の混入（内部レポートの公開リポ流出を止める最後の砦）
+#      payload に実在したら理由を問わず FAIL。gitignore や追跡解除の漏れをここで捕まえる。
+#      「追跡解除したから大丈夫」は publish する ref を取り違えた瞬間に崩れる（未 groom の
+#      ref を publish すると成果物ごと配布される）。実体ベースで検査すること。
+foreach ($artifact in @('.claude\reports', '.claude\work', '.claude\workspace', '.claude\plans',
+                        '.claude\agent-memory-local', '.claude\work_instructions.txt')) {
+  if (Test-Path (Join-Path $Share $artifact)) {
+    Bad "$artifact が配布ペイロードに含まれている（内部成果物は配布しない）。grooming 済みの ref を publish すること"
+  } else {
+    Pass "$artifact なし"
+  }
+}
+
 # 3. settings.json の JSON 構文 ＋ project/local で無視される security キーの検出
 $settings = Join-Path $Share '.claude\settings.json'
 if (Test-Path $settings) {
@@ -78,7 +96,9 @@ if (Test-Path $settings) {
   } else {
     Pass "settings.json は valid JSON"
     $hits = @()
-    if ($json.defaultMode -eq 'auto')                       { $hits += 'defaultMode:auto' }
+    # defaultMode は permissions 配下に置くのが正。トップレベルだけを見ると検査が不発になる
+    # （bash 版は raw テキストを grep するため、ここが揃っていないと OS で判定が食い違う）。
+    if ($json.permissions.defaultMode -eq 'auto' -or $json.defaultMode -eq 'auto') { $hits += 'defaultMode:auto' }
     if ($null -ne $json.skipDangerousModePermissionPrompt)  { $hits += 'skipDangerousModePermissionPrompt' }
     if ($null -ne $json.autoMode)                           { $hits += 'autoMode' }
     if ($null -ne $json.useAutoModeDuringPlan)              { $hits += 'useAutoModeDuringPlan' }
@@ -93,12 +113,15 @@ if (Test-Path $settings) {
 }
 
 # 4. 共有共通ルールの所在（案1 では .claude\CLAUDE.md。ルート CLAUDE.md は README 隔離の対象）
+#    不在は FAIL。publish-share のミラーは payload に無いファイルを配布先から削除するため、
+#    .claude\CLAUDE.md を持たない ref を publish すると「配布先の共通 CLAUDE.md が消える」。
+#    配る構成を採用済みなので、WARN では止められない。
 if (Test-Path (Join-Path $Share '.claude\CLAUDE.md')) {
   Pass "共有共通ルール .claude\CLAUDE.md あり（案1 構成）"
 } elseif (Test-Path (Join-Path $Share 'CLAUDE.md')) {
-  Warn "共有ルールがルート CLAUDE.md にある。案1（README 隔離）では .claude\CLAUDE.md へ移し、リポ固有情報は README.md へ"
+  Bad "共有ルールがルート CLAUDE.md にある（.claude\CLAUDE.md が無い）。このまま publish すると配布先の CLAUDE.md が削除される。.claude\CLAUDE.md へ移し、リポ固有情報は README.md へ"
 } else {
-  Warn "共有共通ルール（.claude\CLAUDE.md）が無い（rules/ や skills のみ配る構成なら問題なし）"
+  Bad "共有共通ルール .claude\CLAUDE.md が無い。このまま publish すると配布先の CLAUDE.md が削除される。grooming 済みの ref を publish すること"
 }
 
 # 5. （案1 情報）ルート CLAUDE.md が tracked なら --add-dir+env で参照側へ漏れる旨を通知
