@@ -65,12 +65,31 @@ fi
 
 git -C "$DEV_ROOT" rev-parse --verify "$REF^{commit}" >/dev/null 2>&1 || { echo "‼ ref が存在しない: $REF" >&2; exit 2; }
 
+# 0. symlink（mode 120000）を含む ref は publish しない。
+#    bash 版は tar が symlink の展開に失敗するので後段の検査で止まるが、PowerShell 版は
+#    zip 経由のため「ターゲットのパス文字列を中身とする通常ファイル」として配布してしまう
+#    （データが化けたまま公開される）。実行者の OS でリリース可否が変わらないよう、
+#    ref の段階で両版とも止める。PowerShell 版の 0 と対称。
+_links="$(git -C "$DEV_ROOT" ls-tree -r "$REF" -- .claude | awk -F'\t' '$1 ~ /^120000 / { print $2 }')"
+if [ -n "$_links" ]; then
+  echo "‼ payload に symlink が含まれている。publish 中止（配布先で壊れたファイルになる）:" >&2
+  echo "$_links" | sed 's/^/   /' >&2
+  exit 1
+fi
+
 # 1. 追跡ファイルのみを ref から取り出し（checkout 不要・個人/未追跡は構造的に除外）
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# ⚠ core.autocrlf を明示的に無効化する。git archive は working-tree 変換（text/eol 属性 ＋
+#    core.autocrlf）を適用するため、これを付けないと publisher のローカル設定で payload の
+#    中身が変わる。Git for Windows の既定は autocrlf=true なので、普通に clone した Windows
+#    開発者が publish すると配布リポのほぼ全ファイルが CRLF で書き換わり、同じ ref なのに
+#    publish するマシン次第で配布内容が変わる（実測: 19 ファイル中 18 ファイルの blob が相違）。
+#    eol=crlf 属性を持つファイル（launcher/*.ps1）は属性が優先されるため CRLF のまま。
+#    PowerShell 版と対称にすること。
 # ⚠ 展開の成否を必ず検査する。取りこぼしたまま先へ進むと、後段のミラー処理が
 #    「payload に無い」と見なして配布先の該当ファイルを削除してしまう。
-#    （tar は symlink・不正なファイル名・長すぎるパス等で個別エントリの展開に失敗し得る）
-if ! git -C "$DEV_ROOT" archive "$REF" .claude | tar -x -C "$tmp"; then   # → $tmp/.claude/
+#    （tar は不正なファイル名・長すぎるパス等で個別エントリの展開に失敗し得る）
+if ! git -c core.autocrlf=false -C "$DEV_ROOT" archive "$REF" .claude | tar -x -C "$tmp"; then   # → $tmp/.claude/
   echo "‼ $REF の payload を展開できない。publish 中止（部分的な payload で配布先を壊さない）" >&2
   exit 1
 fi
@@ -91,7 +110,10 @@ if [ "$_expected" -ne "$_actual" ]; then
 fi
 
 # 3. 衛生ゲート: check-assets を「取り出した実体」に対して実行（実際に publish する中身を検査）
-bash "$HERE/check-assets.sh" "$tmp" || { echo "‼ check-assets FAIL。publish 中止" >&2; exit 1; }
+#    --payload で実体基準を強制する。付けないと、TMPDIR が git worktree 配下のマシンでは
+#    check-assets が payload を「追跡基準」で検査してしまい、成果物の混入も統制ファイルの
+#    不在も WARN へ退化してゲートが素通しになる（呼び出し側は層を知っているのだから明示する）。
+bash "$HERE/check-assets.sh" --payload "$tmp" || { echo "‼ check-assets FAIL。publish 中止" >&2; exit 1; }
 
 # 4. /security-review は対話コマンドのため手動確認
 read -r -p "→ $REF の内容について /security-review を実行済みなら y で続行: " ok

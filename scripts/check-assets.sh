@@ -4,20 +4,29 @@
 # 個人ファイル・無視されうる設定キー・壊れた JSON が「配布されてしまう」状態かを自動判定する。
 # 対話 TUI が必要な項目（trust 承認・/memory・/status の確認など）は対象外（手で確認）。
 #
-# 判定基準（README 隔離方式 / 案1 対応）:
-#   <Share> が git リポジトリなら「Git 追跡されているか」で配布可否を判定する。
-#     - 個人ファイルが tracked      → FAIL（clone に含まれ参照側へ漏れる）
-#     - 個人ファイルが untracked で実在 → WARN（gitignore 済みで配布はされないが掃除推奨）
-#     - 不在                         → PASS
-#   git リポジトリでない（コピー展開した素のディレクトリ）なら、実在＝FAIL にフォールバックする
-#   （ディレクトリごとコピーされるため実在がそのまま配布になる）。
+# 判定基準（README 隔離方式 / 案1 対応）― 検査対象の「層」で基準が変わる:
+#   追跡基準（対象が git リポジトリのルート = 開発者の作業ツリー）:
+#     - tracked            → FAIL（clone に含まれ参照側へ漏れる / payload に乗る）
+#     - untracked で実在   → WARN（gitignore 済みで配布はされないが掃除推奨）
+#     - 不在               → PASS
+#   実体基準（対象が非 git = publish 時に取り出した payload の実体）:
+#     - 実在               → FAIL（実際に配布される中身なので追跡状態は無関係）
 #
-# 使い方:  ./check-assets.sh <Share-path>
+# 使い方:  ./check-assets.sh [--payload] <Share-path>
+#   --payload  実体基準を強制する（publish-share から payload を検査する時に使う）
 # 終了コード: FAIL が1件以上で 1、なければ 0（CI 利用可）。
 set -uo pipefail
 
-SHARE="${1:-}"
-if [[ -z "$SHARE" || ! -d "$SHARE" ]]; then echo "使い方: $0 <Share-path>" >&2; exit 2; fi
+PAYLOAD=0
+SHARE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --payload) PAYLOAD=1; shift;;
+    -*) echo "‼ 不明な引数: $1（使い方: $0 [--payload] <Share-path>）" >&2; exit 2;;
+    *) SHARE="$1"; shift;;
+  esac
+done
+if [[ -z "$SHARE" || ! -d "$SHARE" ]]; then echo "使い方: $0 [--payload] <Share-path>" >&2; exit 2; fi
 SHARE="$(cd "$SHARE" && pwd)"
 
 fail=0
@@ -25,9 +34,21 @@ pass(){ echo "  [PASS] $1"; }
 bad(){  echo "  [FAIL] $1"; fail=1; }
 warn(){ echo "  [WARN] $1"; }
 
-# git リポジトリか判定
+# 層の判定。
+#
+# ⚠ rev-parse --is-inside-work-tree を使ってはいけない。祖先方向に .git を探すため、
+#    対象自身がリポジトリでなくても「どこかの repo 配下」なら真を返す。publish-share は
+#    payload を mktemp -d へ展開して検査するので、TMPDIR が worktree 配下のマシン
+#    （home を dotfiles リポジトリ化している等）では payload が追跡基準で検査され、
+#    成果物の混入も統制ファイルの不在も FAIL から WARN へ退化する = ゲートの fail-open。
+#    → 対象が「リポジトリのルートそのもの」の時だけ追跡基準を使う（--show-prefix が空）。
+#    → publish-share からは --payload で実体基準を明示強制する（呼び出し側は層を知っている）。
 IS_GIT=0
-if git -C "$SHARE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then IS_GIT=1; fi
+if [[ $PAYLOAD -eq 0 ]]; then
+  if _prefix="$(git -C "$SHARE" rev-parse --show-prefix 2>/dev/null)" && [[ -z "$_prefix" ]]; then
+    IS_GIT=1
+  fi
+fi
 
 is_tracked(){ git -C "$SHARE" ls-files --error-unmatch "$1" >/dev/null 2>&1; }
 
@@ -51,7 +72,7 @@ check_personal(){
   fi
 }
 
-echo "[check-assets] 対象: $SHARE（$([[ $IS_GIT -eq 1 ]] && echo 'git リポジトリ: 追跡基準' || echo '非 git: 実在基準')）"
+echo "[check-assets] 対象: $SHARE（$([[ $IS_GIT -eq 1 ]] && echo 'リポジトリのルート: 追跡基準' || echo 'payload / 非リポジトリ: 実体基準')）"
 
 # 1. 個人ファイル CLAUDE.local.md（--add-dir+env で参照側へ漏れる）
 check_personal "CLAUDE.local.md"        "CLAUDE.local.md"
@@ -104,7 +125,7 @@ for _guard in ".claude/.gitignore" ".claude/.gitattributes"; do
   if [[ -f "$SHARE/$_guard" ]]; then
     pass "$_guard あり（配布先の統制ファイル）"
   elif [[ $IS_GIT -eq 1 ]]; then
-    warn "$_guard が無い（publish 前に必要。この ref を publish すると配布先の除外設定・改行保護が失われる）"
+    warn "$_guard が無い（publish 前に必要。この状態のまま publish すると配布先の除外設定・改行保護が失われる）"
   else
     bad "$_guard が payload に無い。このまま publish すると配布先の除外設定・改行保護が失われる"
   fi

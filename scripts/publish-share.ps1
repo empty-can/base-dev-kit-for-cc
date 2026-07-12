@@ -52,6 +52,20 @@ if ($sharePrefix -and $sharePrefix.Trim() -ne '') {
 git -C $DevRoot rev-parse --verify "$Ref^{commit}" *> $null
 if ($LASTEXITCODE -ne 0) { Write-Host "‼ ref が存在しない: $Ref"; exit 2 }
 
+# 0. symlink（mode 120000）を含む ref は publish しない。
+#    zip 経由の本版は symlink を「ターゲットのパス文字列を中身とする通常ファイル」として
+#    配布してしまう（データが化けたまま公開され、件数照合もすり抜ける）。bash 版は tar が
+#    展開に失敗して止まるため、対策しないと実行者の OS でリリース可否が変わる。
+#    ref の段階で両版とも止める。bash 版の 0 と対称。
+$links = @(git -C $DevRoot ls-tree -r $Ref -- .claude |
+  Where-Object { $_ -match '^120000\s' } |
+  ForEach-Object { ($_ -split "`t", 2)[1] })
+if ($links.Count -gt 0) {
+  Write-Host '‼ payload に symlink が含まれている。publish 中止（配布先で壊れたファイルになる）:'
+  $links | ForEach-Object { Write-Host "   $_" }
+  exit 1
+}
+
 $tmp = Join-Path $env:TEMP ('pubshare_' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
@@ -66,8 +80,16 @@ try {
   #       （実測: 16 ファイルの payload が 11 ファイルしか展開されない）。
   #       欠落したまま publish すると、ミラー処理が「payload に無い」と見なして
   #       配布先の該当ファイルを削除する。zip + Expand-Archive なら全件復元できる。
+  #
+  #    ⚠ core.autocrlf を明示的に無効化する。git archive は working-tree 変換（text/eol 属性
+  #       ＋ core.autocrlf）を適用するため、これを付けないと publisher のローカル設定で
+  #       payload の中身が変わる。Git for Windows の既定は autocrlf=true なので、普通に
+  #       clone した Windows 開発者が publish すると配布リポのほぼ全ファイルが CRLF で
+  #       書き換わり、同じ ref なのに publish するマシン次第で配布内容が変わる。
+  #       eol=crlf 属性を持つファイル（launcher\*.ps1）は属性が優先されるため CRLF のまま。
+  #       bash 版と対称にすること。
   $zip = Join-Path $tmp 'payload.zip'
-  git -C $DevRoot archive $Ref .claude --format=zip -o $zip
+  git -c core.autocrlf=false -C $DevRoot archive $Ref .claude --format=zip -o $zip
   if ($LASTEXITCODE -ne 0) { Write-Host "‼ $Ref から .claude を取り出せない（.claude が無い?）"; exit 1 }
   Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force   # → $tmp\.claude\
   $src = Join-Path $tmp '.claude'
@@ -88,7 +110,10 @@ try {
   }
 
   # 3. 衛生ゲート: 取り出した実体に対して check-assets
-  & (Join-Path $Here 'check-assets.ps1') -Share $tmp
+  #    -Payload で実体基準を強制する。付けないと、%TEMP% が git worktree 配下のマシンでは
+  #    check-assets が payload を「追跡基準」で検査してしまい、成果物の混入も統制ファイルの
+  #    不在も WARN へ退化してゲートが素通しになる（呼び出し側は層を知っているのだから明示する）。
+  & (Join-Path $Here 'check-assets.ps1') -Share $tmp -Payload
   if ($LASTEXITCODE -ne 0) { Write-Host '‼ check-assets FAIL。publish 中止'; exit 1 }
 
   # 4. /security-review は対話のため手動確認

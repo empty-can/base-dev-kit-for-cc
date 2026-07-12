@@ -93,15 +93,28 @@ bash scripts/clean-test-env.sh /path/to/share   # 自分の設定を切り離し
 
 PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.ps1 -Share <path>`。
 
-`check-assets` の判定:
+`check-assets` は**検査対象の層で基準を変える**（同じチェック項目でも判定が違う）:
 
-- **個人ファイル**（`settings.local.json` / `CLAUDE.local.md` / `custom.env` / `option-settings.{sh,ps1}`）
-  ―― `<Share>` が git リポジトリなら **Git 追跡されているか**で判定する（gitignore 済みで実在するだけなら WARN）。
-- **セッション成果物**（`.claude/reports/` `.claude/work/` `.claude/workspace/` `.claude/plans/` `work_instructions.txt`）
-  ―― **実体があれば FAIL**。追跡状態は見ない。publish する ref を取り違えれば追跡解除の前提は崩れるため、
-  「実際に配布される中身」で検査する。
-- **`.claude/CLAUDE.md` の不在** ―― **FAIL**。ミラー処理は payload に無いファイルを配布先から削除するため、
-  これを持たない ref を publish すると配布先の共通 CLAUDE.md が消える。
+| 層 | 対象 | 基準 |
+|---|---|---|
+| **追跡基準** | リポジトリのルート（＝開発者の作業ツリー） | **Git 追跡されていれば FAIL**。gitignore 済みで実在するだけなら WARN |
+| **実体基準** | 非リポジトリ（＝publish 時に取り出した payload の実体） | **実在すれば FAIL**。実際に配布される中身なので追跡状態は無関係 |
+
+層は自動判定される（対象がリポジトリのルートなら追跡基準）。`publish-share` は `--payload` / `-Payload` で
+実体基準を明示強制して呼ぶ ―― 「追跡解除したから大丈夫」は publish する ref を取り違えた瞬間に崩れるため、
+配布経路では必ず実体で検査する。
+
+検査項目:
+
+- **個人ファイル** ―― `settings.local.json` / `CLAUDE.local.md` / `custom.env` / `option-settings.{sh,ps1}`
+- **セッション成果物** ―― `.claude/reports/` `.claude/work/` `.claude/workspace/` `.claude/plans/`
+  `.claude/agent-memory-local/` `work_instructions.txt`（**この一覧が正本**。`check-assets` の 2-c 配列がそれで、
+  ルートと `.claude/` 双方の `.gitignore` はこれに追随させる）
+- **配布先の統制ファイルの不在** ―― `.claude/.gitignore` / `.claude/.gitattributes`。ミラー処理は payload に
+  無いファイルを配布先から削除するため、これらを欠いた ref を publish すると**配布先の除外設定・改行保護が
+  黙って消える**（payload では FAIL / 作業ツリーでは WARN）
+- **`.claude/CLAUDE.md` の不在** ―― **FAIL**。同じ理由で、これを持たない ref を publish すると配布先の
+  共通 CLAUDE.md が消える。
 
 ### 配布（publish）
 
@@ -115,16 +128,15 @@ PowerShell では `scripts\publish-share.ps1 -Ref <ref>`。
 
 - **`--ref` は必須**（既定値は無い）。grooming 済み・リリースタグ済みの ref を明示すること。
   かつて既定は `main` だったが、未 grooming の ref を無自覚に publish する事故を招くため撤去した。
-- publish 前に `check-assets` が自動で走り、成果物が混入していれば **FAIL して中止**する。
+- publish 前に `check-assets` が**実体基準で**自動実行され、成果物が混入していれば **FAIL して中止**する。
+- symlink（mode 120000）を含む ref は**中止**する（zip 経由では中身がターゲットのパス文字列に化けるため）。
+- payload の取り出しは `core.autocrlf` を無効化して行う。付けないと `git archive` が publisher のローカル
+  設定で改行を変換し、**同じ ref でも publish するマシン次第で配布内容が変わる**。
 - 続いて `/security-review` 実行済みかの手動確認が入る。
 - 成功後は参照ハブ `basic_cc_project` で submodule を bump する（コマンドは実行後に表示される）。
 
 > **feature ブランチからの publish は検証用に限る**。本番の共有本体へ向けるのは、
 > develop → main へ統合しタグを打った ref だけにすること。
-
-> `.claude/reports/`・`.claude/work/`・`.claude/workspace/`・`settings.local.json`・
-> `CLAUDE.local.md`・`custom.env`・`option-settings.{sh,ps1}` は `.gitignore` 対象で、
-> 共有ペイロードには含めない（`check-assets` が機械的に検証する）。
 
 ---
 

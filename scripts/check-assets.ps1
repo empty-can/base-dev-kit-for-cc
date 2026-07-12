@@ -6,20 +6,25 @@
   個人ファイル・無視されうる設定キー・壊れた JSON が「配布されてしまう」状態かを自動判定する。
   対話 TUI が必要な項目（trust 承認・/memory・/status の確認など）は対象外（手で確認）。
 
-  判定基準（README 隔離方式 / 案1 対応）:
-    <Share> が git リポジトリなら「Git 追跡されているか」で配布可否を判定する。
-      - 個人ファイルが tracked        → FAIL（clone に含まれ参照側へ漏れる）
-      - 個人ファイルが untracked で実在 → WARN（gitignore 済みで配布はされないが掃除推奨）
-      - 不在                          → PASS
-    git リポジトリでない（コピー展開した素のディレクトリ）なら、実在＝FAIL にフォールバックする。
+  判定基準（README 隔離方式 / 案1 対応）― 検査対象の「層」で基準が変わる:
+    追跡基準（対象が git リポジトリのルート = 開発者の作業ツリー）:
+      - tracked            → FAIL（clone に含まれ参照側へ漏れる / payload に乗る）
+      - untracked で実在   → WARN（gitignore 済みで配布はされないが掃除推奨）
+      - 不在               → PASS
+    実体基準（対象が非 git = publish 時に取り出した payload の実体）:
+      - 実在               → FAIL（実際に配布される中身なので追跡状態は無関係）
 
   FAIL が1件以上で終了コード 1、なければ 0（CI 利用可）。
+
+.PARAMETER Payload
+  実体基準を強制する（publish-share から payload を検査する時に使う）。
 
 .EXAMPLE
   .\check-assets.ps1 -Share C:\path\to\share
 #>
 param(
-  [Parameter(Mandatory = $true)][string]$Share
+  [Parameter(Mandatory = $true)][string]$Share,
+  [switch]$Payload
 )
 
 if (-not (Test-Path -PathType Container $Share)) { Write-Error "ディレクトリが見つかりません: $Share"; exit 2 }
@@ -30,9 +35,21 @@ function Pass($m) { Write-Host "  [PASS] $m" }
 function Bad($m)  { Write-Host "  [FAIL] $m" -ForegroundColor Red;    $script:fail = 1 }
 function Warn($m) { Write-Host "  [WARN] $m" -ForegroundColor Yellow }
 
-# git リポジトリか判定
+# 層の判定。
+#
+# ⚠ rev-parse --is-inside-work-tree を使ってはいけない。祖先方向に .git を探すため、
+#    対象自身がリポジトリでなくても「どこかの repo 配下」なら真を返す。publish-share は
+#    payload を %TEMP% へ展開して検査するので、%TEMP% が worktree 配下のマシンでは payload が
+#    追跡基準で検査され、成果物の混入も統制ファイルの不在も FAIL から WARN へ退化する
+#    ＝ ゲートの fail-open。
+#    → 対象が「リポジトリのルートそのもの」の時だけ追跡基準を使う（--show-prefix が空）。
+#    → publish-share からは -Payload で実体基準を明示強制する（呼び出し側は層を知っている）。
+#    bash 版と同じ判定に揃えること。
 $isGit = $false
-try { git -C $Share rev-parse --is-inside-work-tree 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $isGit = $true } } catch { $isGit = $false }
+if (-not $Payload) {
+  $prefix = (git -C $Share rev-parse --show-prefix 2>$null)
+  if ($LASTEXITCODE -eq 0 -and [string]::IsNullOrWhiteSpace($prefix)) { $isGit = $true }
+}
 
 function Test-Tracked($rel) {
   git -C $Share ls-files --error-unmatch $rel 2>$null | Out-Null
@@ -59,7 +76,7 @@ function Check-Personal($rel, $label) {
   }
 }
 
-Write-Host ("[check-assets] 対象: $Share（" + $(if ($isGit) { 'git リポジトリ: 追跡基準' } else { '非 git: 実在基準' }) + "）")
+Write-Host ("[check-assets] 対象: $Share（" + $(if ($isGit) { 'リポジトリのルート: 追跡基準' } else { 'payload / 非リポジトリ: 実体基準' }) + "）")
 
 # 1. 個人ファイル CLAUDE.local.md
 Check-Personal 'CLAUDE.local.md'         'CLAUDE.local.md'
@@ -110,7 +127,7 @@ foreach ($guard in @('.claude\.gitignore', '.claude\.gitattributes')) {
   if (Test-Path -PathType Leaf (Join-Path $Share $guard)) {
     Pass "$guard あり（配布先の統制ファイル）"
   } elseif ($isGit) {
-    Warn "$guard が無い（publish 前に必要。この ref を publish すると配布先の除外設定・改行保護が失われる）"
+    Warn "$guard が無い（publish 前に必要。この状態のまま publish すると配布先の除外設定・改行保護が失われる）"
   } else {
     Bad "$guard が payload に無い。このまま publish すると配布先の除外設定・改行保護が失われる"
   }
