@@ -131,6 +131,54 @@ for _guard in ".claude/.gitignore" ".claude/.gitattributes"; do
   fi
 done
 
+# 「実際に配布されるファイル」の列挙。2-e / 2-f はこれを走査する。
+#
+# ⚠ 二層基準をここにも適用すること。作業ツリーに対して単純に find を回すと、gitignored で
+#    payload には乗らない .claude/work/ 等まで検査対象になり、通常の開発マシンで常時 FAIL する
+#    （IM-2 でゲートのオオカミ少年化として指摘された故障をそのまま再発させる）。
+#      - git 層（リポジトリのルート）→ 追跡されているファイルだけが payload に乗る
+#      - 非 git 層（取り出した payload の実体）→ そこにあるものが全て配布される
+payload_files() {
+  if [[ $IS_GIT -eq 1 ]]; then
+    git -C "$SHARE" ls-files -z -- .claude
+  else
+    ( cd "$SHARE" && find .claude -type f -print0 2>/dev/null )
+  fi
+}
+
+# 2-e. 配布物の本文に「環境固有の絶対パス」が埋まっていないか。
+#      payload は公開リポへ配る。開発者マシンのディレクトリ構成が載ると、(1) ローカルの FS
+#      レイアウトを公開してしまい、(2) 利用者のマシンには存在しないパスを指示することになる。
+#      （実例: skill が `C:\workspace\...\claude-plugins-official\plugins\` を参照していた）
+#      説明用の例示を弾ききれないので WARN 止まり（人間が判断する）。
+_abs_re='(^|[^A-Za-z])[A-Za-z]:\\[A-Za-z]|(^|[^A-Za-z])/home/[a-z][a-z0-9_-]*/|/Users/[a-z][a-z0-9_-]*/'
+_abs_hits=""
+while IFS= read -r -d '' _f; do
+  case "$_f" in */skills/win-file-encoding/*) continue ;; esac   # 変換 skill は CP932 パスが題材
+  if grep -qIE "$_abs_re" "$SHARE/$_f" 2>/dev/null; then _abs_hits+="${_f}"$'\n'; fi
+done < <(payload_files)
+if [[ -n "$_abs_hits" ]]; then
+  warn "配布物に環境固有の絶対パスらしき記述がある（公開前に確認すること）:"
+  while IFS= read -r _f; do [[ -n "$_f" ]] && echo "         $_f"; done <<< "$_abs_hits"
+else
+  pass "配布物に環境固有の絶対パスなし"
+fi
+
+# 2-f. 配布される .ps1 が UTF-8 BOM を保持しているか。
+#      BOM が無いと Windows PowerShell 5.1 が CP932 と誤読し、日本語コメント・メッセージが化ける
+#      （後続バイトが引用符を食えば構文エラーにもなる）。.gitattributes は改行しか守れず、
+#      BOM は「中身」なので一度落ちると復元されない。実際に BOM を除去する経路が存在する
+#      （win-file-encoding skill の convert_encoding.py --to-win）ため、機構でも検出する。
+_ps1_nobom=0
+while IFS= read -r -d '' _f; do
+  case "$_f" in *.ps1|*.ps1.template) ;; *) continue ;; esac
+  if [[ "$(head -c 3 "$SHARE/$_f" | od -An -tx1 | tr -d ' ')" != "efbbbf" ]]; then
+    bad "$_f に UTF-8 BOM が無い（Windows PowerShell 5.1 で日本語が化ける）"
+    _ps1_nobom=1
+  fi
+done < <(payload_files)
+[[ $_ps1_nobom -eq 0 ]] && pass "配布される .ps1 は全て BOM 付き"
+
 # 3. settings.json の JSON 構文 ＋ project/local で無視される security キーの検出
 SETTINGS="$SHARE/.claude/settings.json"
 if [[ -f "$SETTINGS" ]]; then

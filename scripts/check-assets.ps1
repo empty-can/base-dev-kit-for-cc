@@ -133,6 +133,55 @@ foreach ($guard in @('.claude\.gitignore', '.claude\.gitattributes')) {
   }
 }
 
+# 「実際に配布されるファイル」の列挙。2-e / 2-f はこれを走査する。
+#
+# ⚠ 二層基準をここにも適用すること。作業ツリーに対して単純に再帰列挙すると、gitignored で
+#    payload には乗らない .claude\work\ 等まで検査対象になり、通常の開発マシンで常時 FAIL する
+#    （IM-2 でゲートのオオカミ少年化として指摘された故障をそのまま再発させる）。bash 版と対称。
+function Get-PayloadFiles {
+  if ($isGit) {
+    (git -C $Share ls-files -- .claude) | Where-Object { $_ } | ForEach-Object { $_ -replace '/', '\' }
+  } else {
+    $base = (Join-Path $Share '.claude')
+    if (Test-Path $base) {
+      Get-ChildItem -Recurse -File -LiteralPath $base |
+        ForEach-Object { $_.FullName.Substring($Share.Length + 1) }
+    }
+  }
+}
+$payloadFiles = @(Get-PayloadFiles)
+
+# 2-e. 配布物の本文に「環境固有の絶対パス」が埋まっていないか。
+#      payload は公開リポへ配る。開発者マシンのディレクトリ構成が載ると、(1) ローカルの FS
+#      レイアウトを公開してしまい、(2) 利用者のマシンには存在しないパスを指示することになる。
+#      説明用の例示を弾ききれないので WARN 止まり（人間が判断する）。
+$absPattern = '(^|[^A-Za-z])[A-Za-z]:\\[A-Za-z]|(^|[^A-Za-z])/home/[a-z][a-z0-9_-]*/|/Users/[a-z][a-z0-9_-]*/'
+$absHits = $payloadFiles |
+  Where-Object { $_ -notmatch 'win-file-encoding' } |
+  Where-Object {
+    $raw = Get-Content -Raw -LiteralPath (Join-Path $Share $_) -ErrorAction SilentlyContinue
+    $raw -and ($raw -match $absPattern)
+  }
+if ($absHits) {
+  Warn "配布物に環境固有の絶対パスらしき記述がある（公開前に確認すること）:"
+  $absHits | ForEach-Object { Write-Host "         $_" }
+} else {
+  Pass "配布物に環境固有の絶対パスなし"
+}
+
+# 2-f. 配布される .ps1 が UTF-8 BOM を保持しているか。
+#      BOM が無いと Windows PowerShell 5.1 が CP932 と誤読して日本語が化ける。BOM は「中身」なので
+#      .gitattributes では守れず、一度落ちると復元されない（convert_encoding.py --to-win が落とす）。
+$noBom = $false
+$payloadFiles | Where-Object { $_ -like '*.ps1' -or $_ -like '*.ps1.template' } | ForEach-Object {
+  $head = [System.IO.File]::ReadAllBytes((Join-Path $Share $_)) | Select-Object -First 3
+  if (-not ($head.Count -eq 3 -and $head[0] -eq 0xEF -and $head[1] -eq 0xBB -and $head[2] -eq 0xBF)) {
+    Bad "$_ に UTF-8 BOM が無い（Windows PowerShell 5.1 で日本語が化ける）"
+    $noBom = $true
+  }
+}
+if (-not $noBom) { Pass "配布される .ps1 は全て BOM 付き" }
+
 # 3. settings.json の JSON 構文 ＋ project/local で無視される security キーの検出
 $settings = Join-Path $Share '.claude\settings.json'
 if (Test-Path $settings) {
