@@ -49,8 +49,13 @@ git -C "$DEV_ROOT" rev-parse --git-dir >/dev/null 2>&1 || {
   echo "‼ 共有本体（basic_dot_claude のクローン）が見つからない: $SHARE_BODY" >&2
   echo "   .git がディレクトリである独立クローンを指定してください（submodule の checkout は不可）。" >&2
   exit 2; }
+# パス形式を揃えてから比較する。Git Bash の rev-parse --show-toplevel は Windows 形式
+# （C:/...）を返すが pwd は MSYS 形式（/c/...）を返すため、素で比較すると常に不一致になる。
+# 双方を cd + pwd で正規化すれば、Linux / macOS でもそのまま動く。
 _share_abs="$(cd "$SHARE_BODY" && pwd)"
-_share_top="$(git -C "$SHARE_BODY" rev-parse --show-toplevel 2>/dev/null || true)"
+_share_top_raw="$(git -C "$SHARE_BODY" rev-parse --show-toplevel 2>/dev/null || true)"
+_share_top=""
+[ -n "$_share_top_raw" ] && _share_top="$(cd "$_share_top_raw" && pwd)"
 [ -n "$_share_top" ] && [ "$_share_abs" = "$_share_top" ] || {
   echo "‼ 共有本体はリポジトリのルートを指す必要があります: $SHARE_BODY" >&2
   echo "   （検出したルート: ${_share_top:-不明}）" >&2
