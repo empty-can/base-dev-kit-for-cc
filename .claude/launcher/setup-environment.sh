@@ -37,8 +37,18 @@ fi
 #   - custom.env に書かれた任意のコードが実行されるのを防ぐ
 # 受け付ける書式は custom.env.template のヘッダに記した「素の KEY=VALUE」のみ。
 if [ -f "${_CUSTOM_ENV}" ]; then
+  _first=1
   while IFS= read -r _line || [ -n "${_line}" ]; do
     _line="${_line%$'\r'}"                          # CRLF 耐性
+    # UTF-8 BOM 耐性。Windows のメモ帳で「UTF-8 (BOM)」保存すると先頭に EF BB BF が付く。
+    # BOM を残すと先頭行のキーが "﻿FOO" となって名前検査に落ち、その 1 件だけが
+    # 黙って無効になる（PowerShell の Get-Content は BOM を剥がすため、同じ custom.env が
+    # OS で違う結果になる）。しかも警告に出るキー名は BOM が不可視なので正しく見え、
+    # 利用者は原因に到達できない。ここで落とす。
+    if [ "${_first}" -eq 1 ]; then
+      _line="${_line#$'\xef\xbb\xbf'}"
+      _first=0
+    fi
     _line="${_line#"${_line%%[![:space:]]*}"}"      # 前後の空白を除去
     _line="${_line%"${_line##*[![:space:]]}"}"
     case "${_line}" in ''|'#'*) continue ;; esac    # 空行・コメント行
@@ -77,7 +87,7 @@ if [ -f "${_CUSTOM_ENV}" ]; then
 
     export "${_key}=${_val}"
   done < "${_CUSTOM_ENV}"
-  unset _line _key _val _s _skip
+  unset _line _key _val _s _skip _first
 fi
 
 # ---- 2) チーム統制 env（分類C）: 後勝ち固定 ------------------------------

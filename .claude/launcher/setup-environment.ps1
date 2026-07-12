@@ -43,8 +43,13 @@ if (Test-Path $CustomEnv) {
         $key = $line.Substring(0, $idx).Trim()
         $val = $line.Substring($idx + 1).Trim()
 
-        # 環境変数名として妥当なものだけを通す
-        if ($key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { continue }
+        # 環境変数名として妥当なものだけを通す。
+        # 黙って捨ててはいけない。typo（例: アンダースコアの入れ忘れ）で env が効かない時、
+        # 手掛かりが何も無いと利用者は原因に到達できない。bash 版と同じ警告を出す。
+        if ($key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+            Write-Warning "custom.env の行を読み飛ばしました（環境変数名として不正）: $key"
+            continue
+        }
 
         # 分類A のキーは読み込まない。ファイルに書いた機微値が実際に効いてしまうと
         # 「機微はファイルに置かない」規律が機構ごと破れるため、警告して読み飛ばす。

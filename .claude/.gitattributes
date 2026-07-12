@@ -11,7 +11,15 @@
 # PowerShell: UTF-8 BOM + CRLF（Windows PowerShell 5.1 の日本語コメント対応。
 #   BOM は Git が触らずコンテンツとして保持される）
 # shell / env: UTF-8 + LF
+#
+# ⚠ 既定を「全ファイル LF」に倒し、CRLF が要る launcher/*.ps1 だけを後勝ちで例外にする。
+#    パスを列挙する方式（launcher/* だけを指定する）は、skills 同梱の .sh のように後から
+#    増えた配布物が保護対象から漏れ、配布先の Windows clone で CRLF 化して壊れる
+#    （CR-1 と同じ故障クラスが、指定漏れという形で再発芽する）。
+#    text=auto なのでバイナリは Git が検出して変換しない。
 # =============================================================================
+
+* text=auto eol=lf
 
 /launcher/*.ps1               text eol=crlf
 /launcher/*.ps1.template      text eol=crlf
