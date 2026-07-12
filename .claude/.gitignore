@@ -21,7 +21,12 @@ CLAUDE.local.md
 /option-settings.ps1
 /custom.env
 
-# --- 作業一時物・ローカル専用（利用側の各リポジトリで生成される）---
+# --- セッション成果物・作業一時物（利用側の各リポジトリで生成される）---
+# 配布先 basic_dot_claude は submodule として利用先の .claude/ になる。利用者が
+# ここに作った成果物を git add -A で拾うと、共有リポへ混入して公開されてしまう。
+# 開発リポ側の reports は追跡解除で除去する（grooming）。本行は配布先を守るためのもの。
+/reports/
 /work/
 /workspace/
 /agent-memory-local/
+work_instructions.txt
