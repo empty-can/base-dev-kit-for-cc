@@ -25,7 +25,11 @@ CLAUDE.local.md
 # 配布先 basic_dot_claude は submodule として利用先の .claude/ になる。利用者が
 # ここに作った成果物を git add -A で拾うと、共有リポへ混入して公開されてしまう。
 # 開発リポ側の reports は追跡解除で除去する（grooming）。本行は配布先を守るためのもの。
+#
+# ⚠ このリストは scripts/check-assets の 2-c 配列（成果物クラスの正本）に追随させること。
+#    開発リポの root .gitignore とも歩調を揃える。片側だけ更新すると、配布先だけ穴が残る。
 /reports/
+/plans/
 /work/
 /workspace/
 /agent-memory-local/
