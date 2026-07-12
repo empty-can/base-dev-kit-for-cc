@@ -61,6 +61,15 @@ $TeamOpts = [ordered]@{
 # ---- 3) 利用者可変の起動オプション（分類D・option-settings.ps1）------------
 $Opts = [ordered]@{}
 $OptsFile = Join-Path $RootDir '.claude\option-settings.ps1'
+
+# 利用者が誤って launcher\ 側（テンプレートの隣）へ option-settings.ps1 を置いた場合、
+# そのままでは無警告で無視され、起動オプションが一切効かない理由に到達できない。
+# custom.env と同じガードを張る（片方だけ守るのは、探すべき場所を一つ増やすだけ）。
+$MisplacedOpts = Join-Path $RootDir '.claude\launcher\option-settings.ps1'
+if (Test-Path $MisplacedOpts) {
+    Write-Warning "$MisplacedOpts は読み込まれません。option-settings.ps1 は一つ上の .claude\ 直下に置いてください。"
+}
+
 if (Test-Path $OptsFile) {
     . $OptsFile   # $Opts を定義（未作成なら空のまま）
 }

@@ -71,6 +71,15 @@ declare -A TEAM_OPTS=(
 # ---- 3) 利用者可変の起動オプション（分類D・option-settings.sh）------------
 declare -A OPTS=()
 _OPTS_FILE="${_ROOT_DIR}/.claude/option-settings.sh"
+
+# 利用者が誤って launcher/ 側（テンプレートの隣）へ option-settings.sh を置いた場合、
+# そのままでは無警告で無視され、起動オプションが一切効かない理由に到達できない。
+# custom.env と同じガードを張る（片方だけ守るのは、探すべき場所を一つ増やすだけ）。
+if [ -f "${_ROOT_DIR}/.claude/launcher/option-settings.sh" ]; then
+  printf '⚠ %s は読み込まれません。option-settings.sh は一つ上の .claude/ 直下に置いてください。\n' \
+    "${_ROOT_DIR}/.claude/launcher/option-settings.sh" >&2
+fi
+
 if [ -f "${_OPTS_FILE}" ]; then
   # shellcheck source=/dev/null
   . "${_OPTS_FILE}"   # OPTS を定義（未作成なら空のまま）
