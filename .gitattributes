@@ -13,3 +13,9 @@
 /start_claude_code.sh                 text eol=lf
 /.claude/launcher/*.sh                text eol=lf
 /.claude/launcher/*.sh.template       text eol=lf
+
+# custom.env.template: bash 側のローダが読むため LF 固定（CRLF だと値末尾に \r が残る）
+/.claude/launcher/custom.env.template text eol=lf
+
+# 配布先（basic_dot_claude）向けの同等指定は .claude/.gitattributes が担う。
+# 本ファイルは .claude/ 外のため publish-share の payload に乗らない＝開発リポ内専用。

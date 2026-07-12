@@ -11,8 +11,15 @@
 # ここはユーザが自由に変えてよい起動オプション（分類D）。チームで統制したい
 # オプション（分類C）は start_claude_code.ps1 側の $TeamOpts に定義されている。
 #
-# 網羅方針: Claude Code の起動オプションを（危険系を除き）ほぼ全量掲載。公式デフォルト値は
-# コメントで明記。詳細は公式 docs の CLI reference を参照。
+# 網羅方針: Claude Code の起動オプションをほぼ全量掲載し、公式デフォルト値はコメントで明記する。
+#   意図的に載せていないもの:
+#     - --system-prompt / --system-prompt-file … 既定のシステムプロンプトを丸ごと置き換える。
+#       キットの前提（CLAUDE.md / rules のロード）が崩れるため、ここでは扱わない。
+#     - --allowedTools / --disallowedTools … 権限統制に直結するため settings.json 側で管理する。
+#   詳細は公式 docs の CLI reference を参照。
+#
+# 反復可能フラグ（--add-dir / --plugin-dir / --mcp-config 等）は順序付きハッシュの性質上
+# 1 値しか書けない。複数渡す場合は起動時引数を使う（各項目のコメント参照）。
 # =============================================================================
 
 $Opts = [ordered]@{
@@ -23,7 +30,10 @@ $Opts = [ordered]@{
     # '--fallback-model' = 'claude-sonnet-5'
 
     # ===== 設定ソース・作業ディレクトリ =====
-    # 追加の作業ディレクトリ
+    # 追加の作業ディレクトリ。ここに書けるのは 1 値だけ（順序付きハッシュはキーを重複できず、
+    # フラグの繰り返し指定を表現できない）。複数ディレクトリを渡したい場合は起動時引数で:
+    #   .\start_claude_code.ps1 --add-dir C:\path\a --add-dir C:\path\b
+    # 同じ制約は --plugin-dir / --mcp-config 等の反復可能フラグにも当てはまる。
     # '--add-dir' = 'C:/other/repo'
     # 追加で読む settings ファイル
     # '--settings' = './.claude/settings.extra.json'
@@ -37,7 +47,8 @@ $Opts = [ordered]@{
     # '--strict-mcp-config' = $true
 
     # ===== 権限 =====
-    # 権限モード（default / acceptEdits / plan / bypassPermissions など）
+    # 権限モード（default / acceptEdits / plan）
+    # ※ bypassPermissions は権限確認を全て飛ばすため、下の「非推奨・破壊的」節に隔離した
     # '--permission-mode' = 'default'
     # 権限確認を委譲する外部ツール
     # '--permission-prompt-tool' = 'mcp__approval__prompt'
@@ -107,4 +118,6 @@ $Opts = [ordered]@{
     # ===== ⚠⚠ 非推奨・破壊的（内容を理解した上でのみ有効化）⚠⚠ =====
     # 権限確認をすべてスキップする。誤操作・情報漏えいのリスクを理解した上で。
     # '--dangerously-skip-permissions' = $true
+    # 権限モードとして同等の効果を持つ。上記フラグと同じ扱いにすること。
+    # '--permission-mode' = 'bypassPermissions'
 }
