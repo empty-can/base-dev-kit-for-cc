@@ -10,8 +10,17 @@
       "Read(**/*.reg)",
       "Edit(**/*.reg)",
       "Write(**/*.reg)",
+      "Read(//**/*.reg)",
+      "Edit(//**/*.reg)",
+      "Write(//**/*.reg)",
       "Edit(**/*.bat)",
-      "Write(**/*.bat)"
+      "Write(**/*.bat)",
+      "Edit(//**/*.bat)",
+      "Write(//**/*.bat)",
+      "Edit(**/*.cmd)",
+      "Write(**/*.cmd)",
+      "Edit(//**/*.cmd)",
+      "Write(//**/*.cmd)"
     ],
     "allow": [
       "Bash(git status:*)",
@@ -49,6 +58,12 @@
             "if": "Read(**/*.bat)",
             "command": "python",
             "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/bat_cp932_guard.py", "pre"]
+          },
+          {
+            "type": "command",
+            "if": "Read(//**/*.bat)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/bat_cp932_guard.py", "pre"]
           }
         ]
       }
@@ -84,6 +99,42 @@
           {
             "type": "command",
             "if": "Write(**/*.ps1)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
+          },
+          {
+            "type": "command",
+            "if": "Edit(**/*.psm1)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
+          },
+          {
+            "type": "command",
+            "if": "Write(**/*.psm1)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
+          },
+          {
+            "type": "command",
+            "if": "Edit(**/*.psd1)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
+          },
+          {
+            "type": "command",
+            "if": "Write(**/*.psd1)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
+          },
+          {
+            "type": "command",
+            "if": "Edit(**/*.ps1.template)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
+          },
+          {
+            "type": "command",
+            "if": "Write(**/*.ps1.template)",
             "command": "python",
             "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
           }

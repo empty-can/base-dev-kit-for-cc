@@ -25,6 +25,21 @@ param(
   [switch]$Keep
 )
 
+$pushed = $false
+
+# ⚠ 引数の検証は、一時ディレクトリの作成と $env: の書き換えより**前**に済ませること。
+#    ここを後回しにすると、検証失敗の exit が try/finally の外で起きるため、env は汚染された
+#    まま・一時ディレクトリは残ったままになる（＝このスクリプトが直そうとした症状そのものが、
+#    -Share の打ち間違え一発で再現する）。
+$shareAbs = ""
+if ($Share -ne "") {
+  if (-not (Test-Path -PathType Container $Share)) {
+    Write-Host "‼ <Share> が見つかりません: $Share"
+    exit 1
+  }
+  $shareAbs = (Resolve-Path $Share).Path
+}
+
 $cfg  = Join-Path $env:TEMP ("cc-clean-cfg-"  + [System.IO.Path]::GetRandomFileName())
 $work = Join-Path $env:TEMP ("cc-clean-work-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Force -Path $cfg, $work | Out-Null
@@ -36,29 +51,29 @@ Write-Host "[clean-test-env] 作業ディレクトリ   = $work"
 $savedCfg      = $env:CLAUDE_CONFIG_DIR
 $savedAddDirMd = $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD
 
-$env:CLAUDE_CONFIG_DIR = $cfg
-$cli = @()
-
-if ($Share -ne "") {
-  if (-not (Test-Path -PathType Container $Share)) { Write-Error "<Share> が見つかりません: $Share"; exit 1 }
-  $shareAbs = (Resolve-Path $Share).Path
-  $cli += @("--add-dir", $shareAbs)
-  $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = "1"   # CLAUDE.md / rules も結合
-  Write-Host "[clean-test-env] 結合: --add-dir $shareAbs（+ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1）"
-  $settings = Join-Path $shareAbs ".claude\settings.json"
-  if (Test-Path $settings) {
-    $cli += @("--settings", $settings)   # settings.json は --add-dir で来ないので明示
-    Write-Host "[clean-test-env] 結合: --settings $settings"
-  }
-}
-
 try {
+  $env:CLAUDE_CONFIG_DIR = $cfg
+  $cli = @()
+
+  if ($shareAbs -ne "") {
+    $cli += @("--add-dir", $shareAbs)
+    $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = "1"   # CLAUDE.md / rules も結合
+    Write-Host "[clean-test-env] 結合: --add-dir $shareAbs（+ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1）"
+    $settings = Join-Path $shareAbs ".claude\settings.json"
+    if (Test-Path $settings) {
+      $cli += @("--settings", $settings)   # settings.json は --add-dir で来ないので明示
+      Write-Host "[clean-test-env] 結合: --settings $settings"
+    }
+  }
+
   Write-Host "[clean-test-env] 起動中... (起動後は /memory /context /status /doctor /skills /agents で検証)"
   Push-Location $work
+  $pushed = $true
   & claude @cli
 }
 finally {
-  Pop-Location
+  # Push-Location に到達する前に落ちた場合に Pop すると、呼び出し元のカレントを巻き戻してしまう。
+  if ($pushed) { Pop-Location }
 
   # 元の値へ戻す。元が未設定なら $null を渡して変数ごと消す（空文字を代入すると
   # 「空で設定済み」という別状態になり、未設定と区別がつかなくなる）。

@@ -1,6 +1,7 @@
 ---
 paths:
   - "**/*.ps1"
+  - "**/*.ps1.template"
   - "**/*.psm1"
   - "**/*.psd1"
   - "**/*.bat"
@@ -18,11 +19,18 @@ paths:
 |---|---|---|---|
 | `.ps1` / `.psm1` / `.psd1` | PowerShell | **UTF-8 + BOM + CRLF** | 5.1 は BOM 無しを CP932 と誤読、7 は CP932 を読めない。**両対応はこの形式だけ**。Claude のツールでそのまま読み書きしてよい |
 | `.bat` | cmd.exe | **CP932 + CRLF・BOM なし** | cmd.exe は BOM を読み飛ばさず **1 行目を壊す**。`chcp 65001` を先頭に置く回避策はコンソール表示品質を損なうため採らない |
-| `.cmd` | cmd.exe | **使用禁止**（`.bat` に一本化） | `.bat` との差は一部組み込みの ERRORLEVEL 挙動のみ。例外を 1 つに絞るため |
-| `.reg` / `.ini` | regedit / Win32 API | **スコープ外** | `.env` と同格。`settings.json` の `permissions.deny` で Claude の R/W を禁止している |
+| `.cmd` | cmd.exe | **使用禁止**（`.bat` に一本化） | `.bat` との差は一部組み込みの ERRORLEVEL 挙動のみ。例外を 1 つに絞るため。`.bat` と同じく `permissions.deny` で編集を拒否している |
+| `.reg` | regedit | **スコープ外**（`permissions.deny` で R/W を禁止） | UTF-16LE + BOM が要求される形式で、`.env` と同格に扱う |
+| `.ini` | Win32 `GetPrivateProfile*` | **規定しない**（deny も**していない**） | `tox.ini` / `pytest.ini` / `mypy.ini` のように **UTF-8 が正しい `.ini` が広く存在する**ため、拡張子で一律に扱えない。**Win32 プロファイル用途の CP932 な `.ini` を扱うときは、その都度 `file` やバイト列で文字コードを確かめること**（機構による保護は無い） |
 | `.csv` | Excel | UTF-8 + BOM | Excel は BOM を見て UTF-8 と判定する |
 
-改行は `.gitattributes`（ルート ＋ `.claude/`）が拡張子ベースで固定する。**Claude が改行を意識する必要はない**。
+改行は `.gitattributes` が拡張子ベースで固定する。ただし**その保護が届く範囲は、`.gitattributes` が置かれた
+ディレクトリ以下だけ**である点に注意する:
+
+- 本キットの payload に乗るのは **`.claude/.gitattributes`** だけなので、**`.claude/` の外**（利用先リポジトリの
+  ルート直下や `scripts/` 等）は、そのリポジトリ自身が `.gitattributes` を持っていなければ**無防備**。
+- 迷ったら `git check-attr text eol -- <path>` で確かめる。属性が付いていない `.sh` は
+  `core.autocrlf=true`（Git for Windows 既定）の clone で CRLF 化し、`set -euo pipefail` 下で `$'\r'` により落ちる。
 
 ## `.ps1` は普通に編集してよい（ただし新規作成は必ず壊れる）
 
@@ -41,20 +49,20 @@ tr -cd '\r' < <file> | wc -c
 head -c 3 <file> | od -An -tx1
 ```
 
-⚠ **Git Bash の `grep` / `awk` で CR を数えてはならない。間違い方が 2 通りあり、どちらも“それらしい値”を返す**
-（真値 CR=2・3 行のファイルで実測）:
+⚠ **Git Bash（MSYS）の `grep` / `awk` で CR を数えてはならない。しかも間違い方が 2 通りあり、どちらも
+“それらしい値”を返す**（真値 CR=2・3 行のファイルで実測）:
 
 | 書き方 | 返る値 | 何が起きているか |
 |---|---|---|
-| `grep -c $'\r' <file>` | **3**（＝総行数） | パターンが空になり**全行にマッチ**する |
-| `grep -c "$(printf '\r')" <file>` | **0** | grep がテキストモードで**入力の CR を剥がす**ため一致しない |
+| `grep -c "$(printf '\r')" <file>` | **0** | grep がテキストモードで**入力の CR を剥がす**ため、一致し得ない |
+| `grep -c $'\r' <file>` | **0 または総行数（3）** | **呼び出し文脈で変わる**。パターンが CR として届けば 0、空文字列に落ちれば**全行にマッチして総行数**（実測: コマンド文字列に直接書くと 0、スクリプトファイル内では 3） |
 | `awk '/\r$/' <file>` | **0** | awk も CR を剥がす |
 | `grep -c -U "$(printf '\r')" <file>` | **2** ✅ | `-U`（バイナリ扱い）なら CR が見える |
-| `tr -cd '\r' < <file> \| wc -c` | **2** ✅ | 正解 |
+| `tr -cd '\r' < <file> \| wc -c` | **2** ✅ | 正解。バイト単位で数える |
 
-**「大きい数」と「0」の両方が誤りになりうる**ため、`before → after` を別の書き方で測ると
-**壊れた計測どうしが「修正が効いた」ように見える**（実際に起きた: `CR 50 → 0` は
-「空パターンで行数 50」→「CR を剥がされて 0」という別々の壊れ方だった）。**`tr` か `git ls-files --eol` を使う**。
+**「0」と「総行数」の両方が誤りになりうる**のが厄介で、`before → after` を別の書き方で測ると
+**壊れた計測どうしが「修正が効いた」ように見える**（実際に起きた: `CR 50 → 0` は「空パターンで行数 50」→
+「CR を剥がされて 0」という**別々の壊れ方**の組み合わせだった）。**`tr` か `git ls-files --eol` を使う**。
 
 ## `.bat` は原本に触らない（hook が自動処理する）
 
@@ -71,6 +79,8 @@ head -c 3 <file> | od -An -tx1
 
 - **原本への `Edit` / `Write` は `permissions.deny` で拒否される**。hook は Python が無い環境では失敗して素通り
   するため、**ハードなガードは permission 側が担い、hook は利便性を担う**という二層構造にしてある。
+  **hook には Python 3.10 以上が `python` として PATH に必要**（無い場合、`.bat` は読めないが原本は壊れない）。
+  hook の `if` 条件は **Claude Code v2.1.176 以上**でないと正しくマッチしない（それ以前は起動しない）。
 - **CP932 に存在しない文字は書き戻し時に拒否される**（原本は書き換わらない）。`⚠` `‼` `✓` `✗` は CP932 に
   符号位置が無いので、`.bat` のメッセージ記号は **ASCII（`[!]` / `[OK]` 等）**を使う。
   `〜` `—` `−` のような和字は `.claude/skills/win-file-encoding/references/cp932-mapping.json` の表で

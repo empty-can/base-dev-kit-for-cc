@@ -16,6 +16,12 @@
      -Ref 必須 / DevRoot の CWD 非依存 / 配布先ルート検査（gitlink 拒否）/ symlink 拒否 /
      zip 経由の展開 / core.autocrlf=false / 展開の fail-closed / commit・push 失敗の検知。
 #>
+
+# Windows PowerShell 5.1 では stderr リダイレクト（*> $null）と $ErrorActionPreference='Stop' の
+# 組み合わせで native の stderr が terminating error に化け、ガードの診断と終了コード規約が崩れる
+# （実測: ref の打ち間違いで『‼ ref が存在しない』(exit 2) ではなく NativeCommandError の生スタックが出る）。
+# 対象シェルを機械で宣言して fail fast させる。
+#requires -Version 7
 param(
   [Parameter(Mandatory = $true)][string]$Marketplace,
   [Parameter(Mandatory = $true)][string]$Ref,
@@ -28,6 +34,14 @@ $ErrorActionPreference = 'Stop'
 #    terminating error になり、直後の exit <code> に到達せず終了コードが不定になる。
 
 if (-not $Name) { $Name = Split-Path -Leaf $Plugin }
+
+# $Name はそのまま plugins/<Name> というパスに連結される。検証しないと '..' や '.' や
+# スラッシュ入りの値で dest が marketplace のルートを指し、後段の「.git 以外を全削除」が
+# そこへ走る（実測: -Name .. でルートが plugin の中身に置換されて push された）。
+if ($Name -eq '' -or $Name -eq '.' -or $Name -eq '..' -or $Name -match '[\\/]') {
+  Write-Host "‼ plugin 名として不正: '$Name'（'/' '\' '.' '..' は使えない）"
+  exit 2
+}
 
 # 開発リポの位置はスクリプトの場所から解決する（CWD に依存させない。別リポジトリ内から
 # 実行して、そのリポのプラグインを publish してしまう事故を防ぐ）。
@@ -112,13 +126,34 @@ try {
   #    ⚠ robocopy /XF は使わない。ファイル名マッチが全階層に効くため、plugin 内の同名ファイル
   #       （.gitignore 等）まで除外してしまい bash 版と挙動が食い違う。bash 版と同じく
   #       「.git だけ残して消し、payload を上書きコピー」で揃える。
+  #    ⚠ New-Item -ItemType Directory -Force は、パスをファイルが占有していると
+  #       $ErrorActionPreference='Stop' でも**例外を投げず $null を返して黙って続行する**
+  #       （実測）。その後の Get-ChildItem -LiteralPath はそのファイル自身を返すため、
+  #       「dest を空にする」つもりの削除が占有ファイルを消し、Copy-Item は dest 不在の
+  #       ため最初の子（.claude-plugin/）を dest へ「リネーム」してしまう。結果、階層の
+  #       壊れた plugin が commit・push され「✓ publish 完了」が表示される。
+  #       事前にディレクトリであることを検査し、作成後も確認する。
   $script:dest = Join-Path $Marketplace "plugins/$Name"
+  if (Test-Path -LiteralPath $script:dest -PathType Leaf) {
+    Write-Host "‼ 配布先 $script:dest がディレクトリではない（ファイルが占有している）。publish 中止"; exit 1
+  }
   New-Item -ItemType Directory -Force -Path $script:dest | Out-Null
+  if (-not (Test-Path -LiteralPath $script:dest -PathType Container)) {
+    Write-Host "‼ 配布先ディレクトリを作れない: $script:dest。publish 中止"; exit 1
+  }
   Get-ChildItem -Force -LiteralPath $script:dest |
     Where-Object { $_.Name -ne '.git' } |
     Remove-Item -Recurse -Force
   Get-ChildItem -Force -LiteralPath $src | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $script:dest -Recurse -Force
+  }
+
+  # 5-b. 出口検査: コピーしたファイル数が payload と一致するか（2-b と対称の fail-closed）
+  $copied = (Get-ChildItem -Recurse -File -Force -LiteralPath $script:dest |
+    Where-Object { $_.FullName -notlike (Join-Path $script:dest '.git*') } | Measure-Object).Count
+  if ($copied -ne $expected) {
+    Write-Host "‼ ミラーの結果が payload と一致しない（payload $expected / 配布先 $copied）。publish 中止"
+    exit 1
   }
 } finally { Remove-Item -Recurse -Force $tmp }
 

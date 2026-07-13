@@ -15,6 +15,12 @@
      無自覚に publish する事故（内部レポートの公開リポ流出）を招く。publish する ref は
      毎回意識して選ぶこと。payload に成果物が混入していれば check-assets が FAIL させる。
 #>
+
+# Windows PowerShell 5.1 では stderr リダイレクト（*> $null）と $ErrorActionPreference='Stop' の
+# 組み合わせで native の stderr が terminating error に化け、ガードの診断と終了コード規約が崩れる
+# （実測: ref の打ち間違いで『‼ ref が存在しない』(exit 2) ではなく NativeCommandError の生スタックが出る）。
+# 対象シェルを機械で宣言して fail fast させる。
+#requires -Version 7
 param(
   [Parameter(Mandatory = $true)]
   [string]$Ref,
@@ -137,6 +143,19 @@ try {
   # payload を上書きコピー（-Force で隠しファイル・既存ファイルも対象にする）
   Get-ChildItem -Force -LiteralPath $src | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $ShareBody -Recurse -Force
+  }
+
+  # 5-b. 出口検査: payload の全ファイルが配布先に着地したか（2-b と対称の fail-closed）
+  #      ミラー段の部分失敗を素通しにすると、混合状態が commit/push され「✓ publish 完了」
+  #      が表示される。bash 版の 5-b と対称。
+  $missing = @(Get-ChildItem -Recurse -File -Force -LiteralPath $src | ForEach-Object {
+      $rel = $_.FullName.Substring($src.Length).TrimStart('\', '/')
+      if (-not (Test-Path -LiteralPath (Join-Path $ShareBody $rel))) { $rel }
+    })
+  if ($missing.Count -gt 0) {
+    Write-Host "‼ ミラーの結果に payload のファイルが $($missing.Count) 件欠落している。publish 中止"
+    $missing | ForEach-Object { Write-Host "   欠落: $_" }
+    exit 1
   }
 } finally { Remove-Item -Recurse -Force $tmp }
 

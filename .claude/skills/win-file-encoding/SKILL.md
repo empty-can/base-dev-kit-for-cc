@@ -49,7 +49,10 @@ SCRIPT=".claude/skills/win-file-encoding/scripts/convert_encoding.py"
   適用すると Windows PowerShell 5.1 が CP932 と誤読して日本語が化ける（目的と正反対の結果になる）。
 - **`.gitattributes` で改行が管理されているファイル**: リポジトリが方針を宣言している以上そちらが優先する。
   判断手順は `git check-attr text eol -- <path>`。属性が設定されていれば本 skill の改行変換は不要。
-- **`.reg` / `.ini`**: `permissions.deny` で Claude の R/W を禁止しているスコープ外資産。
+- **`.reg`**: `permissions.deny` で Claude の R/W を禁止しているスコープ外資産（UTF-16LE + BOM が要求される形式）。
+- **`.ini`**: 拡張子だけでは文字コードを決められない（`tox.ini` / `pytest.ini` のように **UTF-8 が正しい `.ini`**
+  が広く存在する）。**deny もしていない**。Win32 プロファイル用途の CP932 な `.ini` を変換するときだけ、
+  対象を 1 ファイルずつ指定して使うこと。
 
 ## 依存・仕様
 
