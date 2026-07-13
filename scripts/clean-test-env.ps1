@@ -31,6 +31,11 @@ New-Item -ItemType Directory -Force -Path $cfg, $work | Out-Null
 Write-Host "[clean-test-env] CLAUDE_CONFIG_DIR = $cfg"
 Write-Host "[clean-test-env] 作業ディレクトリ   = $work"
 
+# PowerShell の $env: はプロセス全体を書き換える（bash と違い子プロセスに閉じない）。復元しないと、
+# スクリプト終了後も呼び出し元シェルが削除済みの一時 config dir を指したままになる。
+$savedCfg      = $env:CLAUDE_CONFIG_DIR
+$savedAddDirMd = $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD
+
 $env:CLAUDE_CONFIG_DIR = $cfg
 $cli = @()
 
@@ -54,10 +59,17 @@ try {
 }
 finally {
   Pop-Location
+
+  # 元の値へ戻す。元が未設定なら $null を渡して変数ごと消す（空文字を代入すると
+  # 「空で設定済み」という別状態になり、未設定と区別がつかなくなる）。
+  [Environment]::SetEnvironmentVariable('CLAUDE_CONFIG_DIR', $savedCfg)
+  [Environment]::SetEnvironmentVariable('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD', $savedAddDirMd)
+
   if ($Keep) {
     Write-Host "[clean-test-env] 一時ディレクトリを残しました: $cfg  $work"
   } else {
     Remove-Item -Recurse -Force $cfg, $work -ErrorAction SilentlyContinue
     Write-Host "[clean-test-env] 一時ディレクトリを削除しました（残すには -Keep）"
   }
+  Write-Host "[clean-test-env] 環境変数を元に戻しました"
 }

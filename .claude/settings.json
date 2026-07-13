@@ -74,6 +74,18 @@
             "if": "Write(.claude/.bat-shadow/**)",
             "command": "python",
             "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/bat_cp932_guard.py", "post"]
+          },
+          {
+            "type": "command",
+            "if": "Edit(**/*.ps1)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
+          },
+          {
+            "type": "command",
+            "if": "Write(**/*.ps1)",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ps1_bom_crlf_check.py"]
           }
         ]
       }
