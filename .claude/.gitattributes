@@ -1,0 +1,29 @@
+# =============================================================================
+# .claude/.gitattributes ― ランチャー資産の改行コードを固定
+# =============================================================================
+# 本ファイルは publish-share の payload（.claude/ 配下）に同乗し、配布先
+# basic_dot_claude（ルート = .claude の中身）でもルート .gitattributes として機能する。
+# パスは .claude/ 相対で書くこと（配布先ではそれがルート相対になる）。
+#
+# これが無いと core.autocrlf=true（Git for Windows 既定）の clone で .sh 系が
+# CRLF 化し、start_claude_code.sh（set -euo pipefail）が source 時に $'\r' で落ちる。
+#
+# PowerShell: UTF-8 BOM + CRLF（Windows PowerShell 5.1 の日本語コメント対応。
+#   BOM は Git が触らずコンテンツとして保持される）
+# shell / env: UTF-8 + LF
+#
+# ⚠ 既定を「全ファイル LF」に倒し、CRLF が要る launcher/*.ps1 だけを後勝ちで例外にする。
+#    パスを列挙する方式（launcher/* だけを指定する）は、skills 同梱の .sh のように後から
+#    増えた配布物が保護対象から漏れ、配布先の Windows clone で CRLF 化して壊れる
+#    （CR-1 と同じ故障クラスが、指定漏れという形で再発芽する）。
+#    text=auto なのでバイナリは Git が検出して変換しない。
+# =============================================================================
+
+* text=auto eol=lf
+
+/launcher/*.ps1               text eol=crlf
+/launcher/*.ps1.template      text eol=crlf
+
+/launcher/*.sh                text eol=lf
+/launcher/*.sh.template       text eol=lf
+/launcher/custom.env.template text eol=lf
