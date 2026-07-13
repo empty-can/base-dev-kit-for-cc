@@ -34,3 +34,9 @@ CLAUDE.local.md
 /workspace/
 /agent-memory-local/
 work_instructions.txt
+
+# --- .bat の UTF-8 作業コピー（hooks/bat_cp932_guard.py が生成する）---
+# .bat は CP932 で保存するため Claude のツールが直接読み書きできない。原本には触れず、
+# ここに UTF-8 の影を作って読ませ、保存時に CP932 + CRLF へ書き戻す。影は再生成可能な
+# 派生物なので追跡しない。
+/.bat-shadow/

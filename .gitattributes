@@ -5,38 +5,37 @@
 # CRLF 化し、bash が $'\r' で実行に失敗する。publish-share.sh / check-assets.sh は
 # リリースの実行経路そのものなので、壊れると publish 自体ができなくなる。
 #
-# PowerShell: UTF-8 BOM + CRLF（Windows PowerShell 5.1 での日本語コメント文字化けを避ける。
-#   BOM は Git が触らずコンテンツとして保持される）
-# shell / env: UTF-8 + LF
+# ⚠ 指定は「拡張子ベース」で書くこと。パスを列挙する方式は、後から増えたファイルが
+#    保護対象から漏れ、Windows clone で壊れる（指定漏れという形での再発芽）。
 #
 # ⚠ 本ファイルは `.claude/` の外にあるため publish-share の payload には乗らない
-#    （＝開発リポ内でのみ有効）。配布先で同じ保護を効かせる指定は `.claude/.gitattributes` が担う。
+#    （＝開発リポ内でのみ有効）。配布先で同じ保護を効かせる指定は `.claude/.gitattributes`
+#    が担う。**両者に同じ拡張子ルールを持たせること**。
 #
-# ⚠ 優先順位に注意 ―― .gitattributes は「深い階層が勝つ」。`.claude/.gitattributes` が存在する限り、
-#    本ファイルの `/.claude/**` 行は `.claude/` 配下に対して**効かない**（加算ではなく上書き）。
-#    実測: `git check-attr text -- .claude/skills/**/*.py` は `.claude/.gitattributes` の
-#    `* text=auto` を返す（本ファイルの `text`(set) ではない）。
-#    → launcher / skills の改行方針を変えるときは **`.claude/.gitattributes` を直す**こと。
-#      本ファイルの `/.claude/**` 行は「`.claude/.gitattributes` を持たない ref」のための保険として残す。
-#    （`.gitignore` は加算的なので二重防御が成立するが、`.gitattributes` は上書きなので成立しない）
+# ⚠ 優先順位に注意 ―― .gitattributes は「深い階層が勝つ」。`.claude/.gitattributes` の
+#    `* text=auto eol=lf` は `.claude/` 配下の全パスにマッチするため、本ファイルの指定は
+#    `.claude/` 配下には**一切効かない**（加算ではなく上書き）。`.claude/` の改行方針を
+#    変えるときは **`.claude/.gitattributes` を直す**こと。
+#    （`.gitignore` は加算的なので二重防御が成立するが、`.gitattributes` は成立しない）
 # =============================================================================
 
-# --- 開発・配布ツール（リリースの実行経路） ---
-/scripts/*.sh                         text eol=lf
-/scripts/*.ps1                        text eol=crlf
-/scripts/*.py                         text eol=lf
+# 既定は LF。CRLF が要るものだけを後勝ちの例外にする。
+* text=auto eol=lf
 
-# --- ランチャー（ルート直下） ---
-/start_claude_code.sh                 text eol=lf
-/start_claude_code.ps1                text eol=crlf
+# --- PowerShell が読むファイル: UTF-8 BOM + CRLF ---
+# BOM は Git が触らずコンテンツとして保持される。Windows PowerShell 5.1 は BOM 無し
+# UTF-8 を CP932 と誤読するため、BOM を落とすと日本語が化ける（PowerShell 7 は既定
+# UTF-8 なので、5.1 と 7 の両方で読める形式は UTF-8 + BOM だけ）。
+*.ps1          text eol=crlf
+*.psm1         text eol=crlf
+*.psd1         text eol=crlf
+*.ps1.template text eol=crlf
 
-# --- ランチャー（.claude 配下。配布先向けの同等指定は .claude/.gitattributes） ---
-/.claude/launcher/*.sh                text eol=lf
-/.claude/launcher/*.sh.template       text eol=lf
-/.claude/launcher/custom.env.template text eol=lf
-/.claude/launcher/*.ps1               text eol=crlf
-/.claude/launcher/*.ps1.template      text eol=crlf
-
-# --- skill 同梱のスクリプト ---
-/.claude/skills/**/*.py               text eol=lf
-/.claude/skills/**/*.sh               text eol=lf
+# --- cmd.exe が読むファイル: CP932 + CRLF・BOM なし ---
+# cmd.exe は BOM を読み飛ばさず 1 行目を壊すため、.bat に BOM を付けてはならない。
+# CP932 のマルチバイト後続バイトに 0x0A / 0x0D は現れないので、`text` による改行変換は
+# バイト安全。中身の文字コード自体は Git では表現できないため、
+# `.claude/rules/win-file-encoding.md` と `.claude/hooks/bat_cp932_guard.py` が担保する。
+# `.cmd` は使用禁止（`.bat` に一本化）。誤って追加された時のために指定だけ置く。
+*.bat text eol=crlf
+*.cmd text eol=crlf

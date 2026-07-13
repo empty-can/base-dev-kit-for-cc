@@ -1,83 +1,58 @@
 ---
 name: win-file-encoding
 description: >
-  日本語を含む Windows 向けスクリプト（`.ps1` / `.bat` / `.cmd` / `.reg` / `.ini`）を CP932・CRLF で
-  安全に新規作成・編集するための skill。Claude のネイティブ Read / Edit / Write は UTF-8 前提のため、
-  CP932 ファイルを直接読み書きすると日本語が文字化け・破損する。UTF-8/LF ⇄ CP932/CRLF を安全に往復変換し、
-  波ダッシュ・円マーク等の化け文字を正規化する手順とスクリプトを提供する。
+  CP932 と UTF-8 の一括変換・検査を行う手動ツール。日本語を含む `.bat` を CP932/CRLF へ変換する、
+  既存の CP932 ファイル群を UTF-8 へ移行する、CP932 でエンコードできない文字が混じっていないか事前検査する、
+  といった一括作業に使う。日常の `.bat` 編集では不要（hook が自動処理する）。
 ---
 
-# win-file-encoding（Windows 向けファイルの安全な作成・編集）
+# win-file-encoding（CP932 ⇄ UTF-8 の一括変換・検査ツール）
 
-Claude のネイティブツールは UTF-8 前提。最終成果物が **CP932・CRLF** で要求される Windows 向け
-ファイル（`.ps1` / `.bat` / `.cmd` / `.reg` / `.ini` 等）を、文字化けさせずに作成・編集するための
-往復変換手順。変換スクリプトは本 skill の `scripts/convert_encoding.py`、化け文字の正規化表は
-`references/cp932-mapping.json`（根拠は `references/mojibake-notes.md`）。
+> **日常の `.bat` 編集にこの skill は不要**。`.claude/hooks/bat_cp932_guard.py` が原本を隠して UTF-8 の
+> 作業コピーを見せ、保存時に CP932 + CRLF へ書き戻す。手順は `.claude/rules/win-file-encoding.md` を見ること。
+> 本 skill は**一括変換・移行・事前検査**という、hook では扱えないまとまった作業のための手動ツール。
+
+保存形式の方針（**原則 UTF-8。CP932 は `.bat` だけの例外**。`.ps1` は UTF-8 + BOM + CRLF で、変換不要）は
+`.claude/rules/win-file-encoding.md` が正本。本 skill はその方針を**実行する道具**であって、方針を決めない。
 
 ## 実行パス（最初に確認）
 
-変換スクリプトのパスは配布形態で異なる。下記いずれかで `SCRIPT` を設定してから、パターン A/B の
-コマンド（`python "$SCRIPT" ...`）を実行する。
-
 ```bash
-# ① Plugin / Marketplace 配布時（既定。${CLAUDE_PLUGIN_ROOT}=プラグインのインストールディレクトリ）
+# ① Plugin / Marketplace 配布時（${CLAUDE_PLUGIN_ROOT}=プラグインのインストールディレクトリ）
 SCRIPT="${CLAUDE_PLUGIN_ROOT}/skills/win-file-encoding/scripts/convert_encoding.py"
 
-# ② 層1（Git body・非 plugin）配布時 ── ★リポジトリルートを CWD にして実行すること（相対パスは CWD 依存）
+# ② 層1（Git body・非 plugin）配布時 ── ★リポジトリルートを CWD にして実行すること
 SCRIPT=".claude/skills/win-file-encoding/scripts/convert_encoding.py"
-
-# ③ CWD 非依存にしたい場合は絶対パス（① ② どちらの配布形態でも可・最も確実）
-SCRIPT="/abs/path/to/skills/win-file-encoding/scripts/convert_encoding.py"
 ```
 
-- 実行コマンドは **`python`**（本キットの想定環境では `python3` に PATH が通らないため。`python` が無い環境でのみ `python3`）。
-- マッピング表 `references/cp932-mapping.json` はスクリプトが `__file__` 基準で自動解決するため、別途パス指定は不要。
+- 実行コマンドは **`python`**（本キットの想定環境では `python3` に PATH が通らないため）。
+- マッピング表 `references/cp932-mapping.json` はスクリプトが `__file__` 基準で自動解決する。
 
-## ⛔ CRITICAL（最優先・絶対遵守）
+## 使いどころ
 
-- **CP932 のファイルを Claude のネイティブ Read / Edit / Write / Grep で直接触らない。** UTF-8 前提で
-  デコードされ文字化け・破損する。**必ず先に `--to-unix` で UTF-8/LF 化してから**ネイティブツールで扱う。
-- ネイティブで編集したら**作業の最後に必ず `--to-win` で CP932/CRLF へ戻す**（戻し忘れると Windows 側で壊れる）。
-- `--to-win` が CP932 エンコード不可文字を報告したら**放置しない**。`cp932-mapping.json` に追記して再実行する
-  （黙ってデータを失わせない）。
+| 場面 | コマンド |
+|---|---|
+| **事前検査**: CP932 でエンコードできない文字が無いか調べる（変換しない） | `python "$SCRIPT" --to-win --check "<target>"` |
+| **CP932 化**: UTF-8/LF で書いた `.bat` を Windows 形（CP932/CRLF）へ | `python "$SCRIPT" --to-win "<target>"` |
+| **UTF-8 化**: 既存の CP932 ファイルを UTF-8/LF へ移行する | `python "$SCRIPT" --to-unix "<target>"` |
 
-## パターン A: 新規作成
+- `--to-win` は UTF-8→CP932 の正規化（`〜→～` / `—→―` 等・`references/cp932-mapping.json` の `to_win`）と
+  LF→CRLF を適用して上書きする。**ASCII 記号（`\` `~` 等）は不変**なのでスクリプト構文を壊さない。
+- `--to-win` が CP932 エンコード不可文字を報告したら**放置しない**。`⚠` `✓` のように CP932 に符号位置が無い
+  記号は ASCII（`[!]` / `[OK]`）へ置き換える。和字で対応字があるものは `cp932-mapping.json` に追記する。
+- `--to-unix` に `--restore` を付けると `to_unix` の逆写像も適用する（既定 OFF。全角ハイフン等は正規の和字
+  でもあり、無条件の逆変換は誤変換を招くため）。
 
-1. **Claude ネイティブで作成**（この時点では UTF-8 / LF）。`Write` で通常どおり作る。
-2. **Win 形へ変換**:
-   ```bash
-   python "$SCRIPT" --to-win "<target>"
-   ```
-   → UTF-8→CP932 の正規化（波ダッシュ→全角チルダ 等）＋ LF→CRLF を適用して上書き。
-3. これで完了。以降そのファイルを再び**ネイティブで読む/編集する必要が出たら、パターン B**（先に `--to-unix`）に従う。
+## ⛔ 適用してはいけないもの
 
-> 補足: 事前にエンコード可否だけ確認したいときは `--to-win --check`（変換せず CP932 エンコード可否のみ報告。NG なら行番号付きで列挙し exit≠0、OK なら `[OK]` を表示）。
+- **`.ps1` / `.psm1` / `.psd1`**: 正解は **UTF-8 + BOM + CRLF**。`--to-win` は **BOM を除去する**ため、
+  適用すると Windows PowerShell 5.1 が CP932 と誤読して日本語が化ける（目的と正反対の結果になる）。
+- **`.gitattributes` で改行が管理されているファイル**: リポジトリが方針を宣言している以上そちらが優先する。
+  判断手順は `git check-attr text eol -- <path>`。属性が設定されていれば本 skill の改行変換は不要。
+- **`.reg` / `.ini`**: `permissions.deny` で Claude の R/W を禁止しているスコープ外資産。
 
-## パターン B: 既存 Win ファイルの編集
+## 依存・仕様
 
-1. **UTF-8 形へ変換**（ネイティブで触れる状態にする）:
-   ```bash
-   python "$SCRIPT" --to-unix "<target>"
-   ```
-   → CP932→UTF-8 デコード（ロスレス）＋ CRLF→LF。
-   - 直前に自分で `--to-win` した内容を**完全に round-trip で戻したい**場合のみ `--restore` を付ける
-     （既定 OFF。全角ハイフン等の正規の和字を誤変換しないため）。
-2. **Claude ネイティブで編集**（`Read` / `Edit` / `Grep`。ここは UTF-8/LF なので安全）。
-3. **Win 形へ戻す**（パターン A の手順 2 と同一）:
-   ```bash
-   python "$SCRIPT" --to-win "<target>"
-   ```
-
-## マッピング（化け文字の正規化）
-
-`references/cp932-mapping.json` の `to_win` が UTF-8→CP932 で正規化する和字ペア
-（`〜→～` / `−→－` / `—→―` / `‖→∥` / `¢£¬→￠￡￢`）。**ASCII 記号（`\` `~` 等）は対象外＝不変**で、
-`.ps1`/`.bat` の構文を壊さない。背景と拡張手順は `references/mojibake-notes.md` を参照。
-
-## 運用上の注意
-
-- **git 管理**: CP932/CRLF ファイルを commit すると diff が読みにくく壊れやすい。リポジトリ方針として
-  「CP932 を唯一の成果物として往復運用」か「UTF-8 を正本に置き CP932 を生成物（`.gitattributes`/生成）」かを
-  決めておく。本 skill はどちらの運用でも変換器として機能する。
-- **依存**: `python`（CPython 3.x。`cp932` コーデックは標準同梱）。
-- **改行**: 変換器は CR/CRLF 混在を一旦 LF に正規化してから目的の改行へ統一する（決定論的）。
+- `python`（CPython 3.x。`cp932` コーデックは標準同梱）。
+- 改行は CR/CRLF 混在を一旦 LF に正規化してから目的の改行へ統一する（決定論的）。
+- 背景と化け文字の根拠は `references/mojibake-notes.md`。

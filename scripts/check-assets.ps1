@@ -98,7 +98,8 @@ Check-Personal '.claude\option-settings.ps1' '.claude\option-settings.ps1'
 #
 # 成果物クラスの正本リストは本配列。root/.claude 双方の .gitignore はこれに追随させること。
 foreach ($artifact in @('.claude\reports', '.claude\work', '.claude\workspace', '.claude\plans',
-                        '.claude\agent-memory-local', '.claude\work_instructions.txt')) {
+                        '.claude\agent-memory-local', '.claude\work_instructions.txt',
+                        '.claude\.bat-shadow')) {
   $abs = Join-Path $Share $artifact
   if ($isGit) {
     $tracked = (git -C $Share ls-files -- $artifact 2>$null)
