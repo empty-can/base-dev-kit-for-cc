@@ -1,0 +1,42 @@
+# =============================================================================
+# .gitattributes ― 改行コードを固定し、clone 環境差でスクリプトが壊れるのを防ぐ
+# =============================================================================
+# これが無いと core.autocrlf=true（Git for Windows の既定）の clone で .sh が
+# CRLF 化し、bash が $'\r' で実行に失敗する。publish-share.sh / check-assets.sh は
+# リリースの実行経路そのものなので、壊れると publish 自体ができなくなる。
+#
+# PowerShell: UTF-8 BOM + CRLF（Windows PowerShell 5.1 での日本語コメント文字化けを避ける。
+#   BOM は Git が触らずコンテンツとして保持される）
+# shell / env: UTF-8 + LF
+#
+# ⚠ 本ファイルは `.claude/` の外にあるため publish-share の payload には乗らない
+#    （＝開発リポ内でのみ有効）。配布先で同じ保護を効かせる指定は `.claude/.gitattributes` が担う。
+#
+# ⚠ 優先順位に注意 ―― .gitattributes は「深い階層が勝つ」。`.claude/.gitattributes` が存在する限り、
+#    本ファイルの `/.claude/**` 行は `.claude/` 配下に対して**効かない**（加算ではなく上書き）。
+#    実測: `git check-attr text -- .claude/skills/**/*.py` は `.claude/.gitattributes` の
+#    `* text=auto` を返す（本ファイルの `text`(set) ではない）。
+#    → launcher / skills の改行方針を変えるときは **`.claude/.gitattributes` を直す**こと。
+#      本ファイルの `/.claude/**` 行は「`.claude/.gitattributes` を持たない ref」のための保険として残す。
+#    （`.gitignore` は加算的なので二重防御が成立するが、`.gitattributes` は上書きなので成立しない）
+# =============================================================================
+
+# --- 開発・配布ツール（リリースの実行経路） ---
+/scripts/*.sh                         text eol=lf
+/scripts/*.ps1                        text eol=crlf
+/scripts/*.py                         text eol=lf
+
+# --- ランチャー（ルート直下） ---
+/start_claude_code.sh                 text eol=lf
+/start_claude_code.ps1                text eol=crlf
+
+# --- ランチャー（.claude 配下。配布先向けの同等指定は .claude/.gitattributes） ---
+/.claude/launcher/*.sh                text eol=lf
+/.claude/launcher/*.sh.template       text eol=lf
+/.claude/launcher/custom.env.template text eol=lf
+/.claude/launcher/*.ps1               text eol=crlf
+/.claude/launcher/*.ps1.template      text eol=crlf
+
+# --- skill 同梱のスクリプト ---
+/.claude/skills/**/*.py               text eol=lf
+/.claude/skills/**/*.sh               text eol=lf

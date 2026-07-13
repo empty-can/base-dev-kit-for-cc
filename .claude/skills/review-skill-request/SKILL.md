@@ -52,7 +52,8 @@ allowed-tools: Read, Glob, Grep, Bash(ls:*), Bash(powershell.exe *)
 以下を順に確認する:
 
 1. **本キット内**: `.claude/skills/` 配下に同等機能の Skill がないか
-2. **公式プラグイン**: `C:\workspace\claude-doc-repositories\anthropics\claude-plugins-official\plugins\` 配下に同等機能のプラグインがないか（パスが存在する場合のみ）
+2. **導入済みプラグイン**: `/plugin` で導入済みプラグインに同等機能がないか。公式プラグイン集をローカルへ
+   clone 済みなら、そのディレクトリも探す（**パスは各自の環境のもの**。作業指示者に所在を確認する）
 
 類似機能が見つかった場合は、完全一致・部分一致・参考になる程度を区別して記録する。
 
