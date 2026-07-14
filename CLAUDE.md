@@ -1,115 +1,59 @@
-# base-dev-kit-for-cc
+# CLAUDE.md
 
-Claude Code を最大限活用するための、言語中立・クロスプラットフォームな最小構成テンプレート。
-新規プロジェクトにコピーして各セクションをプロジェクトに合わせて書き換えて使う。
+**このリポジトリ（`base-dev-kit-for-cc`）を開発・リリースするための指示**。
 
----
+> ⚠ **本ファイルは開発リポ専用**。配布物ではない。`publish-share` は `.claude/` 配下だけを payload として
+> 取り出すため、本ファイルは配布先へ届かない。**利用先へ届けたい共通指示は `.claude/CLAUDE.md` に書くこと**
+> （本ファイルに書いても誰にも届かない）。コピー展開先が使う雛型は `CLAUDE.md.example`。
+>
+> リポジトリの説明・使い方・構成・MCP ポリシーは **`README.md` が正本**。ここで重複させない。
 
-## ディレクトリ構造
+## このリポジトリの役割
 
-```
-.claude/
-├── settings.json              # チーム共有のパーミッション・hooks 設定
-├── settings.local.json        # 個人用ローカル設定（.gitignore 対象）
-├── rules/
-│   └── coding-standards.md   # path-scoped コーディング規約（コードファイルのみロード）
-├── skills/
-│   ├── commit-and-pr/         # /commit-and-pr — コミット・プッシュ・PR 作成
-│   └── orchestrate/           # /orchestrate — マルチエージェント協調
-└── agents/
-    └── code-reviewer.md       # code-reviewer エージェント
-CLAUDE.md                      # このファイル（毎セッション自動ロード）
-CLAUDE.local.md                # 個人用補足指示（.gitignore 対象）
-.mcp.json                      # MCP サーバー設定（anthropic-docs / context7 / fetch）
-.env                           # 機密情報（.gitignore 対象）
-.env.example                   # 環境変数テンプレート（リポジトリ管理）
-```
+Claude Code の**共有 `.claude/` キット（`<Share>`）そのもの**。ここで作った `.claude/` を、公開リポジトリ
+`basic_dot_claude` へ publish し、利用先はそれを submodule として取り込む。つまり**本リポジトリの成果物は
+`.claude/` ディレクトリ 1 個**であり、それ以外（`scripts/` / `docs/` / ルート直下）は**それを作って配るための道具**。
 
----
+## 配布レールは 2 本ある（混同しない）
 
-## 開発コマンド
+| レール | 運ぶもの | 手段 | 配布先 |
+|---|---|---|---|
+| **payload レール** | `.claude/` 配下**だけ** | `scripts/publish-share.{sh,ps1}` | `basic_dot_claude`（ルート＝`.claude/` の中身） |
+| **ルート直コミットレール** | `start_claude_code.{sh,ps1}` / ルート `.gitattributes` | 手動コミット | `basic_cc_project`（参照ハブ） |
 
-<!-- プロジェクトに合わせて書き換えてください -->
-- Build: `<build command>`
-- Test: `<test command>`
-- Dev: `<dev server command>`
-- Lint: `<lint command>`
+**ルート直下のファイルは payload に乗らない**。ランチャーは「部品（`.claude/launcher/`＝配布される）」と
+「本体（ルート＝配布されない）」に分かれているため、片方だけ届けると動かない。
 
----
+## リリース手順（要点）
 
-## コーディング規約
+詳細は `README.md` の「公開前チェック・テスト」「配布（publish）」節。ここでは**順序の制約**だけ示す。
 
-詳細は `.claude/rules/coding-standards.md` を参照（コードファイル編集時に自動ロードされる）。
+1. **grooming が前提条件**。`.claude/reports/` 等のセッション成果物が追跡された ref を publish すると、
+   内部レポートが公開リポへ流出し、配布先の `.claude/CLAUDE.md` も消える（ミラーは payload に無いものを削除する）。
+2. `develop` → `main` へ統合し、**タグを打った ref** を publish する。feature ブランチからの publish は検証用に限る。
+3. `publish-share` は `--ref` 必須。publish 前に `check-assets` が**実体基準**で自動実行され、FAIL なら中止する。
+4. publish 後に `basic_cc_project` で submodule を bump する。
 
-主要方針:
-- 命名規則は言語慣習に従う
-- コメントは「なぜそうするか」を説明する場合のみ記述
-- エラーは握り潰さない
-- 外部入力の境界でのみバリデーション
+## 開発時の約束
 
----
+- **`.claude/` に何かを足したら、それが payload に乗ることを意識する**。個人実体・成果物・一時物は
+  `.gitignore` と `check-assets` の成果物クラス配列（`scripts/check-assets.*` の 2-c）に**必ず追随させる**。
+  片側だけ更新すると配布先に穴が残る。
+- **`.gitattributes` は「深い階層が勝つ」**（`.gitignore` と違い加算されない）。`.claude/` 配下の改行方針を
+  変えるときは `.claude/.gitattributes` を直す。ルート側の指定は `.claude/` には効かない。
+- **bash 版と PowerShell 版は必ず両方直す**。片方だけ直した実績が複数回ある（fail-closed を PS 版にだけ実装、
+  警告を bash 版にだけ実装）。修正したら**両版を実際に走らせて結果が一致すること**を確認する。
+- **修正した後の状態で再検証する**。「修正それ自体が新たな欠陥を生む」ことが繰り返し起きている。
+  過去に取った検証結果を、前提を変えた後も使い回さない。
+- **Git Bash の `grep` / `awk` で CR を数えない**。間違い方が 2 通りあり、どちらも“それらしい値”を返す ――
+  `grep -c $'\r'` は**パターンが空になり全行にマッチして総行数**を返し、実 CR をパターンにすると今度は
+  **grep が入力の CR を剥がして常に 0** を返す。**「大きい数」と「0」の両方が誤りになりうる**ため、
+  before/after を別の書き方で測ると**壊れた計測どうしが「修正が効いた」ように見える**（実際に起きた）。
+  `tr -cd '\r' | wc -c` か `git ls-files --eol` を使う。
 
-## Git ワークフロー
+## 環境
 
-- ブランチ命名: `<username>/<feature-description>`（例: `alice/add-auth`）
-- コミットプレフィックス: `feat:` / `fix:` / `docs:` / `refactor:` / `test:`
-- コミット前にテスト実行
-- `/commit-and-pr` スキルでコミット・プッシュ・PR 作成を一括実行できる
-
----
-
-## マルチエージェント戦略
-
-### Skills（メインセッションで実行）
-
-| コマンド | 用途 |
-|---|---|
-| `/commit-and-pr` | 変更をコミットして PR を作成 |
-| `/orchestrate` | 複数エージェントを協調させる（並列調査・段階的処理・役割分担） |
-
-### Sub-agents（隔離コンテキストで実行）
-
-| エージェント | 用途 |
-|---|---|
-| `code-reviewer` | コード変更の品質・セキュリティ・保守性レビュー |
-
-**注意**: Sub-agent から別の Sub-agent を呼び出すことは公式仕様上不可能。
-マルチエージェント協調は必ず `/orchestrate` スキル（メインセッション実行）を使う。
-
----
-
-## 重要な制約
-
-- `.env` ファイルを直接編集しない。環境変数は実行環境から参照する
-- API キー・パスワード等の機密情報をコードにハードコードしない
-- `secrets/` ディレクトリは `.gitignore` で除外済み
-- DB マイグレーション等の破壊的操作は必ず確認を取ってから実行する
-
----
-
-## 拡張オプション
-
-以下はデフォルト無効。必要に応じて有効化してください。
-
-### Sandbox モード（コード実行の隔離）
-`.claude/settings.json` の `sandbox: true` で有効化。
-詳細: https://code.claude.com/docs/en/security
-
-### MCP サーバー接続
-`.mcp.json` に設定済み（anthropic-docs / context7 / fetch）。
-追加サーバーは `.mcp.json` の `mcpServers` セクションに追記し、`settings.json` の `enabledMcpjsonServers` に名前を追加する。
-詳細: https://code.claude.com/docs/en/mcp
-
-### output-styles（出力フォーマット統一）
-`.claude/output-styles/code-review.md` に設定済み。
-追加スタイルは `.claude/output-styles/<name>.md` に定義する。
-
-### Agent Teams（実験的）
-環境変数 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` で有効化。
-複数エージェントをチームとして動作させる機能。現在実験段階のため本番利用は非推奨。
-詳細: https://code.claude.com/docs/en/agent-teams
-
-### Plugin 化
-複数プロジェクトで設定を共有する場合は `.claude/` を Plugin として切り出す。
-個人用途は standalone（このテンプレートの構成）で十分。
-詳細: https://code.claude.com/docs/en/plugins
+- Windows がプライマリ。bash（Git Bash）と PowerShell の両方で動く必要がある。
+- Python（CPython 3.x）を使う資産がある（`.claude/hooks/` と `win-file-encoding` skill）。
+- **`.bat` は CP932 で保存する**。Claude は原本に触れず、hook が見せる UTF-8 の作業コピーを編集する。
+  詳細は `.claude/rules/win-file-encoding.md`（`.bat` を読むと自動でロードされる）。

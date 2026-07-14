@@ -1,0 +1,42 @@
+# =============================================================================
+# .claude/.gitignore ― 個人ファイルを追跡しないための除外（配布先でも有効）
+# =============================================================================
+# 本ファイルは publish-share の payload（.claude/ 配下）に同乗し、配布先
+# basic_dot_claude（ルート = .claude の中身）ではルート .gitignore として着地する。
+# publish-share は cp -R で既存 .gitignore を上書きするため、配布先で必要な除外は
+# すべて本ファイルに含めておくこと（ここに無い行は配布のたびに失われる）。
+#
+# パスは .claude/ 相対で書く（配布先ではそれがルート相対になる）。
+# =============================================================================
+
+# --- 個人設定（共有 .claude 本体には含めない＝利用側へ漏らさない）---
+settings.local.json
+CLAUDE.local.md
+**/settings.local.json
+**/CLAUDE.local.md
+
+# --- ランチャーの個人実体（テンプレートから利用者が作成する）---
+# テンプレート本体（launcher/*.template）は追跡を継続する。
+/option-settings.sh
+/option-settings.ps1
+/custom.env
+
+# --- セッション成果物・作業一時物（利用側の各リポジトリで生成される）---
+# 配布先 basic_dot_claude は submodule として利用先の .claude/ になる。利用者が
+# ここに作った成果物を git add -A で拾うと、共有リポへ混入して公開されてしまう。
+# 開発リポ側の reports は追跡解除で除去する（grooming）。本行は配布先を守るためのもの。
+#
+# ⚠ このリストは scripts/check-assets の 2-c 配列（成果物クラスの正本）に追随させること。
+#    開発リポの root .gitignore とも歩調を揃える。片側だけ更新すると、配布先だけ穴が残る。
+/reports/
+/plans/
+/work/
+/workspace/
+/agent-memory-local/
+work_instructions.txt
+
+# --- .bat の UTF-8 作業コピー（hooks/bat_cp932_guard.py が生成する）---
+# .bat は CP932 で保存するため Claude のツールが直接読み書きできない。原本には触れず、
+# ここに UTF-8 の影を作って読ませ、保存時に CP932 + CRLF へ書き戻す。影は再生成可能な
+# 派生物なので追跡しない。
+/.bat-shadow/
