@@ -32,12 +32,16 @@ base-dev-kit-for-cc が配布する**チーム共通の Claude Code 指示**。`
 |---|---|
 | `/commit-and-pr` | 変更をコミットして PR を作成 |
 | `/orchestrate` | 複数エージェントを協調させる（並列調査・段階的処理・役割分担） |
+| `/pre-compact` | `/compact` の前に文脈を保全する（メモリ最新化・未コミット確認・コンパクション指示の生成） |
+| `/request-new-skill` | 新しい skill を依頼する（依頼書テンプレを生成） |
+| `/review-skill-request` | skill 依頼書をレビューし実装方針を起こす |
+| `/win-file-encoding` | UTF-8/LF ⇄ CP932/CRLF の一括変換・検査（日常の `.bat` 編集では不要。hook が自動処理する） |
 
 ### Sub-agents（隔離コンテキストで実行）
 
 | エージェント | 用途 |
 |---|---|
-| `code-reviewer` | コード変更の品質・セキュリティ・保守性レビュー |
+| `code-reviewer` | コード変更の品質・セキュリティ・保守性レビュー（出力形式は `output-styles/code-review.md`） |
 
 **注意**: Sub-agent から別の Sub-agent を呼び出すことは公式仕様上不可能。マルチエージェント協調は
 必ず `/orchestrate`（メインセッション実行）を経由する。
