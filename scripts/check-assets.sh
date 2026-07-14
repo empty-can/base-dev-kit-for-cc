@@ -98,7 +98,8 @@ check_personal ".claude/option-settings.ps1" ".claude/option-settings.ps1"
 #
 # 成果物クラスの正本リストは本配列。root/.claude 双方の .gitignore はこれに追随させること。
 for _artifact in ".claude/reports" ".claude/work" ".claude/workspace" ".claude/plans" \
-                 ".claude/agent-memory-local" ".claude/work_instructions.txt"; do
+                 ".claude/agent-memory-local" ".claude/work_instructions.txt" \
+                 ".claude/.bat-shadow"; do
   if [[ $IS_GIT -eq 1 ]]; then
     if [[ -n "$(git -C "$SHARE" ls-files -- "$_artifact" 2>/dev/null)" ]]; then
       bad "$_artifact が Git 追跡されている（payload に乗り配布される）。git rm --cached して .gitignore へ"

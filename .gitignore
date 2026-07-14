@@ -22,6 +22,9 @@ CLAUDE.local.md
 # Claude Code: ローカル専用エージェントメモリ（memory: local スコープの sub-agent 用）
 .claude/agent-memory-local/
 
+# Claude Code: .bat の UTF-8 作業コピー（hooks/bat_cp932_guard.py が生成する再生成可能な派生物）
+.claude/.bat-shadow/
+
 # 環境変数・機密情報
 .env
 .env.*
