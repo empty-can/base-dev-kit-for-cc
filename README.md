@@ -99,8 +99,6 @@ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 \
 │   └── code-review.md         # コードレビュー出力フォーマット定義
 ├── templates/
 │   └── skill-request/         # skill 依頼書テンプレート
-├── .gitignore                 # 配布先での除外（個人実体・セッション成果物）※payload に同乗
-├── .gitattributes             # 配布先での改行固定（既定 LF ＋ *.ps1 / *.bat だけ CRLF）※payload に同乗
 └── settings.local.json.example  # 個人用ローカル設定の雛形
 
 start_claude_code.{sh,ps1}     # 起動ランチャー本体（.claude/launcher/ を読んで claude を起動）
