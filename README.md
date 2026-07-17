@@ -99,14 +99,18 @@ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 \
 │   └── code-review.md         # コードレビュー出力フォーマット定義
 ├── templates/
 │   └── skill-request/         # skill 依頼書テンプレート
+├── .gitignore                 # 配布先での除外（個人実体・セッション成果物）※payload に同乗
+├── .gitattributes             # 配布先での改行固定（既定 LF ＋ *.ps1 / *.bat だけ CRLF）※payload に同乗
 └── settings.local.json.example  # 個人用ローカル設定の雛形
 
 start_claude_code.{sh,ps1}     # 起動ランチャー本体（.claude/launcher/ を読んで claude を起動）
-.gitattributes                 # 改行の固定（scripts/ と launcher の .sh=LF / .ps1=CRLF）
+.gitattributes                 # ルートの改行固定（scripts/ と起動装置の .sh=LF / .ps1=CRLF）※.claude/ には効かない
+.gitignore                     # ルートの除外設定（個人実体・作業一時物）
 CLAUDE.md                      # ← 配布されない（このリポジトリを開発・リリースするための指示）
 CLAUDE.local.md.example        # 個人用補足指示の雛形（コピーして CLAUDE.local.md に）
 .mcp.json                      # プロジェクト固有の MCP サーバー設定（既定は空の雛型）
 .env.example                   # 環境変数テンプレート
+LICENSE                        # MIT
 scripts/                       # ← 配布されない（このキットを開発・公開するためのツール）
 ├── check-assets.{sh,ps1}      # 公開前チェック：個人ファイル・セッション成果物の混入、設定キー等を検査
 ├── clean-test-env.{sh,ps1}    # クリーン隔離テスト：~/.claude を切り離し共有資産だけを検証
