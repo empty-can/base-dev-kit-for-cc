@@ -35,7 +35,10 @@ if (Test-Path $MisplacedEnv) {
 # ---- 1) 利用者可変 env（分類D）をロード ----------------------------------
 # 受け付ける書式は custom.env.template のヘッダに記した「素の KEY=VALUE」のみ（bash 版と同じ）。
 if (Test-Path $CustomEnv) {
-    foreach ($rawLine in (Get-Content -LiteralPath $CustomEnv)) {
+    # -Encoding UTF8 を明示する。Windows PowerShell 5.1 の Get-Content 既定は ANSI（日本語環境では
+    # CP932）で、BOM 無し UTF-8 の非 ASCII 値を文字化けさせる。明示すれば 5.1 でも UTF-8 として読み、
+    # pwsh 7 / bash と結果が揃う（BOM 付きでも -Encoding UTF8 は BOM を剥がして正しく読む）。
+    foreach ($rawLine in (Get-Content -LiteralPath $CustomEnv -Encoding UTF8)) {
         $line = $rawLine.Trim()
         if ($line -eq '' -or $line.StartsWith('#')) { continue }
         $idx = $line.IndexOf('=')
@@ -55,6 +58,15 @@ if (Test-Path $CustomEnv) {
         # 「機微はファイルに置かない」規律が機構ごと破れるため、警告して読み飛ばす。
         if ($SensitiveKeys -contains $key) {
             Write-Warning "custom.env の $key は読み込みません（分類A: 機微）。この行を削除し、OS の環境変数として設定してください。"
+            continue
+        }
+
+        # Windows は空文字の環境変数を保持できない（Set-Item Env:X -Value '' は変数を作らず
+        # 削除扱いになり、$ErrorActionPreference='Stop' の下では例外化する恐れもある）。bash 版は
+        # `export X=` で空値の変数を作れるため挙動が割れる。ここで空値を明示的に警告してスキップし、
+        # 「黙って割れる」のを避ける（この非対称は Windows の制約に由来し、bash 側は空値を許す）。
+        if ($val -eq '') {
+            Write-Warning "custom.env の $key は空値のため設定しません（Windows は空文字の環境変数を保持できません。bash / macOS / Linux 版とは挙動が異なります）。"
             continue
         }
 

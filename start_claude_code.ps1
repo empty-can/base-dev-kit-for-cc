@@ -24,21 +24,24 @@ $RootDir = $PSScriptRoot
 # ---- 0) 実行要件の確認 ------------------------------------------------------
 # .claude/ は submodule。--recurse-submodules なしで clone すると空になるため、
 # 存在チェックなしで dot-source すると理由の分からないエラーになる。
+# エラー出力は Write-Error を使わない。$ErrorActionPreference='Stop' の下では Write-Error が
+# 終端エラーになり、直後の `exit 1` に到達しないまま例外として抜けてしまう（終了コードも
+# 意図した 1 にならない）。stderr へ直接書いて exit する（bash 版の `printf >&2; exit 1` と対称）。
 $SetupEnv = Join-Path $RootDir '.claude\launcher\setup-environment.ps1'
 if (-not (Test-Path $SetupEnv)) {
-    Write-Error @"
+    [Console]::Error.WriteLine(@"
 $SetupEnv が見つかりません。
 .claude/ が submodule として未初期化の可能性があります:
   git submodule update --init --recursive
-"@
+"@)
     exit 1
 }
 
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-    Write-Error @"
+    [Console]::Error.WriteLine(@"
 claude コマンドが見つかりません（未インストール、または PATH 未設定）。
 導入手順: https://code.claude.com/docs/en/quickstart
-"@
+"@)
     exit 1
 }
 
