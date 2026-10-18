@@ -9,27 +9,18 @@
       "Read(~/.ssh/**)",
       "Read(**/*.reg)",
       "Edit(**/*.reg)",
-      "Write(**/*.reg)",
       "Read(//**/*.reg)",
       "Edit(//**/*.reg)",
-      "Write(//**/*.reg)",
       "Edit(**/*.bat)",
-      "Write(**/*.bat)",
       "Edit(//**/*.bat)",
-      "Write(//**/*.bat)",
       "Edit(**/*.cmd)",
-      "Write(**/*.cmd)",
-      "Edit(//**/*.cmd)",
-      "Write(//**/*.cmd)"
+      "Edit(//**/*.cmd)"
     ],
     "allow": [
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
-      "Bash(git branch:*)",
-      "WebFetch(domain:code.claude.com)",
-      "WebFetch(domain:docs.claude.com)",
-      "WebFetch(domain:github.com/anthropics)"
+      "Bash(git branch:*)"
     ]
   },
   "enabledMcpjsonServers": [
