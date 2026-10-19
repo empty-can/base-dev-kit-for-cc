@@ -706,6 +706,45 @@ missing_note(){ # 対象系統のうち無いものを「（5.1: 理由）」の
 }
 crashed_in(){ local s; for s in "$@"; do [ "${SYS_STATE[$s]}" = crashed ] && { printf '%s' "$s"; return 0; }; done; return 1; }
 
+# 期待値ファイルの鍵（行頭の列）が列挙に存在するかを逆方向にも照合する。鍵を書き間違えた行は、列挙側の照合（ケースごとに
+# 期待値の行があるか）では見えず、黙って無視されたまま PASS になりうる。不正があれば理由を stdout に出して 1 を返す
+# （verify-kit.ps1 の Test-FixKeys と同じ文言）。# 始まりと空行は対象外。
+vk_check_keys(){ # $1=verify-kit.d のファイル名 $2=許可する鍵（空白区切り） $3=列挙の説明 $4=必要な列数（省略可）
+  local f="$1" allow="$2" what="$3" min="${4:-0}" line key w ok n
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue;; esac
+    key="${line%%$'\t'*}"
+    ok=0
+    for w in $allow; do [ "$w" = "$key" ] && { ok=1; break; }; done
+    if [ "$ok" -eq 0 ]; then printf '%s: 行頭の鍵「%s」が%sに無い（行: %s）\n' "$f" "$key" "$what" "$line"; return 1; fi
+    if [ "$min" -gt 0 ]; then
+      n="$(printf '%s' "$line" | tr -cd '\t' | wc -c)"
+      if [ "$((n + 1))" -lt "$min" ]; then printf '%s: 列が足りない（%s 列必要）（行: %s）\n' "$f" "$min" "$line"; return 1; fi
+    fi
+  done < "$VK_FIX/$f"
+  return 0
+}
+# launcher-cases.txt: 行頭タグ（case / in / out）・case 行の名前と opts|none・case より前の in / out を検査する
+vk_check_launcher_cases(){
+  local f=launcher-cases.txt line key rest name o seen=0
+  vk_check_keys "$f" "case in out" "定義済みの行頭タグ（case / in / out）" || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue;; esac
+    key="${line%%$'\t'*}"
+    if [ "$key" = case ]; then
+      seen=1
+      rest="${line#*$'\t'}"; [ "$rest" = "$line" ] && rest=""
+      name="${rest%%$'\t'*}"
+      o=""; case "$rest" in *$'\t'*) o="${rest#*$'\t'}"; o="${o%%$'\t'*}";; esac
+      if [ -z "$name" ]; then printf '%s: case 行の名前が空（行: %s）\n' "$f" "$line"; return 1; fi
+      case "$o" in opts|none) ;; *) printf '%s: case 行の第 3 列は opts か none（行: %s）\n' "$f" "$line"; return 1;; esac
+    elif [ "$seen" -eq 0 ]; then
+      printf '%s: case 行より前に %s 行がある（行: %s）\n' "$f" "$key" "$line"; return 1
+    fi
+  done < "$VK_FIX/$f"
+  return 0
+}
+
 # 系統ごとの節を書き出して全系統一致かを調べる。食い違えば SAME_A / SAME_B に系統を入れて 1 を返す
 SAME_A=""; SAME_B=""
 same_all(){ # $1=節 $2=フィルタ（sed 式。空なら無し） 残り=系統
@@ -835,11 +874,12 @@ item_version(){
 }
 
 item_launcher(){
-  local t="ランチャー 引数列（スタブ）" s c cs n=0 a
+  local t="ランチャー 引数列（スタブ）" s c cs n=0 a bad
   local -a S CASES
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  if ! bad="$(vk_check_launcher_cases)"; then verdict FAIL "$t" "$bad"; return; fi
   mapfile -t CASES < <(vk_case_names)
   for cs in "${CASES[@]}"; do
     n=$((n + 1))
@@ -900,6 +940,7 @@ item_setupenv(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  if ! bad="$(vk_check_keys setup-environment.expect "SET" "定義済みの行頭タグ（SET）")"; then verdict FAIL "$t" "$bad"; return; fi
   sed -n 's/^SET\t//p' "$VK_FIX/setup-environment.expect" > "$VK_TMP/i-exp"
   : > "$VK_TMP/i-allow"
   for s in "${S[@]}"; do
@@ -931,6 +972,68 @@ item_setupenv(){
   done
   allow="$(LC_ALL=C sort -u "$VK_TMP/i-allow" | tr '\n' ' ' | sed 's/ $//')"
   verdict PASS "$t" "plain / BOM+CRLF × $(labels "${S[@]}") で設定結果・警告が一致し期待どおり${allow:+（許容差: Windows は空値の env を設定しない: ${allow}）}$(missing_note "${SYS_ALL[@]}")"
+}
+
+# ランチャーの内部変数名の集合は 3 か所に同じ名前が並ぶ: setup-environment.sh の case "${_key}" in 直後の IFS|…) 行、
+# setup-environment.ps1 の $LauncherInternalKeys 配列、docs/launcher/launcher-implementation-plan.md の「内部変数名**（…）」の
+# 列挙。片方だけ直すと分類A ガードの穴が黙って開く（custom.env fixture だけでは気付けない）ので、名前の集合を抽出して突き合わせる。
+# 形が崩れて抽出できないときも FAIL にする（黙って PASS にしない）。verify-kit.ps1 の Item-InternalKeys と同じ手順・文言。
+item_internal_keys(){
+  local t="setup-environment 内部変数名の集合（sh / ps1 / docs）" d="$VK_TMP/ik"
+  local shf="$VK_ROOT/.claude/launcher/setup-environment.sh" psf="$VK_ROOT/.claude/launcher/setup-environment.ps1"
+  local mdf="$VK_ROOT/docs/launcher/launcher-implementation-plan.md"
+  local f n line rest seg tok block left name absent diffs="" idre='^[A-Za-z_][A-Za-z0-9_]*$'
+  mkdir -p "$d"
+  for f in "$shf" "$psf" "$mdf"; do
+    [ -f "$f" ] || { verdict FAIL "$t" "ファイルが無い: ${f#"$VK_ROOT"/}"; return; }
+  done
+  # sh: case "${_key}" in の次の行（名前|名前|…)）
+  n="$(grep -cF 'case "${_key}" in' "$shf")"
+  if [ "$n" -ne 1 ]; then verdict FAIL "$t" "setup-environment.sh: case \"\${_key}\" in の行が 1 個ではない（${n} 個）"; return; fi
+  line="$(grep -F -A1 'case "${_key}" in' "$shf" | sed -n 2p | tr -d '\r')"
+  line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+  if ! [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)*\)$ ]]; then
+    verdict FAIL "$t" "setup-environment.sh: case 行の形（名前|名前|…)）が崩れていて抽出できない: ${line}"; return
+  fi
+  printf '%s\n' "${line%)}" | tr '|' '\n' | LC_ALL=C sort -u > "$d/sh.txt"
+  # ps1: $LauncherInternalKeys = @( … ) の中の '名前'
+  n="$(tr -d '\r' < "$psf" | grep -c '^\$LauncherInternalKeys = @($')"
+  if [ "$n" -ne 1 ]; then verdict FAIL "$t" "setup-environment.ps1: \$LauncherInternalKeys = @( の行が 1 個ではない（${n} 個）"; return; fi
+  block="$(tr -d '\r' < "$psf" | awk '/^\$LauncherInternalKeys = @\($/ { on = 1; next } on && /^\)$/ { print "@@closed"; exit } on { print }')"
+  if [ "$(printf '%s\n' "$block" | tail -n 1)" != "@@closed" ]; then verdict FAIL "$t" "setup-environment.ps1: \$LauncherInternalKeys の閉じ ) が行頭に見つからない"; return; fi
+  block="$(printf '%s\n' "$block" | sed '$d')"
+  left="$(printf '%s\n' "$block" | sed -E "s/'[A-Za-z_][A-Za-z0-9_]*'//g; s/[,[:space:]]//g")"
+  if [ -n "$left" ]; then verdict FAIL "$t" "setup-environment.ps1: 配列の形（'名前', '名前', …）が崩れていて抽出できない: ${left}"; return; fi
+  printf '%s\n' "$block" | grep -oE "'[A-Za-z_][A-Za-z0-9_]*'" | tr -d "'" | LC_ALL=C sort -u > "$d/ps1.txt"
+  if [ ! -s "$d/ps1.txt" ]; then verdict FAIL "$t" "setup-environment.ps1: \$LauncherInternalKeys に名前が 1 個も無い"; return; fi
+  # docs: 「内部変数名**（…）」の括弧内。名前は `…` で囲まれ、start_claude_code.sh のようなファイル名は名前に数えない
+  n="$(tr -d '\r' < "$mdf" | grep -F '内部変数名**（' | grep -cF '`_SENSITIVE_KEYS`')"
+  if [ "$n" -ne 1 ]; then verdict FAIL "$t" "launcher-implementation-plan.md: 「内部変数名**（」と \`_SENSITIVE_KEYS\` を含む行が 1 行ではない（${n} 行）"; return; fi
+  line="$(tr -d '\r' < "$mdf" | grep -F '内部変数名**（' | grep -F '`_SENSITIVE_KEYS`')"
+  rest="${line#*'内部変数名**（'}"
+  seg="${rest%%）*}"
+  if [ "$seg" = "$rest" ]; then verdict FAIL "$t" "launcher-implementation-plan.md: 内部変数名の列挙の閉じ括弧 ） が見つからない"; return; fi
+  : > "$d/docs.txt"
+  while IFS= read -r tok; do
+    tok="${tok//\`/}"
+    if [[ "$tok" =~ $idre ]]; then printf '%s\n' "$tok" >> "$d/docs.txt"
+    elif ! [[ "$tok" =~ ^[A-Za-z0-9_.-]+\.sh$ ]]; then
+      verdict FAIL "$t" "launcher-implementation-plan.md: 内部変数名の列挙に名前でもファイル名でもない \`${tok}\` がある"; return
+    fi
+  done < <(printf '%s\n' "$seg" | grep -o '`[^`]*`')
+  left="$(printf '%s\n' "$seg" | sed 's/`[^`]*`//g' | LC_ALL=C grep -o '[A-Za-z_]' | tr -d '\n')"
+  if [ -n "$left" ]; then verdict FAIL "$t" "launcher-implementation-plan.md: 内部変数名の列挙にバッククォートで囲まれていない英字がある: ${left}"; return; fi
+  LC_ALL=C sort -u -o "$d/docs.txt" "$d/docs.txt"
+  if [ ! -s "$d/docs.txt" ]; then verdict FAIL "$t" "launcher-implementation-plan.md: 内部変数名の列挙に名前が 1 個も無い"; return; fi
+  while IFS= read -r name; do
+    absent=""
+    grep -qxF -- "$name" "$d/sh.txt" || absent+="${absent:+・}sh"
+    grep -qxF -- "$name" "$d/ps1.txt" || absent+="${absent:+・}ps1"
+    grep -qxF -- "$name" "$d/docs.txt" || absent+="${absent:+・}docs"
+    [ -z "$absent" ] || diffs+="${diffs:+、}${name}（${absent} に無い）"
+  done < <(cat "$d/sh.txt" "$d/ps1.txt" "$d/docs.txt" | LC_ALL=C sort -u)
+  if [ -n "$diffs" ]; then verdict FAIL "$t" "名前の集合が一致しない: ${diffs}"; return; fi
+  verdict PASS "$t" "sh / ps1 / docs の 3 者で同じ集合（$(wc -l < "$d/sh.txt" | tr -d ' ') 個: $(tr '\n' ' ' < "$d/sh.txt" | sed 's/ $//')）"
 }
 
 item_ca_root(){
@@ -967,11 +1070,12 @@ drop_skipping(){ # 節… -- 系統…
 }
 
 item_ca_fixture(){
-  local t="check-assets fixture（U/M/E・無害・壊れた JSON・BOM・worktree・大文字小文字違い）" s c d cs erc tag frag n
+  local t="check-assets fixture（U/M/E・無害・壊れた JSON・BOM・worktree・大文字小文字違い）" s c d cs erc tag frag n bad
   local -a S secs=()
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  if ! bad="$(vk_check_keys check-assets.expect "${CA_CASES[*]}" "ケースの列挙（${CA_CASES[*]}）" 4)"; then verdict FAIL "$t" "$bad"; return; fi
   for cs in "${CA_CASES[@]}"; do secs+=("checkassets $cs"); done
   drop_skipping "${secs[@]}" -- "${S[@]}"
   if [ "${#KEPT[@]}" -eq 0 ]; then verdict SKIP "$t" "$SKIP_NOTE"; return; fi
@@ -1001,11 +1105,12 @@ item_ca_fixture(){
 }
 
 item_cleanenv(){
-  local t="clean-test-env（スタブ）" s c a frag first=""
+  local t="clean-test-env（スタブ）" s c a frag first="" bad
   local -a S
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  if ! bad="$(vk_check_keys clean-test-env.txt "PRE OUTHAS ARG ENV CWD SETTINGS AFTER BADMODE BADRC BADOUT" "定義済みの行頭タグ（PRE / OUTHAS / ARG / ENV / CWD / SETTINGS / AFTER / BADMODE / BADRC / BADOUT）")"; then verdict FAIL "$t" "$bad"; return; fi
   grep -E $'^(ARG|ENV|CWD|SETTINGS|AFTER)\t' "$VK_FIX/clean-test-env.txt" > "$VK_TMP/i-exp"
   for s in "${S[@]}"; do
     getsec "$s" cleanenv > "$VK_TMP/i-ce"
@@ -1250,6 +1355,7 @@ compare_main(){
   item_launcher_stalerc
   item_optset
   item_setupenv
+  item_internal_keys
   item_ca_root
   item_ca_fixture
   item_cleanenv

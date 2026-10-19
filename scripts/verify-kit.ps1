@@ -67,7 +67,13 @@ if (-not (Test-Path -LiteralPath $VkFix -PathType Container)) { Write-Host "‼ 
 # rel は / 区切り。Windows では GetFullPath が \ へ揃える（Parser へは Windows 形式の絶対パスを渡すため）。
 function Join-Full([string]$base, [string]$rel) { [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($base, $rel)) }
 function Read-Lines([string]$path) { [System.IO.File]::ReadAllLines($path, $Utf8NoBom) }
-function Same-Path([string]$a, [string]$b) { [string]::Equals($a, $b, $PathCmp) }
+# 値の一致判定は序数（ordinal）で行う。-ceq / -cne / -ccontains はカルチャ依存で、pwsh 7 ではゼロ幅文字（U+200B）だけが
+# 違う文字列を等しいと判定する（bash 側の cmp はバイト比較なので、pwsh 側の比較だけが差を見逃す）。
+function Oeq($a, $b) { [string]::Equals([string]$a, [string]$b, [StringComparison]::Ordinal) }
+function One($a, $b) { -not [string]::Equals([string]$a, [string]$b, [StringComparison]::Ordinal) }
+function Oin($arr, $x) { foreach ($e in @($arr)) { if ([string]::Equals([string]$e, [string]$x, [StringComparison]::Ordinal)) { return $true } }; return $false }
+function Onin($arr, $x) { -not (Oin $arr $x) }
+function Same-Path([string]$a, [string]$b){ [string]::Equals($a, $b, $PathCmp) }
 function Resolve-Cmd([string]$name) {
   $c = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($c -and $c.Source) { return [string]$c.Source } else { return '' }
@@ -313,7 +319,7 @@ function Probe-SetupEnv {
     Copy-Item -LiteralPath (Join-Full $VkRoot '.claude/launcher/setup-environment.ps1') -Destination $ld
     $fx = [System.IO.File]::ReadAllBytes((Join-Path $VkFix 'custom.env.fixture'))
     $dst = Join-Full $d '.claude/custom.env'
-    if ($c -eq 'plain') {
+    if (Oeq $c 'plain') {
       [System.IO.File]::WriteAllBytes($dst, $fx)
     } else {
       [System.IO.File]::WriteAllText($dst, $Utf8NoBom.GetString($fx).Replace("`n", "`r`n"), $Utf8Bom)
@@ -341,13 +347,13 @@ function Probe-SetupEnv {
     $diff = New-Object 'System.Collections.Generic.List[string]'
     foreach ($k in $after.Keys) {
       if ($k -eq '_') { continue }
-      if (-not $before.ContainsKey($k) -or $before[$k] -cne $after[$k]) { $diff.Add("$k=$($after[$k])") }
+      if (-not $before.ContainsKey($k) -or (One ($before[$k]) ($after[$k]))) { $diff.Add("$k=$($after[$k])") }
     }
     foreach ($k in $before.Keys) { if ($k -ne '_' -and -not $after.ContainsKey($k)) { $diff.Add("-$k") } }
     # $env: はプロセス全体なので、実行前の状態へ戻してから退避した変数を戻す
     foreach ($k in @($after.Keys)) {
       if (-not $before.ContainsKey($k)) { [Environment]::SetEnvironmentVariable($k, $null) }
-      elseif ($before[$k] -cne $after[$k]) { [Environment]::SetEnvironmentVariable($k, $before[$k]) }
+      elseif (One ($before[$k]) ($after[$k])) { [Environment]::SetEnvironmentVariable($k, $before[$k]) }
     }
     foreach ($k in @($before.Keys)) { if (-not $after.ContainsKey($k)) { [Environment]::SetEnvironmentVariable($k, $before[$k]) } }
     foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
@@ -366,14 +372,14 @@ function New-Tree([string]$t, [string]$mode) { # opts なら launcher-opts.tsv �
   New-Item -ItemType Directory -Force -Path $ld | Out-Null
   Copy-Item -LiteralPath (Join-Full $VkRoot 'start_claude_code.ps1') -Destination $t
   Copy-Item -LiteralPath (Join-Full $VkRoot '.claude/launcher/setup-environment.ps1') -Destination $ld
-  if ($mode -ne 'opts') { return }
+  if (One $mode 'opts') { return }
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append("`$Opts = [ordered]@{`r`n")
   foreach ($line in (Read-Lines (Join-Path $VkFix 'launcher-opts.tsv'))) {
-    if ($line -eq '' -or $line.StartsWith('#')) { continue }
+    if ((Oeq $line '') -or $line.StartsWith('#')) { continue }
     $i = $line.IndexOf("`t")
     $k = $line.Substring(0, $i); $v = $line.Substring($i + 1)
-    if ($v -ceq 'true') { [void]$sb.Append("    '$k' = `$true`r`n") }
+    if (Oeq $v 'true') { [void]$sb.Append("    '$k' = `$true`r`n") }
     else { [void]$sb.Append("    '$k' = '" + $v.Replace("'", "''") + "'`r`n") }
   }
   [void]$sb.Append("}`r`n")
@@ -385,12 +391,12 @@ function Get-Cases { # launcher-cases.txt → @{ Name; Opts; In; Out }
   $cur = $null
   foreach ($line in (Read-Lines (Join-Path $VkFix 'launcher-cases.txt'))) {
     $f = $line.Split("`t")
-    if ($f[0] -ceq 'case') {
+    if (Oeq ($f[0]) 'case') {
       $cur = New-Object psobject -Property @{ 'Name' = $f[1]; 'Opts' = $f[2]
         'In' = (New-Object 'System.Collections.Generic.List[string]'); 'Out' = (New-Object 'System.Collections.Generic.List[string]') }
       $cases.Add($cur)
-    } elseif ($cur -and $f[0] -ceq 'in') { $cur.In.Add($line.Substring(3)) }
-    elseif ($cur -and $f[0] -ceq 'out') { $cur.Out.Add($line.Substring(4)) }
+    } elseif ($cur -and (Oeq ($f[0]) 'in')) { $cur.In.Add($line.Substring(3)) }
+    elseif ($cur -and (Oeq ($f[0]) 'out')) { $cur.Out.Add($line.Substring(4)) }
   }
   return $cases.ToArray()
 }
@@ -454,7 +460,7 @@ function Probe-Version {
   Sec 'version'
   $af = Join-Full $sd 'claude.args'
   if ($script:LauncherGuard -or -not (Test-Path -LiteralPath $af -PathType Leaf) -or
-      [System.IO.File]::ReadAllText($af, $Utf8NoBom) -cne "--version`n") {
+      (One ([System.IO.File]::ReadAllText($af, $Utf8NoBom)) ("--version`n"))) {
     Put 'PRECHECK' 'ng スタブで確かめた claude への引数が --version 1 個ではない（実物は起動しない）'; return
   }
   Put 'PRECHECK' 'ok'
@@ -498,28 +504,28 @@ function Probe-CheckAssets {
     Copy-Item -LiteralPath (Join-Full $VkRoot '.claude/.gitignore'), (Join-Full $VkRoot '.claude/.gitattributes') -Destination $cd
     [System.IO.File]::WriteAllText((Join-Full $cd 'CLAUDE.md'), "# verify-kit fixture`n", $Utf8NoBom)
     $dst = Join-Full $cd 'settings.json'
-    if ($c -ceq 'bom') {
+    if (Oeq $c 'bom') {
       [System.IO.File]::WriteAllText($dst, [System.IO.File]::ReadAllText((Join-Path $VkFix 'settings-clean.json'), $Utf8NoBom), $Utf8Bom)
-    } elseif ($c -ceq 'worktree') {
+    } elseif (Oeq $c 'worktree') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-clean.json') -Destination $dst
       New-Item -ItemType Directory -Force -Path (Join-Full $cd 'worktrees/wt/.claude/evals/results') | Out-Null
-    } elseif ($c -ceq 'pcase') {
+    } elseif (Oeq $c 'pcase') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-envcase.json') -Destination $dst
-    } elseif (@('pexact', 'gcase', 'gexact') -ccontains $c) {
+    } elseif (Oin (@('pexact', 'gcase', 'gexact')) $c) {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-clean.json') -Destination $dst
     } else {
       Copy-Item -LiteralPath (Join-Path $VkFix "settings-$c.json") -Destination $dst
     }
     $art = @()
-    if ($c -ceq 'ume') {
+    if (Oeq $c 'ume') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'abspath-mixed.md') -Destination $cd
       [System.IO.File]::WriteAllText((Join-Full $cd 'win-file-encoding-abspath.md'), "C:\Users\verify-kit\work`n", $Utf8NoBom)
       [System.IO.File]::WriteAllText((Join-Full $cd 'big-abspath.md'), ((@('C:\Users\verify-kit\big') * 20000) -join "`n") + "`n", $Utf8NoBom)
-    } elseif ($c -ceq 'clean') {
+    } elseif (Oeq $c 'clean') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'abspath-allowed.md') -Destination $cd
-    } elseif (@('pcase', 'gcase') -ccontains $c) {
+    } elseif (Oin (@('pcase', 'gcase')) $c) {
       $art = @('.claude/Reports/x.md', '.claude/plugin-x/Evals/Results/r.json')
-    } elseif (@('pexact', 'gexact') -ccontains $c) {
+    } elseif (Oin (@('pexact', 'gexact')) $c) {
       $art = @('.claude/reports/x.md', '.claude/plugin-x/evals/results/r.json')
     }
     foreach ($a in $art) {
@@ -531,7 +537,7 @@ function Probe-CheckAssets {
     # 利用者の global / system 設定を読まない（一時リポジトリの作成も check-assets の git 呼び出しも）
     $cfg = "$s.gitconfig"
     [System.IO.File]::WriteAllText($cfg, '', $Utf8NoBom)
-    if ($c -ceq 'gcase') {
+    if (Oeq $c 'gcase') {
       New-Item -ItemType Directory -Force -Path (Join-Full $cd 'Work') | Out-Null
       [System.IO.File]::WriteAllText((Join-Full $cd 'Work/w.md'), "verify-kit`n", $Utf8NoBom)
     }
@@ -575,7 +581,7 @@ function Probe-CleanEnv {
     $savedTemp = $env:TEMP
     try {
       foreach ($p in $preList) {
-        if ($p[1] -ceq '<unset>') { [Environment]::SetEnvironmentVariable($p[0], $null) }
+        if (Oeq ($p[1]) '<unset>') { [Environment]::SetEnvironmentVariable($p[0], $null) }
         else { [Environment]::SetEnvironmentVariable($p[0], $p[1]) }
       }
       $env:TEMP = $tmpDir
@@ -663,7 +669,7 @@ function Probe-CleanEnvBadMode {
     } @($tmp, $m)
     Put-Args $sd
     foreach ($l in $script:CteBadOut) { foreach ($x in ($l -split "`r?`n")) { Put 'O' (Norm $x @($VkRoot, '<R>')) } }
-    foreach ($x in ($script:CteBadErr -split "`r?`n")) { if ($x -ne '') { Put 'E' (Norm $x @($VkRoot, '<R>')) } }
+    foreach ($x in ($script:CteBadErr -split "`r?`n")) { if (One $x '') { Put 'E' (Norm $x @($VkRoot, '<R>')) } }
   }
 }
 
@@ -688,7 +694,7 @@ function Probe-PubName {
   }
   $cases = @()
   foreach ($line in (Read-Lines (Join-Path $VkFix 'plugin-names.tsv'))) {
-    if ($line -eq '' -or $line.StartsWith('#')) { continue }
+    if ((Oeq $line '') -or $line.StartsWith('#')) { continue }
     $cols = $line.Split("`t")
     $cases += , $(if ($cols.Count -ge 3) { $cols[2] } else { '' })
   }
@@ -718,9 +724,9 @@ function Probe-PubName {
           } catch {
             $o = "$_"; $rc = '-1'
           }
-          if ($o.Contains('plugin 名として不正')) { if ($rc -eq '2') { $cls = 'reject' } }
-          elseif ($o.Contains('marketplace リポジトリが見つからない')) { if ($rc -eq '2') { $cls = 'accept' } }
-          elseif ($o.Contains('--name に値が必要') -or $o.Contains('-Name に値が必要')) { if ($rc -eq '1') { $cls = 'argerr' } }
+          if ($o.Contains('plugin 名として不正')) { if (Oeq $rc '2') { $cls = 'reject' } }
+          elseif ($o.Contains('marketplace リポジトリが見つからない')) { if (Oeq $rc '2') { $cls = 'accept' } }
+          elseif ($o.Contains('--name に値が必要') -or $o.Contains('-Name に値が必要')) { if (Oeq $rc '1') { $cls = 'argerr' } }
         }
       } finally {
         $env:PATH = $savedPath
@@ -756,7 +762,7 @@ function Probe-PubCase {
   New-Item -ItemType Directory -Force -Path $d | Out-Null
   $ang = ''; $i = 0
   foreach ($line in (Read-Lines (Join-Path $VkFix 'plugin-case.tsv'))) {
-    if ($line -eq '' -or $line.StartsWith('#')) { continue }
+    if ((Oeq $line '') -or $line.StartsWith('#')) { continue }
     $f = $line.Split("`t")
     $ent = $f[1]; $name = $f[2]
     $i++
@@ -791,13 +797,13 @@ function Probe-PubCase {
     }
     # スタブの git.args は最後の呼び出しの引数。取り出しまで進んだら最後は archive になる
     $ga = Join-Full $sd 'git.args'
-    $arch = if ((Test-Path -LiteralPath $ga -PathType Leaf) -and (@(Read-ArgFile $ga) -ccontains 'archive')) { 'yes' } else { 'no' }
+    $arch = if ((Test-Path -LiteralPath $ga -PathType Leaf) -and ((Oin (@(Read-ArgFile $ga)) 'archive'))) { 'yes' } else { 'no' }
     $entries = @(Get-ChildItem -Force -LiteralPath (Join-Full $mkt 'plugins') | ForEach-Object { $_.Name })
     $intact = if ((Test-Path -LiteralPath (Join-Full $mkt "plugins/$ent/sentinel.txt") -PathType Leaf) -and
-                  $entries.Count -eq 1 -and $entries[0] -ceq $ent) { 'yes' } else { 'no' }
-    if ($cls -ne 'assert-ng') {
-      if ($o.Contains('大文字小文字だけが違う既存エントリ')) { if ($rc -eq '2' -and $arch -eq 'no') { $cls = 'clash' } }
-      elseif ($arch -eq 'yes') { $cls = 'pass' }
+                  $entries.Count -eq 1 -and (Oeq ($entries[0]) $ent)) { 'yes' } else { 'no' }
+    if (One $cls 'assert-ng') {
+      if ($o.Contains('大文字小文字だけが違う既存エントリ')) { if ((Oeq $rc '2') -and (Oeq $arch 'no')) { $cls = 'clash' } }
+      elseif (Oeq $arch 'yes') { $cls = 'pass' }
     }
     Put 'CASE' "$i $cls rc=$rc archive=$arch intact=$intact"
   }
@@ -834,11 +840,11 @@ function Probe-PubManifest {
   $path = if ($OnWindows) { "$cst;$gitDir;$env:SystemRoot\System32;$env:SystemRoot" } else { "${cst}:${gitDir}:/usr/bin:/bin" }
   $ang = ''; $i = 0
   foreach ($line in (Read-Lines (Join-Path $VkFix 'plugin-manifest.tsv'))) {
-    if ($line -eq '' -or $line.StartsWith('#')) { continue }
+    if ((Oeq $line '') -or $line.StartsWith('#')) { continue }
     $f = $line.Split("`t", 6)
     $ep = $f[1]; $bom = $f[3]; $name = $f[4]; $json = if ($f.Count -ge 6) { $f[5] } else { '' }
     $i++
-    if ($ep -ceq '-') { Put 'CASE' "$i -"; continue }
+    if (Oeq $ep '-') { Put 'CASE' "$i -"; continue }
     $dev = Join-Full $d "dev$i"; $mkt = Join-Full $d "mkt$i"; $cs = Join-Full $d "case$i"; $tmp = Join-Full $cs 'tmp'
     foreach ($p in @((Join-Full $dev 'scripts'), (Join-Full $dev 'plugin/.claude-plugin'), (Join-Full $mkt "plugins/$name"), $tmp)) {
       New-Item -ItemType Directory -Force -Path $p | Out-Null
@@ -846,7 +852,7 @@ function Probe-PubManifest {
     $ppCopy = Join-Full $dev 'scripts/publish-plugin.ps1'
     Copy-Item -LiteralPath $pp -Destination $ppCopy
     $body = [byte[]]$Utf8NoBom.GetBytes("$json`n")
-    if ($bom -ceq 'yes') { $body = [byte[]](@([byte]0xEF, [byte]0xBB, [byte]0xBF) + $body) }
+    if (Oeq $bom 'yes') { $body = [byte[]](@([byte]0xEF, [byte]0xBB, [byte]0xBF) + $body) }
     [System.IO.File]::WriteAllBytes((Join-Full $dev 'plugin/.claude-plugin/plugin.json'), $body)
     [System.IO.File]::WriteAllText((Join-Full $mkt "plugins/$name/sentinel.txt"), "verify-kit`n", $Utf8NoBom)
     $setupOk = ((Invoke-TGit $cfg @('init', '-q', $dev)).Rc -eq 0) -and
@@ -868,7 +874,7 @@ function Probe-PubManifest {
         $a = "ng git の解決先が実物でない（$(if ($rgit) { $rgit } else { '見つからない' })）。実行しない"
       } else {
         $rem = Invoke-Proc $rgit @('-C', $mkt, 'remote') 60000
-        if ($rem.Rc -ne 0 -or $rem.Out.Trim() -ne '') {
+        if ($rem.Rc -ne 0 -or (One ($rem.Out.Trim()) '')) {
           $a = "ng 一時 marketplace に remote がある（$(if ($rem.Rc -ne 0) { "git remote が失敗した: $($rem.Err.Trim())" } else { $rem.Out.Trim() })）。実行しない"
         } else {
           $a = 'ok'
@@ -881,29 +887,29 @@ function Probe-PubManifest {
     } finally {
       foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
     }
-    if ($a -cne 'ok') {
+    if (One $a 'ok') {
       if (-not $ang) { $ang = $a }
       Put 'CASE' "$i assert-ng"; continue
     }
     $rc = [string]$r.Rc
     $out = $r.Out + "`n" + $r.Err
     $ca = Join-Full $cs 'claude.args'
-    $val = if ((Test-Path -LiteralPath $ca -PathType Leaf) -and (@(Read-ArgFile $ca) -ccontains 'validate')) { 'yes' } else { 'no' }
+    $val = if ((Test-Path -LiteralPath $ca -PathType Leaf) -and ((Oin (@(Read-ArgFile $ca)) 'validate'))) { 'yes' } else { 'no' }
     $entries = @(Get-ChildItem -Force -LiteralPath (Join-Full $mkt 'plugins') | ForEach-Object { $_.Name })
     $top = @(Get-ChildItem -Force -LiteralPath $mkt | ForEach-Object { $_.Name })
     $head = Invoke-TGit $cfg @('-C', $mkt, 'rev-parse', '-q', '--verify', 'HEAD')
     $index = Invoke-TGit $cfg @('-C', $mkt, 'ls-files')
     $intact = if ((Test-Path -LiteralPath (Join-Full $mkt "plugins/$name/sentinel.txt") -PathType Leaf) -and
-                  $entries.Count -eq 1 -and $entries[0] -ceq $name -and
-                  $top.Count -eq 2 -and $top -ccontains '.git' -and $top -ccontains 'plugins' -and
-                  $head.Rc -ne 0 -and $index.Rc -eq 0 -and $index.Out.Trim() -eq '') { 'yes' } else { 'no' }
+                  $entries.Count -eq 1 -and (Oeq ($entries[0]) $name) -and
+                  $top.Count -eq 2 -and (Oin $top '.git') -and (Oin $top 'plugins') -and
+                  $head.Rc -ne 0 -and $index.Rc -eq 0 -and (Oeq ($index.Out.Trim()) '')) { 'yes' } else { 'no' }
     $cls = 'other'
-    if ($out.Contains('の name（') -and $out.Contains('が違う。中止')) { if ($rc -eq '1' -and $val -eq 'no') { $cls = 'mismatch' } }
-    elseif ($out.Contains('の name を読めない')) { if ($rc -eq '1' -and $val -eq 'no') { $cls = 'unreadable' } }
-    elseif ($out.Contains('python が無いため')) { if ($rc -eq '1' -and $val -eq 'no') { $cls = 'nopython' } }
-    elseif ($val -eq 'yes') { $cls = 'pass' }
+    if ($out.Contains('の name（') -and $out.Contains('が違う。中止')) { if ((Oeq $rc '1') -and (Oeq $val 'no')) { $cls = 'mismatch' } }
+    elseif ($out.Contains('の name を読めない')) { if ((Oeq $rc '1') -and (Oeq $val 'no')) { $cls = 'unreadable' } }
+    elseif ($out.Contains('python が無いため')) { if ((Oeq $rc '1') -and (Oeq $val 'no')) { $cls = 'nopython' } }
+    elseif (Oeq $val 'yes') { $cls = 'pass' }
     Put 'CASE' "$i $cls rc=$rc validate=$val intact=$intact"
-    if ($cls -cne 'pass') {
+    if (One $cls 'pass') {
       foreach ($l in ($out -split "`r?`n")) { if ($l.StartsWith('‼') -or $l.StartsWith('   ')) { Put 'MSG' "$i $l" } }
     }
   }
@@ -986,7 +992,7 @@ function Get-Sec([string]$s, [string]$name) {
   $acc = New-Object 'System.Collections.Generic.List[string]'
   $h = "@@ $name"; $on = $false
   foreach ($l in $Results[$s]) {
-    if ($l -ceq $h) { $on = $true; continue }
+    if (Oeq $l $h) { $on = $true; continue }
     if ($l.StartsWith('@@ ')) { $on = $false; continue }
     if ($on) { $acc.Add($l) }
   }
@@ -997,7 +1003,7 @@ function Tag-Vals([string[]]$lines, [string]$tag) { @($lines | Where-Object { $_
 function Lines-Equal($a, $b) {
   $a = @($a); $b = @($b)
   if ($a.Count -ne $b.Count) { return $false }
-  for ($i = 0; $i -lt $a.Count; $i++) { if ($a[$i] -cne $b[$i]) { return $false } }
+  for ($i = 0; $i -lt $a.Count; $i++) { if (-not [string]::Equals([string]$a[$i], [string]$b[$i], [StringComparison]::Ordinal)) { return $false } }
   return $true
 }
 
@@ -1008,6 +1014,36 @@ function Missing-Note([string[]]$systems) {
   if ($m.Count -gt 0) { return '（' + ($m -join '、') + '）' } else { return '' }
 }
 function Crashed-In([string[]]$systems) { foreach ($s in $systems) { if ($SysState[$s] -eq 'crashed') { return $s } }; return '' }
+
+# 期待値ファイルの鍵（行頭の列）が列挙に存在するかを逆方向にも照合する。鍵を書き間違えた行は、列挙側の照合（ケースごとに
+# 期待値の行があるか）では見えず、黙って無視されたまま PASS になりうる。不正があれば理由を返し、無ければ空文字列を返す
+# （verify-kit.sh の vk_check_keys と同じ文言）。# 始まりと空行は対象外。
+function Test-FixKeys([string]$file, [string[]]$allow, [string]$what, [int]$min = 0) {
+  foreach ($line in (Read-Lines (Join-Path $VkFix $file))) {
+    if ((Oeq $line '') -or $line.StartsWith('#')) { continue }
+    $cols = $line.Split("`t")
+    if (Onin $allow $cols[0]) { return "${file}: 行頭の鍵「$($cols[0])」が${what}に無い（行: $line）" }
+    if ($min -gt 0 -and $cols.Count -lt $min) { return "${file}: 列が足りない（$min 列必要）（行: $line）" }
+  }
+  return ''
+}
+# launcher-cases.txt: 行頭タグ（case / in / out）・case 行の名前と opts|none・case より前の in / out を検査する
+function Test-LauncherCases {
+  $f = 'launcher-cases.txt'
+  $bad = Test-FixKeys $f @('case', 'in', 'out') '定義済みの行頭タグ（case / in / out）'
+  if ($bad) { return $bad }
+  $seen = $false
+  foreach ($line in (Read-Lines (Join-Path $VkFix $f))) {
+    if ((Oeq $line '') -or $line.StartsWith('#')) { continue }
+    $cols = $line.Split("`t")
+    if (Oeq $cols[0] 'case') {
+      $seen = $true
+      if ($cols.Count -lt 2 -or (Oeq $cols[1] '')) { return "${f}: case 行の名前が空（行: $line）" }
+      if ($cols.Count -lt 3 -or -not ((Oeq $cols[2] 'opts') -or (Oeq $cols[2] 'none'))) { return "${f}: case 行の第 3 列は opts か none（行: $line）" }
+    } elseif (-not $seen) { return "${f}: case 行より前に $($cols[0]) 行がある（行: $line）" }
+  }
+  return ''
+}
 
 # 系統ごとの節を比べて全系統一致かを調べる。食い違えば SameA / SameB に系統を入れて $false を返す
 function Same-All([string]$secName, [string[]]$systems) {
@@ -1066,7 +1102,7 @@ function Invoke-Probes([string]$tmp) {
     $lines = @()
     if (Test-Path -LiteralPath $rf -PathType Leaf) { $lines = @(Read-Lines $rf) }
     $Results[$s] = $lines
-    if ($lines.Count -eq 0 -or $lines[$lines.Count - 1] -cne '@@ end') { $SysState[$s] = 'crashed'; $SysWhy[$s] = 'probe が異常終了した' }
+    if ($lines.Count -eq 0 -or (One ($lines[$lines.Count - 1]) '@@ end')) { $SysState[$s] = 'crashed'; $SysWhy[$s] = 'probe が異常終了した' }
     $meta = Get-Sec $s 'meta'
     $ed = @(Tag-Vals $meta 'EDITION') | Select-Object -First 1
     $SysVer[$s] = @(Tag-Vals $meta 'VERSION') | Select-Object -First 1
@@ -1097,7 +1133,7 @@ function Fmt-Class([string]$rel) { # 保存形式の区分（bash 版の fmt_cla
   foreach ($e in @('.ps1', '.psm1', '.psd1', '.ps1.template')) { if ($n.EndsWith($e, 'Ordinal')) { return 'ps' } }
   foreach ($e in @('.sh', '.sh.template')) { if ($n.EndsWith($e, 'Ordinal')) { return 'lfnobom' } }
   foreach ($e in @('.md', '.json', '.template')) { if ($n.EndsWith($e, 'Ordinal')) { return 'lf' } }
-  if ($n -ceq '.gitignore') { return 'lf' }
+  if (Oeq $n '.gitignore') { return 'lf' }
   return 'none'
 }
 
@@ -1114,19 +1150,19 @@ function Item-Format {
   $n = 0; $nps = 0; $nlf = 0; $nnone = 0; $bad = 0; $first = ''
   foreach ($l in $lines) {
     $f = $l.Split("`t")
-    if ($f[0] -cne 'F') { continue }
+    if (One ($f[0]) 'F') { continue }
     $rel = $f[1]; $bom = $f[2]; $cr = [int]$f[3]; $lf = [int]$f[4]
     $n++
     $cls = Fmt-Class $rel
-    if ($cls -eq 'ps') {
+    if (Oeq $cls 'ps') {
       $nps++
-      if ($bom -cne 'efbbbf' -or $cr -ne $lf -or $lf -eq 0) {
+      if ((One $bom 'efbbbf') -or $cr -ne $lf -or $lf -eq 0) {
         $bad++; if (-not $first) { $first = "$rel（BOM=$bom CR=$cr LF=$lf。期待: BOM efbbbf・CR 数 = LF 数）" }
       }
-    } elseif ($cls -eq 'lf' -or $cls -eq 'lfnobom') {
+    } elseif ((Oeq $cls 'lf') -or (Oeq $cls 'lfnobom')) {
       $nlf++
-      if ($cr -ne 0 -or ($cls -eq 'lfnobom' -and $bom -ceq 'efbbbf')) {
-        $bad++; if (-not $first) { $first = "$rel（BOM=$bom CR=$cr。期待: CR 0$(if ($cls -eq 'lfnobom') { '・BOM なし' })）" }
+      if ($cr -ne 0 -or ((Oeq $cls 'lfnobom') -and (Oeq $bom 'efbbbf'))) {
+        $bad++; if (-not $first) { $first = "$rel（BOM=$bom CR=$cr。期待: CR 0$(if (Oeq $cls 'lfnobom') { '・BOM なし' })）" }
       }
     } else { $nnone++ }
   }
@@ -1144,14 +1180,14 @@ function Item-Version {
   foreach ($s in $avail) {
     $lines = Get-Sec $s 'version'
     $pre = @(Tag-Vals $lines 'PRECHECK') | Select-Object -First 1
-    if ($pre -cne 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($pre) { $pre } else { '事前確認の結果が無い' })"; return }
+    if (One $pre 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($pre) { $pre } else { '事前確認の結果が無い' })"; return }
     $skip = @(Tag-Vals $lines 'SKIP')
     if ($skip.Count -gt 0) { $nskip++; $why = $skip[0]; continue }
     $rc = @(Tag-Vals $lines 'RC') | Select-Object -First 1
     $o = @(Tag-Vals $lines 'OUT') | Select-Object -First 1
-    if ($rc -cne '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): exit $(if ($rc) { $rc } else { '?' })（出力: $o）"; return }
+    if (One $rc '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): exit $(if ($rc) { $rc } else { '?' })（出力: $o）"; return }
     if ($o -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+ \(Claude Code\)$') { Verdict 'FAIL' $t "$($SysLabel[$s]): 版表示の形式が違う（$o）"; return }
-    if (-not $ver) { $ver = $o } elseif ($ver -cne $o) { Verdict 'FAIL' $t "系統間で版が違う（$ver / $o）"; return }
+    if (-not $ver) { $ver = $o } elseif (One $ver $o) { Verdict 'FAIL' $t "系統間で版が違う（$ver / $o）"; return }
   }
   if ($nskip -eq $avail.Count) { Verdict 'SKIP' $t $why; return }
   Verdict 'PASS' $t "$(Labels $avail) とも $ver・exit 0（事前にスタブで引数が --version 1 個と確認）$(Missing-Note $SysAll)"
@@ -1163,20 +1199,22 @@ function Item-Launcher {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  $bad = Test-LauncherCases
+  if ($bad) { Verdict 'FAIL' $t $bad; return }
   $cases = @(Get-Cases)
   foreach ($cs in $cases) {
     $exp = $cs.Out.ToArray()
     foreach ($s in $avail) {
       $lines = Get-Sec $s "launcher $($cs.Name)"
       $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
-      if ($a -cne 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]) $($cs.Name): $(if ($a) { $a } else { '結果が無い' })"; return }
-      if (@(Tag-Vals $lines 'RAN') -notcontains 'yes') { Verdict 'FAIL' $t "$($SysLabel[$s]) $($cs.Name): スタブが起動していない"; return }
+      if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]) $($cs.Name): $(if ($a) { $a } else { '結果が無い' })"; return }
+      if (Onin (@(Tag-Vals $lines 'RAN')) 'yes') { Verdict 'FAIL' $t "$($SysLabel[$s]) $($cs.Name): スタブが起動していない"; return }
       $act = @(Tag-Vals $lines 'ARG')
       if (-not (Lines-Equal $exp $act)) {
         Set-Diff $exp $act "期待（<）と $($SysLabel[$s]) $($cs.Name)（>）の差分:"
         Fail-Diff $t "$($SysLabel[$s]) $($cs.Name): claude に届いた引数列が期待と違う"; return
       }
-      if (@(Tag-Vals $lines 'RC') -notcontains '0') { Verdict 'FAIL' $t "$($SysLabel[$s]) $($cs.Name): ランチャーの終了コードが 0 でない"; return }
+      if (Onin (@(Tag-Vals $lines 'RC')) '0') { Verdict 'FAIL' $t "$($SysLabel[$s]) $($cs.Name): ランチャーの終了コードが 0 でない"; return }
     }
   }
   Verdict 'PASS' $t "$($cases.Count) ケース（プロンプトのみ＝-- 挿入・フラグ先行・引数なし・オプション無し。= を含むキーあり）× $(Labels $avail) が期待どおり$(Missing-Note $SysAll)"
@@ -1191,8 +1229,8 @@ function Item-LauncherStaleRc {
   foreach ($s in $avail) {
     $lines = Get-Sec $s 'launcher-stalerc'
     $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
-    if ($a -cne 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($a) { $a } else { '結果が無い' })"; return }
-    if (@(Tag-Vals $lines 'RC') -cnotcontains '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): 呼び出し元の古い `$LASTEXITCODE（7）が返った（RC=$(@(Tag-Vals $lines 'RC') -join ' ')）"; return }
+    if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($a) { $a } else { '結果が無い' })"; return }
+    if (Onin (@(Tag-Vals $lines 'RC')) '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): 呼び出し元の古い `$LASTEXITCODE（7）が返った（RC=$(@(Tag-Vals $lines 'RC') -join ' ')）"; return }
   }
   Verdict 'PASS' $t "$(Labels $avail) とも、呼び出し元に `$LASTEXITCODE=7 が残り claude スタブが設定しなくても exit 0"
 }
@@ -1208,11 +1246,11 @@ function Item-Optset {
     $lines = Get-Sec $s 'optset'
     $load = @(Tag-Vals $lines 'LOAD') | Select-Object -First 1
     $orig = @(Tag-Vals $lines 'ORIG') | Select-Object -First 1
-    if ($load -cne 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): 全項目版がロードできない（$load）"; return }
-    if ($orig -cne 'ok 0') { Verdict 'FAIL' $t "$($SysLabel[$s]): 原本（全コメント）のロード結果が想定外（$orig）"; return }
+    if (One $load 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): 全項目版がロードできない（$load）"; return }
+    if (One $orig 'ok 0') { Verdict 'FAIL' $t "$($SysLabel[$s]): 原本（全コメント）のロード結果が想定外（$orig）"; return }
     $nl = @(Tag-Vals $lines 'LINES') | Select-Object -First 1
     $nk = @(Tag-Vals $lines 'KEY').Count
-    if ($nl -cne [string]$nk) { Verdict 'FAIL' $t "$($SysLabel[$s]): 有効化した $nl 行に対しキーが $nk 個（重複キー?）"; return }
+    if (One $nl ([string]$nk)) { Verdict 'FAIL' $t "$($SysLabel[$s]): 有効化した $nl 行に対しキーが $nk 個（重複キー?）"; return }
   }
   if (-not (Same-All 'optset' $avail)) { Fail-Diff $t "キー集合が $($SysLabel[$script:SameA]) と $($SysLabel[$script:SameB]) で違う"; return }
   Verdict 'PASS' $t "$nk キーが $(Labels $avail) で一致。原本もロード可$(Missing-Note $SysAll)"
@@ -1224,6 +1262,8 @@ function Item-SetupEnv {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  $bad = Test-FixKeys 'setup-environment.expect' @('SET') '定義済みの行頭タグ（SET）'
+  if ($bad) { Verdict 'FAIL' $t $bad; return }
   $exp = @(Tag-Vals @(Read-Lines (Join-Path $VkFix 'setup-environment.expect')) 'SET')
   $first = $null
   $allow = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
@@ -1236,9 +1276,9 @@ function Item-SetupEnv {
       # 許容差: Windows は空値の環境変数を保持できない（PS 版は警告して設定しない）
       $empty = @($lines | Where-Object { $_ -cmatch $emptyRe } | ForEach-Object { [regex]::Match($_, $emptyRe).Groups[1].Value })
       foreach ($k in $empty) {
-        if ($exp -cnotcontains "$k=") { Verdict 'FAIL' $t "$($SysLabel[$s]) ${cs}: 空値の警告が出た $k は fixture で空値ではない"; return }
+        if (Onin $exp ("$k=")) { Verdict 'FAIL' $t "$($SysLabel[$s]) ${cs}: 空値の警告が出た $k は fixture で空値ではない"; return }
       }
-      $expS = @($exp | Where-Object { $empty -cnotcontains ($_ -replace '=$', '') -or -not $_.EndsWith('=') })
+      $expS = @($exp | Where-Object { (Onin $empty (($_ -replace '=$', ''))) -or -not $_.EndsWith('=') })
       $act = @(Tag-Vals $lines 'SET')
       if (-not (Lines-Equal $expS $act)) {
         Set-Diff $expS $act "期待（<）と $($SysLabel[$s]) ${cs}（>）の差分:"
@@ -1262,6 +1302,74 @@ function Item-SetupEnv {
   Verdict 'PASS' $t "plain / BOM+CRLF × $(Labels $avail) で設定結果・警告が一致し期待どおり$an$(Missing-Note $SysAll)"
 }
 
+# ランチャーの内部変数名の集合は 3 か所に同じ名前が並ぶ: setup-environment.sh の case "${_key}" in 直後の IFS|…) 行、
+# setup-environment.ps1 の $LauncherInternalKeys 配列、docs/launcher/launcher-implementation-plan.md の「内部変数名**（…）」の
+# 列挙。片方だけ直すと分類A ガードの穴が黙って開く（custom.env fixture だけでは気付けない）ので、名前の集合を抽出して突き合わせる。
+# 形が崩れて抽出できないときも FAIL にする（黙って PASS にしない）。verify-kit.sh の item_internal_keys と同じ手順・文言。
+function Item-InternalKeys {
+  $t = 'setup-environment 内部変数名の集合（sh / ps1 / docs）'
+  $shf = Join-Full $VkRoot '.claude/launcher/setup-environment.sh'
+  $psf = Join-Full $VkRoot '.claude/launcher/setup-environment.ps1'
+  $mdf = Join-Full $VkRoot 'docs/launcher/launcher-implementation-plan.md'
+  foreach ($f in @($shf, $psf, $mdf)) {
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { Verdict 'FAIL' $t "ファイルが無い: $($f.Substring($VkRoot.Length).TrimStart('\', '/').Replace('\', '/'))"; return }
+  }
+  $idRe = '^[A-Za-z_][A-Za-z0-9_]*$'
+  # sh: case "${_key}" in の次の行（名前|名前|…)）
+  $shl = @(Read-Lines $shf)
+  $idx = @(0..($shl.Count - 1) | Where-Object { $shl[$_].Contains('case "${_key}" in') })
+  if ($idx.Count -ne 1) { Verdict 'FAIL' $t "setup-environment.sh: case `"`${_key}`" in の行が 1 個ではない（$($idx.Count) 個）"; return }
+  $line = if ($idx[0] + 1 -lt $shl.Count) { $shl[$idx[0] + 1].Trim() } else { '' }
+  if ($line -cnotmatch '^[A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)*\)$') {
+    Verdict 'FAIL' $t "setup-environment.sh: case 行の形（名前|名前|…)）が崩れていて抽出できない: $line"; return
+  }
+  $shNames = @($line.Substring(0, $line.Length - 1).Split('|'))
+  # ps1: $LauncherInternalKeys = @( … ) の中の '名前'
+  $psl = @(Read-Lines $psf)
+  $hdr = @(0..($psl.Count - 1) | Where-Object { Oeq $psl[$_] '$LauncherInternalKeys = @(' })
+  if ($hdr.Count -ne 1) { Verdict 'FAIL' $t "setup-environment.ps1: `$LauncherInternalKeys = @( の行が 1 個ではない（$($hdr.Count) 個）"; return }
+  $block = New-Object 'System.Collections.Generic.List[string]'; $closed = $false
+  for ($i = $hdr[0] + 1; $i -lt $psl.Count; $i++) {
+    if (Oeq $psl[$i] ')') { $closed = $true; break }
+    $block.Add($psl[$i])
+  }
+  if (-not $closed) { Verdict 'FAIL' $t "setup-environment.ps1: `$LauncherInternalKeys の閉じ ) が行頭に見つからない"; return }
+  $btxt = $block -join "`n"
+  $left = [regex]::Replace([regex]::Replace($btxt, "'[A-Za-z_][A-Za-z0-9_]*'", ''), '[,\s]', '')
+  if (One $left '') { Verdict 'FAIL' $t "setup-environment.ps1: 配列の形（'名前', '名前', …）が崩れていて抽出できない: $left"; return }
+  $psNames = @([regex]::Matches($btxt, "'([A-Za-z_][A-Za-z0-9_]*)'") | ForEach-Object { $_.Groups[1].Value })
+  if ($psNames.Count -eq 0) { Verdict 'FAIL' $t 'setup-environment.ps1: $LauncherInternalKeys に名前が 1 個も無い'; return }
+  # docs: 「内部変数名**（…）」の括弧内。名前は `…` で囲まれ、start_claude_code.sh のようなファイル名は名前に数えない
+  $mdl = @(Read-Lines $mdf | Where-Object { $_.Contains('内部変数名**（') -and $_.Contains('`_SENSITIVE_KEYS`') })
+  if ($mdl.Count -ne 1) { Verdict 'FAIL' $t "launcher-implementation-plan.md: 「内部変数名**（」と ``_SENSITIVE_KEYS`` を含む行が 1 行ではない（$($mdl.Count) 行）"; return }
+  $rest = $mdl[0].Substring($mdl[0].IndexOf('内部変数名**（', [StringComparison]::Ordinal) + '内部変数名**（'.Length)
+  $ci = $rest.IndexOf('）', [StringComparison]::Ordinal)
+  if ($ci -lt 0) { Verdict 'FAIL' $t 'launcher-implementation-plan.md: 内部変数名の列挙の閉じ括弧 ） が見つからない'; return }
+  $seg = $rest.Substring(0, $ci)
+  $mdNames = New-Object 'System.Collections.Generic.List[string]'
+  foreach ($m in [regex]::Matches($seg, '`([^`]*)`')) {
+    $tok = $m.Groups[1].Value
+    if ($tok -cmatch $idRe) { $mdNames.Add($tok) }
+    elseif ($tok -cnotmatch '^[A-Za-z0-9_.-]+\.sh$') { Verdict 'FAIL' $t "launcher-implementation-plan.md: 内部変数名の列挙に名前でもファイル名でもない ``$tok`` がある"; return }
+  }
+  $left = ([regex]::Matches([regex]::Replace($seg, '`[^`]*`', ''), '[A-Za-z_]') | ForEach-Object { $_.Value }) -join ''
+  if (One $left '') { Verdict 'FAIL' $t "launcher-implementation-plan.md: 内部変数名の列挙にバッククォートで囲まれていない英字がある: $left"; return }
+  if ($mdNames.Count -eq 0) { Verdict 'FAIL' $t 'launcher-implementation-plan.md: 内部変数名の列挙に名前が 1 個も無い'; return }
+  $sets = [ordered]@{ 'sh' = $shNames; 'ps1' = $psNames; 'docs' = $mdNames.ToArray() }
+  $union = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+  foreach ($k in $sets.Keys) { foreach ($n in $sets[$k]) { [void]$union.Add($n) } }
+  $all = New-Object 'string[]' $union.Count
+  $union.CopyTo($all)
+  [Array]::Sort($all, [StringComparer]::Ordinal)
+  $diffs = New-Object 'System.Collections.Generic.List[string]'
+  foreach ($n in $all) {
+    $absent = @($sets.Keys | Where-Object { Onin $sets[$_] $n })
+    if ($absent.Count -gt 0) { $diffs.Add("${n}（$($absent -join '・') に無い）") }
+  }
+  if ($diffs.Count -gt 0) { Verdict 'FAIL' $t "名前の集合が一致しない: $($diffs -join '、')"; return }
+  Verdict 'PASS' $t "sh / ps1 / docs の 3 者で同じ集合（$($all.Count) 個: $($all -join ' ')）"
+}
+
 function Item-CaRoot {
   $t = 'check-assets リポジトリルート'
   $avail = @(Usable $SysAll)
@@ -1277,7 +1385,7 @@ function Item-CaRoot {
   $nf = @($o | Where-Object { $_ -match '^\s*\[FAIL\]' }).Count
   $nw = @($o | Where-Object { $_ -match '^\s*\[WARN\]' }).Count
   $rc = @(Tag-Vals $lines 'RC') | Select-Object -First 1
-  if ($rc -cne '0') { Verdict 'FAIL' $t "FAIL $nf 件（exit $rc）"; return }
+  if (One $rc '0') { Verdict 'FAIL' $t "FAIL $nf 件（exit $rc）"; return }
   Verdict 'PASS' $t "$(Labels $avail) の出力が一致・FAIL=0（WARN $nw）$(Missing-Note $SysAll)$(Skip-Note)"
 }
 
@@ -1300,21 +1408,23 @@ function Item-CaFixture {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  $bad = Test-FixKeys 'check-assets.expect' $CaCases "ケースの列挙（$($CaCases -join ' ')）" 4
+  if ($bad) { Verdict 'FAIL' $t $bad; return }
   Drop-Skipping @($CaCases | ForEach-Object { "checkassets $_" }) $avail
   if ($script:Kept.Count -eq 0) { Verdict 'SKIP' $t $script:SkipNote; return }
   $avail = $script:Kept
   $expect = @(Read-Lines (Join-Path $VkFix 'check-assets.expect') | Where-Object { -not $_.StartsWith('#') })
   foreach ($cs in $CaCases) {
-    if (@($expect | Where-Object { $_.Split("`t")[0] -ceq $cs }).Count -eq 0) { Verdict 'FAIL' $t "${cs}: check-assets.expect に期待値が無い"; return }
+    if (@($expect | Where-Object { (Oeq ($_.Split("`t")[0]) $cs) }).Count -eq 0) { Verdict 'FAIL' $t "${cs}: check-assets.expect に期待値が無い"; return }
     if (-not (Same-All "checkassets $cs" $avail)) { Fail-Diff $t "${cs}: 判定が $($SysLabel[$script:SameA]) と $($SysLabel[$script:SameB]) で違う"; return }
     $lines = Get-Sec $avail[0] "checkassets $cs"
     $o = @(Tag-Vals $lines 'O' | ForEach-Object { $_.TrimStart() })
     foreach ($e in $expect) {
       $f = $e.Split("`t")
-      if ($f[0] -cne $cs) { continue }
-      if (@(Tag-Vals $lines 'RC') -cnotcontains $f[1]) { Verdict 'FAIL' $t "${cs}: 終了コードが期待（$($f[1])）と違う"; return }
+      if (One ($f[0]) $cs) { continue }
+      if (Onin (@(Tag-Vals $lines 'RC')) ($f[1])) { Verdict 'FAIL' $t "${cs}: 終了コードが期待（$($f[1])）と違う"; return }
       # タグ - はタグの無い行（ファイル一覧）も対象にする（verify-kit.sh と同じ）
-      if (@($o | Where-Object { ($f[2] -ceq '-' -or $_.Contains("[$($f[2])]")) -and $_.Contains($f[3]) }).Count -eq 0) {
+      if (@($o | Where-Object { ((Oeq ($f[2]) '-') -or $_.Contains("[$($f[2])]")) -and $_.Contains($f[3]) }).Count -eq 0) {
         Verdict 'FAIL' $t "${cs}: [$($f[2])] $($f[3]) の行が無い"; return
       }
     }
@@ -1328,17 +1438,19 @@ function Item-CleanEnv {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  $bad = Test-FixKeys 'clean-test-env.txt' @('PRE', 'OUTHAS', 'ARG', 'ENV', 'CWD', 'SETTINGS', 'AFTER', 'BADMODE', 'BADRC', 'BADOUT') '定義済みの行頭タグ（PRE / OUTHAS / ARG / ENV / CWD / SETTINGS / AFTER / BADMODE / BADRC / BADOUT）'
+  if ($bad) { Verdict 'FAIL' $t $bad; return }
   $fx = @(Read-Lines (Join-Path $VkFix 'clean-test-env.txt'))
-  $coreRe = '^(ARG|ENV|CWD|SETTINGS|AFTER)\t'
+  $coreRe ='^(ARG|ENV|CWD|SETTINGS|AFTER)\t'
   $exp = @($fx | Where-Object { $_ -cmatch $coreRe })
   $outhas = @(Tag-Vals $fx 'OUTHAS')
   $first = $null
   foreach ($s in $avail) {
     $lines = Get-Sec $s 'cleanenv'
     $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
-    if ($a -cne 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($a) { $a } else { '結果が無い' })"; return }
-    if (@(Tag-Vals $lines 'RAN') -notcontains 'yes') { Verdict 'FAIL' $t "$($SysLabel[$s]): スタブが起動していない"; return }
-    if (@(Tag-Vals $lines 'RC') -notcontains '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): 終了コードが 0 でない"; return }
+    if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($a) { $a } else { '結果が無い' })"; return }
+    if (Onin (@(Tag-Vals $lines 'RAN')) 'yes') { Verdict 'FAIL' $t "$($SysLabel[$s]): スタブが起動していない"; return }
+    if (Onin (@(Tag-Vals $lines 'RC')) '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): 終了コードが 0 でない"; return }
     $act = @($lines | Where-Object { $_ -cmatch $coreRe })
     if (-not (Lines-Equal $exp $act)) {
       Set-Diff $exp $act "期待（<）と $($SysLabel[$s])（>）の差分:"
@@ -1375,10 +1487,10 @@ function Item-CleanEnvBadMode {
     foreach ($s in $avail) {
       $lines = Get-Sec $s "cleanenv-badmode $i"
       $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
-      if ($a -cne 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]) '${m}': $(if ($a) { $a } else { '結果が無い' })"; return }
-      if ((@(Tag-Vals $lines 'MODE') | Select-Object -First 1) -cne $m) { Verdict 'FAIL' $t "$($SysLabel[$s]) $i 件目: ケースの対応が取れない"; return }
-      if (@(Tag-Vals $lines 'RAN') -cnotcontains 'no') { Verdict 'FAIL' $t "$($SysLabel[$s]) '${m}': 不正な権限モードのまま claude を起動した"; return }
-      if (@(Tag-Vals $lines 'RC') -cnotcontains $erc) { Verdict 'FAIL' $t "$($SysLabel[$s]) '${m}': 終了コードが期待（$erc）と違う（$(@(Tag-Vals $lines 'RC') -join ' ')）"; return }
+      if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]) '${m}': $(if ($a) { $a } else { '結果が無い' })"; return }
+      if (One ((@(Tag-Vals $lines 'MODE') | Select-Object -First 1)) $m) { Verdict 'FAIL' $t "$($SysLabel[$s]) $i 件目: ケースの対応が取れない"; return }
+      if (Onin (@(Tag-Vals $lines 'RAN')) 'no') { Verdict 'FAIL' $t "$($SysLabel[$s]) '${m}': 不正な権限モードのまま claude を起動した"; return }
+      if (Onin (@(Tag-Vals $lines 'RC')) $erc) { Verdict 'FAIL' $t "$($SysLabel[$s]) '${m}': 終了コードが期待（$erc）と違う（$(@(Tag-Vals $lines 'RC') -join ' ')）"; return }
       if (@(Tag-Vals $lines 'E' | Where-Object { $_.Contains($frag) }).Count -eq 0) { Verdict 'FAIL' $t "$($SysLabel[$s]) '${m}': stderr に「$frag」が無い"; return }
       if (@(Tag-Vals $lines 'O' | Where-Object { $_.Contains($frag) }).Count -gt 0) { Verdict 'FAIL' $t "$($SysLabel[$s]) '${m}': エラー文が stdout にも出ている（stderr のみのはず）"; return }
     }
@@ -1397,8 +1509,8 @@ function Item-PubName {
   foreach ($s in $avail) {
     $sec[$s] = Get-Sec $s 'pubname'
     $m = @(Tag-Vals $sec[$s] 'MODE') | Select-Object -First 1
-    if ($m -ceq 'fallback') { $fallback = $true }
-    if ($m -ceq 'real' -and @(Tag-Vals $sec[$s] 'ASSERT') -cnotcontains 'ok') {
+    if (Oeq $m 'fallback') { $fallback = $true }
+    if ((Oeq $m 'real') -and (Onin (@(Tag-Vals $sec[$s] 'ASSERT')) 'ok')) {
       Verdict 'FAIL' $t "$($SysLabel[$s]): $(@(Tag-Vals $sec[$s] 'ASSERT') | Select-Object -First 1)"; return
     }
   }
@@ -1417,7 +1529,7 @@ function Item-PubName {
     }
     return
   }
-  $rows = @(Read-Lines (Join-Path $VkFix 'plugin-names.tsv') | Where-Object { $_ -ne '' -and -not $_.StartsWith('#') })
+  $rows = @(Read-Lines (Join-Path $VkFix 'plugin-names.tsv') | Where-Object { (One $_ '') -and -not $_.StartsWith('#') })
   $nacc = 0; $nrej = 0; $narg = 0; $nother = 0
   foreach ($s in $avail) {
     if (@(Tag-Vals $sec[$s] 'ORDER' | Where-Object { $_.StartsWith('ok') }).Count -eq 0) { Verdict 'FAIL' $t "$($SysLabel[$s]): 順序確認の結果が無い"; return }
@@ -1428,16 +1540,16 @@ function Item-PubName {
       $exp = $f[$col]
       $rest = @($sec[$s] | Where-Object { $_.StartsWith("CASE`t$idx ") } | ForEach-Object { Val $_ }) | Select-Object -First 1
       $cls = if ($rest) { $rest.Split(' ')[1] } else { '' }
-      if ($cls -cne $exp) { Verdict 'FAIL' $t "$($SysLabel[$s]): '$name' は $exp のはずが $(if ($cls) { $cls } else { '結果なし' })（$rest）"; return }
+      if (One $cls $exp) { Verdict 'FAIL' $t "$($SysLabel[$s]): '$name' は $exp のはずが $(if ($cls) { $cls } else { '結果なし' })（$rest）"; return }
       # 名前検証で止まるケースでは git も claude も呼ばれていない（＝検証が副作用より前）。通過したケースではスタブの git が呼ばれる
-      if ($cls -eq 'accept') {
+      if (Oeq $cls 'accept') {
         if ($rest -notmatch 'stubcalls=[1-9]') { Verdict 'FAIL' $t "$($SysLabel[$s]): '$name' で git スタブが呼ばれていない"; return }
       } elseif ($rest -notmatch 'stubcalls=0$') {
         Verdict 'FAIL' $t "$($SysLabel[$s]): '$name' の拒否より前に git / claude が呼ばれた"; return
       }
       if ($s -eq $avail[0]) {
-        if ($f[0] -ceq $f[1]) {
-          if ($f[0] -ceq 'accept') { $nacc++ } elseif ($f[0] -ceq 'argerr') { $narg++ } else { $nrej++ }
+        if (Oeq ($f[0]) ($f[1])) {
+          if (Oeq ($f[0]) 'accept') { $nacc++ } elseif (Oeq ($f[0]) 'argerr') { $narg++ } else { $nrej++ }
         } else {
           $nother++
         }
@@ -1454,20 +1566,20 @@ function Item-PubCase {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t 'bash / pwsh 7 がどちらも無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
-  $rows = @(Read-Lines (Join-Path $VkFix 'plugin-case.tsv') | Where-Object { $_ -ne '' -and -not $_.StartsWith('#') })
+  $rows = @(Read-Lines (Join-Path $VkFix 'plugin-case.tsv') | Where-Object { (One $_ '') -and -not $_.StartsWith('#') })
   $nclash = 0; $npass = 0
   foreach ($s in $avail) {
     $sec = Get-Sec $s 'pubcase'
     $a = @(Tag-Vals $sec 'ASSERT') | Select-Object -First 1
-    if ($a -cne 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $a"; return }
+    if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $a"; return }
     for ($idx = 1; $idx -le $rows.Count; $idx++) {
       $f = $rows[$idx - 1].Split("`t")
       $exp = $f[0]; $ent = $f[1]; $name = $f[2]
       $rest = @($sec | Where-Object { $_.StartsWith("CASE`t$idx ") } | ForEach-Object { Val $_ }) | Select-Object -First 1
       $cls = if ($rest) { $rest.Split(' ')[1] } else { '' }
-      if ($cls -cne $exp) { Verdict 'FAIL' $t "$($SysLabel[$s]): plugins/$ent に対する '$name' は $exp のはずが $(if ($cls) { $cls } else { '結果なし' })（$rest）"; return }
+      if (One $cls $exp) { Verdict 'FAIL' $t "$($SysLabel[$s]): plugins/$ent に対する '$name' は $exp のはずが $(if ($cls) { $cls } else { '結果なし' })（$rest）"; return }
       if (-not $rest.EndsWith(' intact=yes')) { Verdict 'FAIL' $t "$($SysLabel[$s]): '$name' で既存の plugins/$ent が変化した（$rest）"; return }
-      if ($s -eq $avail[0]) { if ($exp -ceq 'clash') { $nclash++ } else { $npass++ } }
+      if ($s -eq $avail[0]) { if (Oeq $exp 'clash') { $nclash++ } else { $npass++ } }
     }
   }
   Verdict 'PASS' $t "実スクリプト（git / claude はスタブ）で中止 $nclash・通過 $npass。$(Labels $avail) とも期待どおり、中止は取り出しより前に exit 2・既存エントリは無傷（5.1 は #requires -Version 7 のため対象外）$(Missing-Note @('bash', 'pwsh'))"
@@ -1486,11 +1598,11 @@ function Item-PubManifest {
     $sk = @(Tag-Vals $sec[$s] 'SKIP') | Select-Object -First 1
     if ($sk) { $notes.Add("$($SysLabel[$s]): $sk"); continue }
     $a = @(Tag-Vals $sec[$s] 'ASSERT') | Select-Object -First 1
-    if ($a -cne 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $a"; return }
+    if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $a"; return }
     $run += $s
   }
   if ($run.Count -eq 0) { Verdict 'SKIP' $t ($notes -join '、'); return }
-  $rows = @(Read-Lines (Join-Path $VkFix 'plugin-manifest.tsv') | Where-Object { $_ -ne '' -and -not $_.StartsWith('#') })
+  $rows = @(Read-Lines (Join-Path $VkFix 'plugin-manifest.tsv') | Where-Object { (One $_ '') -and -not $_.StartsWith('#') })
   $seen = @{}; $clsOf = @{}
   $npass = 0; $nmis = 0; $nunr = 0; $nnopy = 0
   foreach ($s in $run) {
@@ -1498,14 +1610,14 @@ function Item-PubManifest {
     for ($idx = 1; $idx -le $rows.Count; $idx++) {
       $f = $rows[$idx - 1].Split("`t", 6)
       $exp = $f[$col]; $name = $f[4]; $json = if ($f.Count -ge 6) { $f[5] } else { '' }
-      if ($exp -ceq '-') { continue }
+      if (Oeq $exp '-') { continue }
       $rest = @($sec[$s] | Where-Object { $_.StartsWith("CASE`t$idx ") } | ForEach-Object { Val $_ }) | Select-Object -First 1
       $cls = if ($rest) { $rest.Split(' ')[1] } else { '' }
       $clsOf["${s}:$idx"] = $cls
-      if ($cls -ceq 'skip') { $notes.Add("$($SysLabel[$s]) ケース ${idx}: $($rest.Substring($rest.IndexOf(' skip ') + 6))"); continue }
-      if ($cls -cne $exp) { Verdict 'FAIL' $t "$($SysLabel[$s]): ケース $idx（名前 '$name'・$json）は $exp のはずが $(if ($cls) { $cls } else { '結果なし' })（$rest）"; return }
+      if (Oeq $cls 'skip') { $notes.Add("$($SysLabel[$s]) ケース ${idx}: $($rest.Substring($rest.IndexOf(' skip ') + 6))"); continue }
+      if (One $cls $exp) { Verdict 'FAIL' $t "$($SysLabel[$s]): ケース $idx（名前 '$name'・$json）は $exp のはずが $(if ($cls) { $cls } else { '結果なし' })（$rest）"; return }
       if (-not $rest.EndsWith(' intact=yes')) { Verdict 'FAIL' $t "$($SysLabel[$s]): ケース $idx で一時 marketplace が変化した（$rest）"; return }
-      if ($cls -cne 'pass' -and @($sec[$s] | Where-Object { $_.StartsWith("MSG`t$idx ‼") }).Count -eq 0) {
+      if ((One $cls 'pass') -and @($sec[$s] | Where-Object { $_.StartsWith("MSG`t$idx ‼") }).Count -eq 0) {
         Verdict 'FAIL' $t "$($SysLabel[$s]): ケース $idx（$cls）で中止の文言（‼ の行）が無い"; return
       }
       if (-not $seen.ContainsKey($idx)) {
@@ -1520,8 +1632,8 @@ function Item-PubManifest {
     $ncmp = 0
     for ($idx = 1; $idx -le $rows.Count; $idx++) {
       $f = $rows[$idx - 1].Split("`t", 6)
-      if ($f[0] -cne $f[1] -or $f[0] -ceq 'pass' -or $f[0] -ceq '-') { continue }
-      if ($clsOf["bash:$idx"] -cne $f[0] -or $clsOf["pwsh:$idx"] -cne $f[0]) { continue }
+      if ((One ($f[0]) ($f[1])) -or (Oeq ($f[0]) 'pass') -or (Oeq ($f[0]) '-')) { continue }
+      if ((One ($clsOf["bash:$idx"]) ($f[0])) -or (One ($clsOf["pwsh:$idx"]) ($f[0]))) { continue }
       $m = @{}
       foreach ($s in @('bash', 'pwsh')) {
         $caseLine = @($sec[$s] | Where-Object { $_.StartsWith("CASE`t$idx ") }) | Select-Object -First 1
@@ -1545,7 +1657,7 @@ function Snapshot-Left { @($LeftPaths | Where-Object { Test-Path -LiteralPath (J
 
 function Item-Left([string[]]$before) {
   $t = 'リポジトリ .claude/ に試験用ファイルを作っていない'
-  $new = @(Snapshot-Left | Where-Object { $before -cnotcontains $_ })
+  $new = @(Snapshot-Left | Where-Object { (Onin $before $_) })
   if ($new.Count -gt 0) { Verdict 'FAIL' $t "実行中に作られた: $($new -join ' ')"; return }
   if ($before.Count -gt 0) { Verdict 'PASS' $t "新規作成なし（実行前からある個人実体: $($before -join ' ')）" }
   else { Verdict 'PASS' $t '新規作成なし' }
@@ -1571,6 +1683,7 @@ try {
   Item-LauncherStaleRc
   Item-Optset
   Item-SetupEnv
+  Item-InternalKeys
   Item-CaRoot
   Item-CaFixture
   Item-CleanEnv
