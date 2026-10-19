@@ -86,7 +86,9 @@ $Opts = [ordered]@{
     # ===== エージェント / プラグイン / システムプロンプト =====
     # 追加サブエージェント定義（インライン JSON）。ファイルパスを渡せるのは --print 併用時だけ（v2.1.281 以降）。
     #   対話起動でファイルパスを渡すと起動時にエラーで終了する
-    #   ※ Windows PowerShell 5.1 は外部コマンドへ渡す引数の中の " を落とすことがある（渡らない場合は pwsh 7 で起動する）
+    #   ※ Windows PowerShell 5.1 は、ネイティブ exe（claude.exe）へ渡す引数の中の " をすべて落とす（実測）。
+    #     JSON が壊れて {reviewer:{description:Reviews code,...}} になるため、この値は 5.1 では使えない。pwsh 7 で起動すること
+    #     （7.3 以降は " が保たれる）。5.1 で値を \" にエスケープしても、値に空白があると引数が空白で分割されて直らない
     # '--agents' = '{"reviewer":{"description":"Reviews code","prompt":"You are a code reviewer"}}'
     # 単一エージェントの指定
     # '--agent' = 'my-agent'
