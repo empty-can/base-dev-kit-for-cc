@@ -11,33 +11,60 @@
 # ここはユーザが自由に変えてよい起動オプション（分類D）。チームで統制したい
 # オプション（分類C）は start_claude_code.ps1 側の $TeamOpts に定義されている。
 #
-# 網羅方針: Claude Code の起動オプションをほぼ全量掲載し、公式デフォルト値はコメントで明記する。
-#   意図的に載せていないもの:
+# 網羅方針: 対話起動で使う Claude Code の起動オプションをほぼ全量掲載し、公式デフォルト値はコメントで
+#   明記する（公式 docs v2.1.302 時点）。意図的に載せていないもの:
 #     - --system-prompt / --system-prompt-file … 既定のシステムプロンプトを丸ごと置き換える。
 #       キットの前提（CLAUDE.md / rules のロード）が崩れるため、ここでは扱わない。
 #     - --allowedTools / --disallowedTools … 権限統制に直結するため settings.json 側で管理する。
+#     - --restricted … user・project・local の settings を読まずに起動する（キットの permissions.deny も hooks も効かない）。
+#     - --bare / --safe-mode … settings は読むが hooks・CLAUDE.md・skills を読まない（.bat 保護の hook が効かない）。
+#       いずれもキットの前提が崩れるため、ここでは扱わない。
+#     - --desktop / --environment / --ref … 端末セッションを始めずに Desktop を開く、またはクラウドセッションを
+#       作って終了する。他の起動オプションと併用できない（ランチャーの用途外）。
+#     - --post / --no-post（claude ultrareview）、--discard-unpushed / --force-remove-worktree（claude rm）…
+#       サブコマンド専用のオプション。
 #   詳細は公式 docs の CLI reference を参照。
 #
 # 反復可能フラグ（--add-dir / --plugin-dir / --mcp-config 等）は順序付きハッシュの性質上
 # 1 値しか書けない。複数渡す場合は起動時引数を使う（各項目のコメント参照）。
+#   例外・代替: --plugin-dir はプラグインを並べたフォルダを 1 つ渡せば中の各プラグインを読む（v2.1.265 以降）。
+#   --plugin-url は空白区切りの複数 URL を 1 値で渡せる。複数の plugin ディレクトリは環境変数
+#   CLAUDE_CODE_PLUGIN_DIRS（custom.env。Windows は ; 区切り・絶対パス必須・v2.1.280 以降）でも渡せる。
+#
+# プロンプトを起動時引数で渡すなら、フラグはすべてプロンプトより前に置く。値を複数取るフラグ（--add-dir /
+#   --mcp-config / --tools 等）や値を省略できるフラグ（--debug / --resume 等）は直後のプロンプトを値として取り込む。
+#   ランチャーは起動時引数が全部 - で始まらない（＝プロンプトだけ）ときに限り、ここの $Opts との間に -- を補う。
+#   PS 版はこの $Opts を書いた順に並べる（bash 版はキーの辞書順）。
 # =============================================================================
 
 $Opts = [ordered]@{
     # ===== モデル =====
-    # 使用モデル（公式デフォルト: 起動時に対話選択 / 設定の既定モデル）
-    # '--model' = 'claude-opus-4-8'
-    # 過負荷・失敗時のフォールバックモデル
-    # '--fallback-model' = 'claude-sonnet-5'
+    # 使用モデル。エイリアス（opus / sonnet / haiku / fable / best / opusplan。1M コンテキストは opus[1m] / sonnet[1m]）か
+    #   フルモデル名（例: claude-opus-5-5 / claude-sonnet-5-5 / claude-haiku-5-5 / claude-fable-5-1）。
+    #   公式デフォルト（起動時の対話選択は無い）: ANTHROPIC_MODEL → settings の model（/model の保存先）→
+    #   組織の既定モデル → ANTHROPIC_DEFAULT_MODEL → アカウント種別の既定（Pro/Max/Team/Enterprise/API・
+    #   Bedrock・Agent Platform は Opus 5.5、Foundry は Sonnet 4.5）の順に決まる。
+    #   エイリアスの指す先は版とプロバイダで変わる（Bedrock 等では sonnet / haiku が旧版）。版を固定するならフルモデル名。
+    # '--model' = 'opus'
+    # 過負荷・利用不可時のフォールバック先。カンマ区切りで順に試す（最大 3 モデル。切り替えはそのターンだけ）
+    # '--fallback-model' = 'sonnet,haiku'
+    # Advisor（要所で相談する上位モデル。このセッションだけ advisorModel 設定を上書き。
+    #   主モデルが非対応・指定モデルが advisor 不可だと起動時にエラー。サードパーティプロバイダでは使えない）
+    # '--advisor' = 'fable'
 
     # ===== 設定ソース・作業ディレクトリ =====
     # 追加の作業ディレクトリ。ここに書けるのは 1 値だけ（順序付きハッシュはキーを重複できず、
     # フラグの繰り返し指定を表現できない）。複数ディレクトリを渡したい場合は起動時引数で:
     #   .\start_claude_code.ps1 --add-dir <パスA> --add-dir <パスB>
     # 同じ制約は --plugin-dir / --mcp-config 等の反復可能フラグにも当てはまる。
+    #   UNC（\\server\share）などのネットワークパスは拒否される（v2.1.257 以降）。Windows ではドライブ文字に割り当てて指定する。
     # '--add-dir' = '<参照したいリポジトリのパス>'
-    # 追加で読む settings ファイル
+    # 追加で読む settings（ファイルパス または インライン JSON 文字列。同じキーはこのセッションだけ
+    #   settings.json の値を上書きする。ファイルは 2 MiB 以下の通常ファイル）
     # '--settings' = './.claude/settings.extra.json'
-    # 読み込む設定ソースの限定（例: project,user,local）
+    # 読み込む設定ソースの限定（user / project / local のカンマ区切り。例: project,user）。
+    #   ⚠ project を外すと、キットの .claude/settings.json（permissions.deny・hooks。.bat 保護を含む）が読まれない。
+    #   この値は、このセッションから起動するチームメイト・/bg・claude agents のセッションにも引き継がれる
     # '--setting-sources' = 'project,user'
 
     # ===== MCP =====
@@ -47,57 +74,85 @@ $Opts = [ordered]@{
     # '--strict-mcp-config' = $true
 
     # ===== 権限 =====
-    # 権限モード（default / acceptEdits / plan）
+    # 権限モード（default〔= manual〕/ acceptEdits / plan / auto / dontAsk）
+    #   公式デフォルト（未指定時）: 対話起動は auto（v2.1.283 以降。ネイティブ Windows は v2.1.233 未満だと Manual）。
+    #   auto が使えない場合（モデル非対応・設定で無効化など）は Manual で起動する。-p 実行は default（changelog 2.1.302）。
+    #   'default' を指定すると auto をやめて従来の Manual（操作ごとに確認）で起動する。
+    #   dontAsk は確認が要る操作をすべて自動で拒否する（CI 向け）。
+    #   ⚠ ここで固定すると --continue / --resume で再開したときに、終了時のモード（plan 等）が復元されずこの値になる。
     # ※ bypassPermissions は権限確認を全て飛ばすため、下の「非推奨・破壊的」節に隔離した
     # '--permission-mode' = 'default'
-    # 権限確認を委譲する外部ツール
-    # '--permission-prompt-tool' = 'mcp__approval__prompt'
 
     # ===== エージェント / プラグイン / システムプロンプト =====
-    # 追加エージェント定義（JSON 文字列またはファイル）
-    # '--agents' = './agents.json'
+    # 追加サブエージェント定義（インライン JSON）。ファイルパスを渡せるのは --print 併用時だけ（v2.1.281 以降）。
+    #   対話起動でファイルパスを渡すと起動時にエラーで終了する
+    #   ※ Windows PowerShell 5.1 は外部コマンドへ渡す引数の中の " を落とすことがある（渡らない場合は pwsh 7 で起動する）
+    # '--agents' = '{"reviewer":{"description":"Reviews code","prompt":"You are a code reviewer"}}'
     # 単一エージェントの指定
     # '--agent' = 'my-agent'
     # システムプロンプトへ追記（ファイル指定）
     # '--append-system-prompt-file' = './prompt-append.txt'
-    # システムプロンプトへ追記（文字列指定）
+    # システムプロンプトへ追記（文字列指定）。v2.1.283 以降はファイル指定と併用でき、ファイルの内容が先に入る
     # '--append-system-prompt' = '追加の指示'
-    # ローカルのプラグインディレクトリを読み込む
+    # ⚠ 追記の内容は会話の最初のリクエストで記録され、--continue / --resume 後も圧縮されるまで記録版が使われる
+    #   （書き換えても再開した会話には効かない）。毎回作り直させるなら off（既定は on）
+    # '--system-prompt-snapshot' = 'off'
+    # ローカルのプラグイン（ディレクトリ / .zip、またはプラグインを並べたフォルダ）をこのセッションだけ読み込む
     # '--plugin-dir' = './my-plugins'
-    # URL からプラグインを読み込む
-    # '--plugin-url' = 'https://example.com/plugin'
-    # 使用ツールの限定
+    # URL からプラグインの .zip を取得し、このセッションだけ読み込む（空白区切りで複数 URL 可）
+    # '--plugin-url' = 'https://example.com/plugin.zip'
+    # 使えるビルトインツールの限定（"" で全部無効、"default" で既定セット、または "Bash,Edit,Read" のような列挙）。
+    #   MCP ツールには効かない
     # '--tools' = 'Read,Grep,Edit'
+    # このセッションの skill / スラッシュコマンドをすべて無効にする（キットの skill も使えなくなる・値なしフラグ）
+    # '--disable-slash-commands' = $true
 
     # ===== セッション継続 =====
-    # 直近のセッションを継続（値なしフラグ）
+    # 直近のセッションを継続（値なしフラグ。終了済みの background セッションも対象。-p / SDK のセッションは飛ばす）
     # '--continue' = $true
-    # セッション ID を指定して再開
-    # '--resume' = '<session-id>'
-    # セッション ID を明示指定
+    # セッションを指定して再開（セッション ID / --name で付けた名前 / transcript .jsonl の絶対パス。$true〔値なし〕なら picker）
+    # '--resume' = '<session-id または名前>'
+    # セッション ID を明示指定（UUID）
     # '--session-id' = '<uuid>'
-    # 再開時に新しいセッションへ分岐（値なしフラグ）
+    # 再開時に新しいセッション ID へ分岐（--resume / --continue と併用・値なしフラグ）
     # '--fork-session' = $true
-    # 指定 PR からセッションを開始
+    # 指定 PR に紐づくセッションを選ぶ picker を開く（PR 番号 / GitHub・GHE の PR URL / GitLab MR URL /
+    #   Bitbucket PR URL。紐づけは Claude が PR を作ったときに自動で行われる）
     # '--from-pr' = '123'
+    # セッションに表示名を付ける（/resume の一覧とターミナルタイトルに出る。--resume <名前> で再開できる）
+    # '--name' = 'my-feature-work'
+
+    # ===== worktree / エージェントチーム / API =====
+    # 隔離した git worktree（<repo>/.claude/worktrees/<名前>）で起動する。値は worktree 名・'#<PR 番号>'・
+    #   GitHub PR URL・GitLab MR URL（v2.1.233 以降）。$true（値なし）なら名前を自動生成。既存の名前なら開き直す
+    # '--worktree' = 'feature-auth'
+    # worktree 用の tmux セッションを作る（--worktree が必要。iTerm2 ではネイティブペイン・値なしフラグ）
+    # '--tmux' = $true
+    # エージェントチームのチームメイトの表示方式（in-process〔既定〕/ auto / tmux / iterm2）。実験的機能:
+    #   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 が無いとチーム自体が作られない。tmux / iterm2 は分割ペイン表示
+    # '--teammate-mode' = 'in-process'
+    # API リクエストに付けるベータヘッダ（API キー利用者のみ。複数あるときは起動時引数で空白区切り）
+    # '--betas' = 'interleaved-thinking'
 
     # ===== IDE / 表示 / デバッグ =====
     # IDE 連携で起動（値なしフラグ）
     # '--ide' = $true
-    # 詳細ログ（値なしフラグ）
+    # 詳細ログ（ターン単位の全出力。このセッションだけ viewMode 設定を上書き・値なしフラグ）
     # '--verbose' = $true
-    # デバッグ出力
+    # デバッグ出力（値なしフラグ）。カテゴリで絞るときは「=」形をキーに書く（値として分けると絞り込みが効かない）
+    #   例: '--debug=mcp,startup' = $true  /  除外: '--debug=!mcp' = $true
     # '--debug' = $true
-    # 部分メッセージのストリーム表示（値なしフラグ）
-    # '--include-partial-messages' = $true
 
-    # ===== 思考 / 予算 / ターン制御 =====
-    # 推論の努力度（low / medium / high / xhigh / max）
+    # ===== 思考 / コンテキスト =====
+    # 推論の努力度（low / medium / high / xhigh / max、または ultracode）。使える段階はモデルによる。
+    #   公式デフォルト: モデルの既定（Opus 5.5 / Sonnet 5.5 / Haiku 5.5 は medium、Opus 4.7 は xhigh、他は high）。
+    #   ultracode は xhigh にしたうえで動的ワークフロー（ultracode）を有効にする。指定はこのセッションだけ。
+    #   ⚠ 環境変数 CLAUDE_CODE_EFFORT_LEVEL が設定されていると、そちらが優先されこのフラグは効かない
     # '--effort' = 'high'
-    # セッションのコスト上限（USD）
-    # '--max-budget-usd' = '5'
-    # 最大ターン数
-    # '--max-turns' = '50'
+    # 自動圧縮のウィンドウ（このセッションだけ。保存済みの設定は変えない）。auto（モデルの既定）か
+    #   トークン数: 200000 / 500k / 1M / 100〜1000（千単位）。範囲は 100K〜1M（v2.1.221 以降）。
+    #   ⚠ 環境変数 CLAUDE_CODE_AUTO_COMPACT_WINDOW が設定されていると、そちらが優先される
+    # '--autocompact' = '500k'
 
     # ===== 非対話 / print モード（ヘッドレス実行向け・通常の対話起動では不要）=====
     # 標準出力へ一括応答して終了（値なしフラグ）
@@ -106,18 +161,25 @@ $Opts = [ordered]@{
     # '--output-format' = 'text'
     # 入力フォーマット（text / stream-json）
     # '--input-format' = 'text'
-    # スラッシュコマンドを無効化（値なしフラグ）
-    # '--disable-slash-commands' = $true
-    # チームメイトモード
-    # '--teammate-mode' = '...'
-    # 有効化するベータ機能
-    # '--betas' = '...'
-    # 隔離した git worktree で起動
-    # '--worktree' = '...'
+    # 部分メッセージ（ストリーミングの途中経過）も出力に含める（--print かつ --output-format stream-json のとき・値なしフラグ）
+    # '--include-partial-messages' = $true
+    # API 利用額の上限（USD・--print 時のみ）。クライアント側の概算で判定するため、上限を超えることもある
+    # '--max-budget-usd' = '5'
+    # エージェントのターン数の上限（--print 時のみ。既定は無制限。上限に達するとエラー終了）
+    # '--max-turns' = '50'
+    # 権限確認を委譲する MCP ツール（--print 時のみ。対話起動では効かない）
+    # '--permission-prompt-tool' = 'mcp__approval__prompt'
+    # 権限確認に誰が答えるか（--print 時のみ。host〔既定〕/ none。none は確認が要る操作を自動で拒否する・v2.1.259 以降）
+    # '--permission-prompts' = 'none'
+    # サブエージェントのシステムプロンプトへ追記（--print 時のみ。文字列版とファイル版は併用不可・v2.1.261 以降）
+    # '--append-subagent-system-prompt-file' = './subagent-rules.txt'
 
     # ===== ⚠⚠ 非推奨・破壊的（内容を理解した上でのみ有効化）⚠⚠ =====
     # 権限確認をすべてスキップする。誤操作・情報漏えいのリスクを理解した上で。
+    #   （--permission-mode bypassPermissions と同等。同じ効果を上の「権限」節の --permission-mode に書くと
+    #   キーが重複し、bash は後に書いた値が黙って採用され、PowerShell は構文エラーで起動しないため、ここに書かない）
     # '--dangerously-skip-permissions' = $true
-    # 権限モードとして同等の効果を持つ。上記フラグと同じ扱いにすること。
-    # '--permission-mode' = 'bypassPermissions'
+    # bypassPermissions を Shift+Tab の切り替え候補に加える（起動時は別のモード）。これを付けた対話セッションでは
+    #   plan モードでも編集・コマンドが確認なしで実行されうるため、上のフラグと同じ扱いにすること（値なしフラグ）
+    # '--allow-dangerously-skip-permissions' = $true
 }

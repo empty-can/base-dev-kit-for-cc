@@ -15,11 +15,35 @@
 #     ├─ setup-environment.sh  → custom.env をロード＋チーム/組織統制 env を後勝ち固定
 #     └─ option-settings.sh    → 利用者可変の起動オプション（OPTS 連想配列）
 #   ＋ 本ファイル内の TEAM_OPTS → チーム統制の起動オプション（分類C）
+#   組立順は claude <OPTS> <TEAM_OPTS> [--] <起動時引数>。各連想配列はキーの辞書順（C ロケール）で並べる
+#   （PS 版は書いた順）。
 #
-# ⚠ ここで設定する env が届くのは foreground 起動の claude だけ。background / agent-view
-#    セッションは OS env・ディレクトリ設定から構成を読むため、そちらにも効かせたい値は
-#    OS 環境変数または settings.json で設定すること。
-#    起動オプションは一部が background へ引き継がれる（全滅ではない）。
+# ⚠ プロンプトを起動時引数で渡すなら、フラグはすべてプロンプトより前に置くこと。値を複数取るフラグ
+#    （--add-dir / --mcp-config / --tools 等）や値を省略できるフラグ（--debug / --resume 等）が組み立てた
+#    オプションの最後に来ると、直後のプロンプトを値として取り込む（v2.1.302 で実測）。ランチャーは起動時引数が
+#    全部 - で始まらない（＝プロンプトだけ）ときに限り -- を補う。"<prompt>" -p のような混在は補わない。
+# ⚠ ここで設定する env が確実に届くのは、このランチャーが起動した foreground の claude だけ。
+#    background セッション（/bg・← で送ったもの、claude --bg、agent view から dispatch したもの）は
+#    background service（supervisor）配下の別プロセスとして起動し直され、構成を「そのディレクトリの
+#    settings（env ブロックを含む）＋引き継がれた構成フラグ」から読む。起動元のシェルから届く env は
+#    公式に列挙されたものだけ（PATH / CLAUDE_CODE_USE_BEDROCK・CLAUDE_CODE_USE_VERTEX /
+#    ANTHROPIC_DEFAULT_*_MODEL / CLAUDE_CODE_EXTRA_BODY。ゲートウェイ変数は条件付き）。
+#    custom.env・setup-environment の値はこの列挙に入るものを除いて background には届かない
+#    （例: CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD は届かず、--add-dir だけが引き継がれる）。
+#    ※ supervisor は全端末で共有され「最初に起動したシェルの env を継承」するため、このランチャーから
+#    起動した claude が supervisor を立ち上げた場合に限り届くことがある＝起動順次第で確実ではない。
+#    background にも効かせたい値は OS の環境変数（永続的なユーザー環境変数。Windows はユーザー環境変数、
+#    macOS / Linux はログインシェルの profile）で設定すること。supervisor は最初に起動したシェルの env を
+#    継承するので、どの端末から起動されても届く（既に動いている service には、それが起動した時点の env が使われる）。
+#    公式 docs は ~/.claude/settings.json の env を勧めるが、キットは利用者に settings 系ファイルの
+#    env を使わせない（誤って commit / push する、Claude から読める場所に値が残る、を避けるため）。組織で固定する値だけは managed settings の env（管理者の経路）に置く。
+#    起動オプションは構成フラグ（--settings / --setting-sources / --add-dir / --plugin-dir / --mcp-config /
+#    --strict-mcp-config / --fallback-model / --allow-dangerously-skip-permissions）だけが background へ引き継がれる。
+#    参照: https://code.claude.com/docs/en/agent-view#settings-and-provider
+# ⚠ サブコマンド（agents / remote-control など）はこのランチャー経由で起動しないこと。組み立てた起動
+#    オプションが verb の「前」に付くため、remote-control は --settings 等が前にあると起動を拒否し、
+#    agents は --add-dir / --mcp-config が前にあると `claude agents --json` が unknown option で失敗する
+#    （claude --bg "<prompt>" のようなフラグ形式の background 起動は問題ない）。
 # =============================================================================
 set -euo pipefail
 
@@ -60,10 +84,15 @@ fi
 # 値を取らないフラグは値を "true" にする。
 #
 # 統制の強さ: これは「既定値をチームで揃える」ための仕組みであって、強制力はない。
-#   - 値上書き型のフラグは TEAM_OPTS が後段に付くためチーム値が後勝ちになる
+#   - 値を 1 つだけ取るフラグは TEAM_OPTS が後段に付くためチーム値が後勝ちになる
 #   - ただし起動時引数（"$@"）はさらに後ろに付くので、利用者が明示指定すれば上書きできる
 #   - --add-dir のような反復可能フラグは上書きされず両方の値が渡る（累積する）
-# 強制したい統制は settings.json / managed settings 側で行うこと。
+#   - 例外: --append-system-prompt とその -file 版は上書きではなく両方が使われる（v2.1.283 以降）。
+#     --append-subagent-system-prompt とその -file 版は併用できない（OPTS と TEAM_OPTS に分けて書くとエラー）
+# 強制したい統制は settings.json / managed settings 側で行うこと。ただし permissions.defaultMode の
+#   auto / bypassPermissions はプロジェクトの .claude/settings.json / settings.local.json では無視される
+#   （効かせるなら ~/.claude/settings.json または managed settings）。--permission-mode フラグは
+#   settings の defaultMode より優先される。
 declare -A TEAM_OPTS=(
   # [--setting-sources]="project,user"
 )
@@ -91,7 +120,14 @@ _args=()
 _append_opts() {
   local -n _map="$1"
   local k v
-  for k in "${!_map[@]}"; do
+  local -a _keys=()
+  # 連想配列の列挙順は不定（ハッシュ順）なので、キーをソートして組立順を決定的にする。
+  # 空のまま printf '%s\0' に渡すと NUL が 1 個出て空キー（＝空文字の引数）になるため、先に抜ける。
+  if [ "${#_map[@]}" -eq 0 ]; then
+    return 0
+  fi
+  mapfile -d '' -t _keys < <(printf '%s\0' "${!_map[@]}" | LC_ALL=C sort -z)
+  for k in "${_keys[@]}"; do
     v="${_map[$k]}"
     _args+=("$k")
     # 値が空 / "true" のものは値なしフラグとして扱う
@@ -102,6 +138,21 @@ _append_opts() {
 }
 _append_opts OPTS
 _append_opts TEAM_OPTS
+
+# 値を複数取る／値を省略できるフラグが _args の最後だと、直後のプロンプトを値として取り込む（冒頭の注意）。
+# 起動時引数が全部非フラグ（＝プロンプトだけ）のときに限り -- で区切る。フラグを含む場合（混在を含む）は
+# 素の claude と同じく利用者の並べ方に任せる。組み立てたオプションが無いときは素の claude と同じ引数列にする。
+if [ "${#_args[@]}" -gt 0 ] && [ "$#" -gt 0 ]; then
+  _only_positional=1
+  for _a in "$@"; do
+    case "$_a" in
+      -*) _only_positional=0; break ;;
+    esac
+  done
+  if [ "${_only_positional}" -eq 1 ]; then
+    _args+=("--")
+  fi
+fi
 
 # ---- 5) 起動（追加引数はそのまま claude へ委譲）------------------------------
 exec claude "${_args[@]}" "$@"
