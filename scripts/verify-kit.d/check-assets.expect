@@ -15,7 +15,9 @@
 #              .claude/Reports/x.md と .claude/plugin-x/Evals/Results/r.json
 #   pexact   … settings-clean.json ＋ .claude/reports/x.md と .claude/plugin-x/evals/results/r.json
 #   gcase    … 一時の git リポジトリ（ルート＝追跡基準）。pcase と同じ 2 ファイルを git add -f で追跡し、
-#              .claude/Work/w.md を未追跡で置く（settings は settings-clean.json）
+#              .claude/Work/w.md を未追跡で置く（settings は settings-clean.json）。加えて日本語名の .claude/日本語-abspath.md
+#              （絶対パスを含む）を追跡する: git 層の 2-e は ls-files -z を UTF-8 で読むこと（-z が無いと core.quotepath で
+#              引用・エスケープされ、コンソールが CP932 だと化けて、PS 版だけ見逃していた）
 #   gexact   … 一時の git リポジトリ。pexact と同じ 2 ファイルと .claude/plugin-x0/evals/results/r.json を git add -f で
 #              追跡する（2-c' の列挙が 2 件。並びは ls-files の順 = バイト順で、/ と \ のどちらで並べるかで前後が変わる組）
 #   hidden   … settings-clean.json ＋ 隠し属性の .claude/.hidden-abspath.md と、隠し属性の .claude/.hidden-dir/ の中の
@@ -59,6 +61,8 @@ gcase	0	WARN	大文字小文字だけが違う成果物クラスらしきパス�
 gcase	0	WARN	大文字小文字だけが違う成果物クラスらしきパスが実在する（未追跡。配布はされない）: .claude/Work（.claude/work と同一視される OS がある
 gcase	0	WARN	大文字小文字だけが違う成果物クラスらしきパスが Git 追跡されている（payload に乗る）: .claude/plugin-x/Evals/Results（*/evals/results/ と同一視される OS がある
 gcase	0	PASS	.claude/plans なし
+gcase	0	WARN	配布物に環境固有の絶対パスらしき記述がある
+gcase	0	-	.claude/日本語-abspath.md
 gexact	1	FAIL	.claude/reports が Git 追跡されている（payload に乗り配布される）
 gexact	1	FAIL	plugin eval の結果（*/evals/results/）が Git 追跡されている（payload に乗り配布される）
 gexact	1	-	.claude/plugin-x/evals/results/r.json

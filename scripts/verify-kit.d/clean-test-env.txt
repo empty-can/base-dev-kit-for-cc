@@ -4,11 +4,17 @@
 #   それ以外 … スタブの claude で観測されるべき値（<R> = <Share>、<CFG> / <WORK> = 一時 config dir / 作業ディレクトリ）
 #   AFTER  … 実行後の呼び出し元の環境変数（PowerShell 版は $env: がプロセス全体なので復元が要る）
 #   BADMODE … 不正な権限モード（.sh は PERMISSION_MODE、.ps1 は -PermissionMode に渡す。1 行 1 ケース）。
-#             両版とも起動前に止まること: 終了コード BADRC・claude 未起動・BADOUT が stderr にあり stdout には無い・出力が両版で一致
+#             両版とも起動前に止まること: 終了コード BADRC・claude 未起動・BADOUT が stderr にあり stdout には無い・出力が両版で一致。
+#             <empty> は空文字列（設定済みで空。.sh の PERMISSION_MODE= も .ps1 の -PermissionMode '' も不正値として止まる）
+#   BADSHARERC / BADSHAREOUT … 存在しない <Share> を渡したとき（KEEP=1 / -Keep）: 両版とも一時ディレクトリを作る前に止まること:
+#             終了コード BADSHARERC・claude 未起動・BADSHAREOUT が stderr にあり stdout には無い・一時領域に何も残らない・出力が両版で一致
 BADMODE	AUTO
 BADMODE	foo
+BADMODE	<empty>
 BADRC	2
 BADOUT	権限モードが不正
+BADSHARERC	1
+BADSHAREOUT	‼ <Share> が見つかりません
 PRE	CLAUDE_CONFIG_DIR=verify-kit-dummy-config-dir
 PRE	CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=<unset>
 PRE	CLAUDE_CODE_PLUGIN_DIRS=verify-kit-dummy-plugin-dirs

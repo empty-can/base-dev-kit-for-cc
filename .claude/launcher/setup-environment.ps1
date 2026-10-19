@@ -47,9 +47,13 @@ $SensitiveKeys = @(
 # 値を export でシェル変数へ書くため、これらを書かれると分類A の判定や起動処理が壊れる。本版は Set-Item Env: で
 # 書くので影響を受けないが、同じ custom.env が OS で違う結果にならないよう、同じ名前を同じ警告で読み飛ばす。
 # bash の変数名に合わせて大文字小文字を区別して比較する（-ccontains）。集合は bash 版の case と揃えること。
+# 末尾の 6 個は bash の読み取り専用の変数（非対話の bash で readonly -p / declare -r が示すもの）。bash 版は export が失敗し、
+# set -e の下でランチャーの起動ごと止まるので読み飛ばす。本版は設定できるが、結果を揃えるため同じ警告で読み飛ばす。
+# （bash 版は一覧に無い読み取り専用の変数でも止まらないよう export の失敗を警告にしている。本版にその安全網は要らない）
 $LauncherInternalKeys = @(
     'IFS', '_LAUNCHER_DIR', '_CUSTOM_ENV', '_SENSITIVE_KEYS', '_first', '_line', '_key', '_val',
-    '_ukey', '_skip', '_s', '_url_re', '_ROOT_DIR', '_SETUP_ENV'
+    '_ukey', '_skip', '_s', '_url_re', '_ROOT_DIR', '_SETUP_ENV',
+    'BASHOPTS', 'BASH_VERSINFO', 'EUID', 'PPID', 'SHELLOPTS', 'UID'
 )
 
 # 利用者が誤って launcher/ 側へ custom.env を置いた場合、そのままでは無警告で無視される。
@@ -111,13 +115,16 @@ if (Test-Path $CustomEnv) {
         # 補われないスキーム（mailto:user@example.com・socks5:u@h 等）は対象外。file は userinfo を持たないので含めない。
         # 大文字小文字は文字クラスで書き分け、-cmatch で比べる（-match の大文字小文字を無視する照合は ASCII 以外も畳み、
         # 否定の文字クラスの結果が bash 版と割れうる）。
+        # URL の判定での「空白」は ASCII のスペースとタブだけ（[ \t]。bash 版と同じ。値は 1 行なので改行は含まれない）。
+        # \s は U+3000（和文の空白）や NBSP にも一致し、bash 版の [:space:] はロケール次第なので、userinfo にそれらを含む値で
+        # 両版の判定が割れうる。
         $isSensitive = ($SensitiveKeys -contains $key) -or
             ($key -match '(^|_)(API_KEY|TOKEN|ACCESS_KEY|PRIVATE_KEY|SECRET|PASSWORD|PASSPHRASE)$') -or
             ($key -match '(^|_)SECRET_') -or
             ($key -match '_(PASS|PASSWD|PWD|CONNECTION_STRING)$') -or
             ($key -match '^OTEL_EXPORTER_OTLP.*_HEADERS$') -or
-            ($val -match '://[^/@?#\s]+@') -or
-            ($val -cmatch '(^|[^A-Za-z0-9+.-])([Hh][Tt][Tt][Pp][Ss]?|[Ww][Ss][Ss]?|[Ff][Tt][Pp]):[/\\]*[^/\\@?#\s]+@')
+            ($val -match '://[^/@?# \t]+@') -or
+            ($val -cmatch '(^|[^A-Za-z0-9+.-])([Hh][Tt][Tt][Pp][Ss]?|[Ww][Ss][Ss]?|[Ff][Tt][Pp]):[/\\]*[^/\\@?# \t]+@')
         if ($isSensitive) {
             Write-Warning "custom.env の $key は読み込みません（分類A: 機微）。この行を削除し、OS の環境変数として設定してください。"
             continue

@@ -99,8 +99,12 @@ if [ -f "${_CUSTOM_ENV}" ]; then
     # 比較は大文字小文字を区別する（bash の変数名は区別する。_line と _LINE は別の変数）。
     # `_` で始まる名前を一律には拒否しない（_JAVA_OPTIONS 等の正当な用途がある）。内部変数を readonly にも
     # しない（set -e の下で export が失敗し、起動ごと止まる）。名前の集合は PowerShell 版と揃えること。
+    # bash の読み取り専用の変数（非対話の bash で readonly -p / declare -r が示す BASHOPTS / BASH_VERSINFO / EUID / PPID /
+    # SHELLOPTS / UID）も同じ扱いにする。export が失敗し、set -e の下ではランチャーの起動ごと止まるため（PS 版も同じ名前を
+    # 同じ警告で読み飛ばし、同じ custom.env が OS で違う結果にならないようにする）。一覧に無い読み取り専用の変数は、
+    # 下の export の安全網が警告にする。
     case "${_key}" in
-      IFS|_LAUNCHER_DIR|_CUSTOM_ENV|_SENSITIVE_KEYS|_first|_line|_key|_val|_ukey|_skip|_s|_url_re|_ROOT_DIR|_SETUP_ENV)
+      IFS|_LAUNCHER_DIR|_CUSTOM_ENV|_SENSITIVE_KEYS|_first|_line|_key|_val|_ukey|_skip|_s|_url_re|_ROOT_DIR|_SETUP_ENV|BASHOPTS|BASH_VERSINFO|EUID|PPID|SHELLOPTS|UID)
         printf '⚠ custom.env の行を読み飛ばしました（ランチャーの内部変数名と衝突）: %s\n' "${_key}" >&2
         continue ;;
     esac
@@ -137,7 +141,10 @@ if [ -f "${_CUSTOM_ENV}" ]; then
     # パスワード無しの user@ 形式（https://<token>@host）も機微として扱う意図的な判定のため、ssh://git@github.com/... や
     # smtp://noreply@mail.example のような無害な値も止まる。その場合は OS の環境変数に置く。
     # 正規表現は変数に入れて渡す（[[ =~ ]] の右辺に ? [ # を直書きすると glob・コメントと紛れる）。
-    _url_re='://[^/@?#[:space:]]+@'
+    # ⚠ ここでの「空白」は ASCII のスペースとタブだけ（PS 版の [ \t] と同じ。値は 1 行なので改行は含まれない）。[:space:] は
+    #    ロケール次第で U+3000（和文の空白）や NBSP にも一致し、.NET の \s は常に一致するため、userinfo にそれらを含む値で
+    #    両版の判定が割れうる。ブラケット式の中では \t がタブにならない（\ と t になる）ので、タブは $'\t' でつなぐ。
+    _url_re='://[^/@?# '$'\t'']+@'
     if [[ "${_val}" =~ ${_url_re} ]]; then
       _skip=1
     fi
@@ -149,7 +156,8 @@ if [ -f "${_CUSTOM_ENV}" ]; then
     # 補われないスキーム（mailto:user@example.com・socks5:u@h 等）は対象外。file は userinfo を持たないので含めない。
     # 大文字小文字は文字クラスで書き分ける（nocasematch はロケール次第で ASCII 以外も畳みうる。PS 版は同じ式を -cmatch で使う）。
     # 変数は上の _url_re を使い回す（名前を増やすと、上の case の内部変数名の集合と PS 版も増やす必要がある）。
-    _url_re='(^|[^A-Za-z0-9+.-])([Hh][Tt][Tt][Pp][Ss]?|[Ww][Ss][Ss]?|[Ff][Tt][Pp]):[/\\]*[^/\\@?#[:space:]]+@'
+    # 空白は上と同じく ASCII のスペースとタブだけ。
+    _url_re='(^|[^A-Za-z0-9+.-])([Hh][Tt][Tt][Pp][Ss]?|[Ww][Ss][Ss]?|[Ff][Tt][Pp]):[/\\]*[^/\\@?# '$'\t'']+@'
     if [[ "${_val}" =~ ${_url_re} ]]; then
       _skip=1
     fi
@@ -159,7 +167,19 @@ if [ -f "${_CUSTOM_ENV}" ]; then
       continue
     fi
 
-    export "${_key}=${_val}"
+    # ⚠ bash 固有の安全網（PS 版には無い。この非対称は許容する）: 上の case に無い読み取り専用の変数（呼び出し元が
+    #    BASH_ENV 等で readonly にしたもの、将来の bash が加えるもの等）は export が失敗する。set -e の下では、この失敗は
+    #    if や || の中でもシェルを終了させる（bash 5.2 で実測）ため、export の間だけ errexit を外し、失敗は警告にして読み飛ばす。
+    #    退避先は既存の内部変数を使い回す（_skip はここでは必ず 0 で以後使わず、_s は上のループ変数。名前を増やすと
+    #    上の case・PS 版の配列・設計書の 3 か所の集合も増やす必要がある）。
+    _skip=0
+    case "$-" in *e*) _skip=1; set +e ;; esac
+    export "${_key}=${_val}" 2>/dev/null
+    _s=$?
+    if [ "${_skip}" -eq 1 ]; then set -e; fi
+    if [ "${_s}" -ne 0 ]; then
+      printf '⚠ custom.env の行を読み飛ばしました（シェルが設定を拒否した。読み取り専用の変数など）: %s\n' "${_key}" >&2
+    fi
   done < "${_CUSTOM_ENV}"
   unset _line _key _ukey _val _s _skip _first _url_re
 fi

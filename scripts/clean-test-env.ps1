@@ -59,7 +59,8 @@ if ($PermissionModes -cnotcontains $PermissionMode) {
 $shareAbs = ""
 if ($Share -ne "") {
   if (-not (Test-Path -PathType Container $Share)) {
-    Write-Host "‼ <Share> が見つかりません: $Share"
+    # bash 版と同じく stderr へ出す（同じ文言・exit 1。理由は上の権限モードと同じ）
+    [Console]::Error.WriteLine("‼ <Share> が見つかりません: $Share")
     exit 1
   }
   $shareAbs = (Resolve-Path $Share).Path

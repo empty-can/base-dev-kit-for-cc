@@ -21,10 +21,17 @@ set -uo pipefail
 
 REF=""
 SHARE_BODY="C:/cc-workspace/basic_dot_claude"
+# 値の無いオプションは ${2:?} で止めない（bash 独自の文言・行番号入りになり、PS 版と揃わない）。publish-plugin.sh と同じ流儀:
+#   - --ref: 既定値の無い必須オプション。値が空・欠けていても、ここでは止めずに「省略」と同じ扱いにし、
+#     下の必須の検査が同じ文言・exit 2 で止める（PS 版は -Ref の Mandatory をやめて本文で同じ検査をする）。
+#   - --share: 既定値のあるオプション。明示的に空を渡したら引数エラー（exit 1）で止める（既定値を使うなら省略する）。
+# 判定の順も PS 版と揃える: 引数エラー（--share）→ --ref。
 while [ $# -gt 0 ]; do
   case "$1" in
-    --ref)   REF="${2:?--ref に値が必要}"; shift 2;;
-    --share) SHARE_BODY="${2:?--share に値が必要}"; shift 2;;
+    --ref)   REF="${2:-}"; shift; [ $# -gt 0 ] && shift;;
+    --share)
+      [ -n "${2:-}" ] || { echo "‼ --share に値が必要（空のパスは指定できない。既定の共有本体を使うなら --share を省略する）" >&2; exit 1; }
+      SHARE_BODY="$2"; shift 2;;
     *) echo "‼ 不明な引数: $1（使い方: $0 --ref <ref> [--share <path>]）" >&2; exit 2;;
   esac
 done

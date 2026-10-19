@@ -1,0 +1,25 @@
+# publish-plugin / publish-share の引数の検証ケース（引数の解析と必須の検査で止まること。git / claude はスタブ）。
+#   列: 対象（plugin / share）<TAB>bash の期待<TAB>pwsh の期待<TAB>引数…（1 列 1 引数・bash の綴り）
+#   ref   = --ref が空か省略（値の欠けた末尾の --ref を含む）: 必須の検査の文言で exit 2
+#   mkt   = --marketplace が空か省略: 必須の検査の文言で exit 2
+#   value = 既定値のあるオプション（--plugin / --share）に空を渡した: 「に値が必要」で exit 1
+#   -     = その系統では実行しない（pwsh は値の欠けたパラメータをバインドの段階で拒否するため、末尾の値なしは bash だけ）
+# どのケースも、中止の文言（‼ の行）が stderr にだけ出て stdout には無く、git / claude が呼ばれないこと。両版で同じ期待の
+# ケースは、stderr の行（スクリプトのパスを <SCRIPT>、一時ディレクトリを <D>、オプションの綴りを PS 版へ揃えたもの）と
+# 終了コードが一致すること。PS 版の綴り: --marketplace → -Marketplace / --ref → -Ref / --plugin → -Plugin /
+# --name → -Name / --share → -ShareBody（--name の空は plugin-names.tsv で検査する）。
+# 値の <empty> は空文字列、<nomkt> / <noshare> は一時ディレクトリの中の存在しないパス（検査が欠けていても、その先の
+# 「見つからない」で止まる）。--share を省略するケースは置かない（既定値が実物の共有本体を指すため）。
+plugin	ref	ref	--marketplace	<nomkt>	--ref	<empty>
+plugin	ref	-	--marketplace	<nomkt>	--ref
+plugin	ref	ref	--marketplace	<nomkt>
+plugin	mkt	mkt	--ref	verify-kit-dummy-ref
+plugin	mkt	mkt	--marketplace	<empty>	--ref	verify-kit-dummy-ref
+plugin	mkt	-	--ref	verify-kit-dummy-ref	--marketplace
+plugin	value	value	--marketplace	<nomkt>	--ref	verify-kit-dummy-ref	--plugin	<empty>
+plugin	value	-	--marketplace	<nomkt>	--ref	verify-kit-dummy-ref	--plugin
+share	ref	ref	--share	<noshare>	--ref	<empty>
+share	ref	-	--share	<noshare>	--ref
+share	ref	ref	--share	<noshare>
+share	value	value	--ref	verify-kit-dummy-ref	--share	<empty>
+share	value	-	--ref	verify-kit-dummy-ref	--share

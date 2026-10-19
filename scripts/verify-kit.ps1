@@ -11,6 +11,16 @@
           入力と期待値は verify-kit.d\（UTF-8・LF・BOM なし）を両版で共有する。
   FAIL が 1 件以上で終了コード 1、なければ 0（CI 利用可）。
 
+  要件: pwsh 7（Windows PowerShell 5.1 は任意）・git 2.32 以上・python 3（python3 / python）・bash 4.4 以上（Git Bash 等）。
+    - git 2.32 以上: 一時リポジトリに対して実物の git を使う検査は、GIT_CONFIG_GLOBAL（2.32 で追加）に空のファイルを渡して
+      利用者の global 設定を読ませない。起動時に版を確かめ、2.32 未満なら publish-plugin の plugin.json の name 照合
+      （実物の git で一時リポジトリから取り出す項目）を理由付きで SKIP にする（他の項目は続行する）。check-assets の
+      git 層の fixture も同じ変数で隔離しているが、こちらは書き込みが一時リポジトリの init / add / commit だけなので SKIP しない。
+    - python 3: bash 系統の check-assets.sh の settings.json 検査と publish-plugin.sh の name 照合が使う。
+    - 5.1 は見つかれば同じ検査を走らせる（publish 系は #requires -Version 7 のため対象外）。
+  注記: Linux / macOS では /usr/bin/python3 があるため、publish-plugin の「python 無し」のケース（bash 系統で PATH を
+    /usr/bin:/bin に絞って python を外す）は python を外せず SKIP になる（Windows の Git Bash では外せる）。
+
   安全上の約束（手作業の検証で、Git Bash の PATH に Windows 形式のパスを渡したため実物の claude が
   2 回起動した。以下はコードで強制している）:
     - 実物の claude を起動するのは --version だけ。同じ一時ツリー・同じ引数を先にスタブで流し、
@@ -31,6 +41,9 @@
       pwsh として実行し、起動前に claude の解決先がスタブ、git の解決先が実物、marketplace に remote が無いことを
       確かめる。照合を通っても確認プロンプト（Read-Host）は空を受け取って止まる。git の設定は空の一時ファイルに
       隔離する（global / system を読まない）。
+    - publish-plugin / publish-share の引数の検証は、引数の解析と必須の検査で止まるケースだけを、git と claude をスタブにした
+      同じ PATH で実行する。marketplace / 共有本体の値は一時ディレクトリの中の存在しないパスにし（検査が欠けていても
+      「見つからない」で止まる）、既定値が実物の共有本体を指す -ShareBody の省略は使わない。
     - check-assets の追跡基準（git 層）の fixture も実物の git を使うが、対象は一時ディレクトリに作ったリポジトリだけで、
       書くのはその中の init / add / commit だけ（check-assets 自身は読むだけ）。git の設定は同じく隔離する。
     - 実スクリプトを呼ぶ。実スクリプトで検査できない項目は再実装で代用せず SKIP にする。
@@ -221,6 +234,33 @@ function Put-Args([string]$sd) { # RAN（スタブが動いた証拠＝引数フ
   } else {
     Put 'RAN' 'no'
   }
+}
+
+# 実スクリプトを同じプロセスで呼び、stdout（Write-Host 等の PowerShell のストリーム）と stderr（[Console]::Error。
+# PowerShell のストリームには乗らない）を分けて受ける。パラメータはハッシュテーブルで渡す（空文字列もそのまま束ねる）。
+# パラメータのバインドで落ちたら、終了コードの代わりに -1、出力の代わりに例外の文言を返す。
+function Invoke-Split([string]$script, [hashtable]$params) {
+  $savedErr = [Console]::Error
+  $sw = New-Object System.IO.StringWriter
+  $out = ''; $rc = '-'
+  try {
+    [Console]::SetError($sw)
+    $global:LASTEXITCODE = 0
+    try {
+      $out = (@(& $script @params 6>&1 2>&1 | ForEach-Object { "$_" }) -join "`n")
+      $rc = [string]$LASTEXITCODE
+    } catch {
+      $out = "$_"; $rc = '-1'
+    }
+  } finally {
+    [Console]::SetError($savedErr)
+  }
+  return New-Object psobject -Property @{ Out = $out; Err = $sw.ToString(); Rc = $rc }
+}
+# publish 系の中止の文言（‼ の行）は両版とも stderr に出す約束。stdout 側にあれば $true（呼び出し側は stdout-msg にする）
+function Test-StdoutMsg([string]$out) {
+  foreach ($l in ($out -split "`r?`n")) { if ($l.StartsWith('‼')) { return $true } }
+  return $false
 }
 
 function Get-RepoFiles {
@@ -588,14 +628,18 @@ function Probe-CheckAssets {
     # 利用者の global / system 設定を読まない（一時リポジトリの作成も check-assets の git 呼び出しも）
     $cfg = "$s.gitconfig"
     [System.IO.File]::WriteAllText($cfg, '', $Utf8NoBom)
+    $tracked = @($art)
     if (Oeq $c 'gcase') {
       New-Item -ItemType Directory -Force -Path (Join-Full $cd 'Work') | Out-Null
       [System.IO.File]::WriteAllText((Join-Full $cd 'Work/w.md'), "verify-kit`n", $Utf8NoBom)
+      # 日本語名の追跡ファイル（絶対パスを含む）。git 層の 2-e の一覧が 3 系統で一致すること（verify-kit.sh と同じ）
+      [System.IO.File]::WriteAllText((Join-Full $cd '日本語-abspath.md'), "C:\Users\verify-kit\jp`n", $Utf8NoBom)
+      $tracked += '.claude/日本語-abspath.md'
     }
     $ok = $true
     foreach ($argv in @(@('init', '-q', $s),
                         @('-C', $s, 'add', '--', '.claude/.gitignore', '.claude/.gitattributes', '.claude/CLAUDE.md', '.claude/settings.json'),
-                        (@('-C', $s, 'add', '-f', '--') + $art),
+                        (@('-C', $s, 'add', '-f', '--') + $tracked),
                         @('-C', $s, 'commit', '-q', '-m', 'verify-kit'))) {
       if ((Invoke-TGit $cfg $argv).Rc -ne 0) { $ok = $false; break }
     }
@@ -705,7 +749,8 @@ function Probe-CleanEnvBadMode {
         $global:LASTEXITCODE = 0
         [Console]::SetError($errSw)
         try {
-          $script:CteBadOut = @(& (Join-Full $VkRoot 'scripts/clean-test-env.ps1') -Share $VkRoot -Keep -PermissionMode $a[1] 6>&1 2>&1 | ForEach-Object { "$_" })
+          $pm = if (Oeq $a[1] '<empty>') { '' } else { $a[1] }   # 空文字列（verify-kit.sh と同じ）
+          $script:CteBadOut = @(& (Join-Full $VkRoot 'scripts/clean-test-env.ps1') -Share $VkRoot -Keep -PermissionMode $pm 6>&1 2>&1 | ForEach-Object { "$_" })
           $rc = $LASTEXITCODE
         } catch {
           # パラメータの検証（ValidateSet 等）で落ちた場合。終了コードの代わりに -1、出力の代わりに例外の文言を残す
@@ -722,6 +767,42 @@ function Probe-CleanEnvBadMode {
     foreach ($l in $script:CteBadOut) { foreach ($x in ($l -split "`r?`n")) { Put 'O' (Norm $x @($VkRoot, '<R>')) } }
     foreach ($x in ($script:CteBadErr -split "`r?`n")) { if (One $x '') { Put 'E' (Norm $x @($VkRoot, '<R>')) } }
   }
+}
+
+# ---- clean-test-env の存在しない <Share>（スタブ・-Keep。一時ディレクトリを作る前に止まり claude が呼ばれないこと）----
+function Probe-CleanEnvBadShare {
+  Sec 'cleanenv-badshare'
+  $d = Join-Full $script:PT 'cleanenv-badshare'
+  $tmp = Join-Full $d 'tmp'
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  $script:CteBsOut = @(); $script:CteBsErr = ''
+  Invoke-Stubbed $d @('claude') {
+    param($a)
+    $savedTemp = $env:TEMP
+    # エラー文は [Console]::Error に書かれ PowerShell のストリームには乗らないので、Console.Error を差し替えて stderr を別に受ける
+    $savedErr = [Console]::Error
+    $errSw = New-Object System.IO.StringWriter
+    try {
+      $env:TEMP = $a[0]
+      $global:LASTEXITCODE = 0
+      [Console]::SetError($errSw)
+      try {
+        $script:CteBsOut = @(& (Join-Full $VkRoot 'scripts/clean-test-env.ps1') -Share $a[1] -Keep 6>&1 2>&1 | ForEach-Object { "$_" })
+        $rc = $LASTEXITCODE
+      } catch {
+        $script:CteBsOut = @("$_"); $rc = -1
+      }
+    } finally {
+      [Console]::SetError($savedErr)
+      $script:CteBsErr = $errSw.ToString()
+      $env:TEMP = $savedTemp
+    }
+    $rc
+  } @($tmp, (Join-Full $d 'no-such-share'))
+  Put-Args $d
+  foreach ($l in $script:CteBsOut) { foreach ($x in ($l -split "`r?`n")) { if (One $x '') { Put 'O' (Norm $x @($d, '<D>')) } } }
+  foreach ($x in ($script:CteBsErr -split "`r?`n")) { if (One $x '') { Put 'E' (Norm $x @($d, '<D>')) } }
+  Put 'LEFT' ([string]@(Get-ChildItem -Force -LiteralPath $tmp).Count)
 }
 
 # ---- publish-plugin の -Name 検証 -----------------------------------------------
@@ -768,16 +849,13 @@ function Probe-PubName {
           $cls = 'assert-ng'
           if (-not $ang) { $ang = $ng }
         } else {
-          $global:LASTEXITCODE = 0
-          try {
-            $o = (@(& $pp -Marketplace $nomkt -Ref 'verify-kit-dummy-ref' -Name $name 6>&1 2>&1 | ForEach-Object { "$_" }) -join "`n")
-            $rc = [string]$LASTEXITCODE
-          } catch {
-            $o = "$_"; $rc = '-1'
-          }
+          # 中止の文言は stderr だけを見る（stdout に ‼ の行があれば stdout-msg。verify-kit.sh と同じ）
+          $r = Invoke-Split $pp @{ Marketplace = $nomkt; Ref = 'verify-kit-dummy-ref'; Name = $name }
+          $o = $r.Err; $rc = $r.Rc
           if ($o.Contains('plugin 名として不正')) { if (Oeq $rc '2') { $cls = 'reject' } }
           elseif ($o.Contains('marketplace リポジトリが見つからない')) { if (Oeq $rc '2') { $cls = 'accept' } }
           elseif ($o.Contains('--name に値が必要') -or $o.Contains('-Name に値が必要')) { if (Oeq $rc '1') { $cls = 'argerr' } }
+          if (Test-StdoutMsg $r.Out) { $cls = 'stdout-msg' }
         }
       } finally {
         $env:PATH = $savedPath
@@ -823,7 +901,7 @@ function Probe-PubCase {
     foreach ($p in @((Join-Full $mkt '.git'), (Join-Full $mkt "plugins/$ent"), $tmp)) { New-Item -ItemType Directory -Force -Path $p | Out-Null }
     [System.IO.File]::WriteAllText((Join-Full $mkt "plugins/$ent/sentinel.txt"), "verify-kit`n", $Utf8NoBom)
     $savedPath = $env:PATH; $savedSd = $env:VERIFY_KIT_STUB_DIR; $savedTemp = $env:TEMP
-    $cls = 'other'; $rc = '-'; $o = ''
+    $cls = 'other'; $rc = '-'; $o = ''; $so = $false
     try {
       $env:PATH = $script:StubPath
       $env:VERIFY_KIT_STUB_DIR = $sd
@@ -833,13 +911,9 @@ function Probe-PubCase {
         $cls = 'assert-ng'
         if (-not $ang) { $ang = $ng }
       } else {
-        $global:LASTEXITCODE = 0
-        try {
-          $o = (@(& $pp -Marketplace $mkt -Ref 'verify-kit-dummy-ref' -Name $name 6>&1 2>&1 | ForEach-Object { "$_" }) -join "`n")
-          $rc = [string]$LASTEXITCODE
-        } catch {
-          $o = "$_"; $rc = '-1'
-        }
+        # 中止の文言は stderr だけを見る（Probe-PubName と同じ）
+        $r = Invoke-Split $pp @{ Marketplace = $mkt; Ref = 'verify-kit-dummy-ref'; Name = $name }
+        $o = $r.Err; $rc = $r.Rc; $so = Test-StdoutMsg $r.Out
       }
     } finally {
       $env:PATH = $savedPath
@@ -855,6 +929,7 @@ function Probe-PubCase {
     if (One $cls 'assert-ng') {
       if ($o.Contains('大文字小文字だけが違う既存エントリ')) { if ((Oeq $rc '2') -and (Oeq $arch 'no')) { $cls = 'clash' } }
       elseif (Oeq $arch 'yes') { $cls = 'pass' }
+      if ($so) { $cls = 'stdout-msg' }
     }
     Put 'CASE' "$i $cls rc=$rc archive=$arch intact=$intact"
   }
@@ -883,6 +958,8 @@ function Probe-PubManifest {
   New-Item -ItemType Directory -Force -Path $d, $cst | Out-Null
   $script:RealGit = Resolve-Cmd 'git'
   if (-not $script:RealGit) { Put 'SKIP' 'git が無い（一時リポジトリを作れない）'; return }
+  # 起動時に確かめた git の版（Invoke-ProbeMain）。GIT_CONFIG_GLOBAL が効かない版では実行しない
+  if ($script:GitCfgWhy) { Put 'SKIP' $script:GitCfgWhy; return }
   $gitDir = Split-Path -Parent $script:RealGit
   $savedStub = $script:Stub
   try { $script:Stub = $cst; New-Stub 'claude' } finally { $script:Stub = $savedStub }
@@ -943,7 +1020,7 @@ function Probe-PubManifest {
       Put 'CASE' "$i assert-ng"; continue
     }
     $rc = [string]$r.Rc
-    $out = $r.Out + "`n" + $r.Err
+    $out = $r.Err   # 中止の文言は stderr だけを見る（Probe-PubName と同じ）
     $ca = Join-Full $cs 'claude.args'
     $val = if ((Test-Path -LiteralPath $ca -PathType Leaf) -and ((Oin (@(Read-ArgFile $ca)) 'validate'))) { 'yes' } else { 'no' }
     $entries = @(Get-ChildItem -Force -LiteralPath (Join-Full $mkt 'plugins') | ForEach-Object { $_.Name })
@@ -959,6 +1036,7 @@ function Probe-PubManifest {
     elseif ($out.Contains('の name を読めない')) { if ((Oeq $rc '1') -and (Oeq $val 'no')) { $cls = 'unreadable' } }
     elseif ($out.Contains('python が無いため')) { if ((Oeq $rc '1') -and (Oeq $val 'no')) { $cls = 'nopython' } }
     elseif (Oeq $val 'yes') { $cls = 'pass' }
+    if (Test-StdoutMsg $r.Out) { $cls = 'stdout-msg' }
     Put 'CASE' "$i $cls rc=$rc validate=$val intact=$intact"
     if (One $cls 'pass') {
       foreach ($l in ($out -split "`r?`n")) { if ($l.StartsWith('‼') -or $l.StartsWith('   ')) { Put 'MSG' "$i $l" } }
@@ -967,8 +1045,88 @@ function Probe-PubManifest {
   Put 'ASSERT' $(if ($ang) { $ang } else { 'ok' })
 }
 
+# ---- publish-plugin / publish-share の引数の検証（スタブ。引数の解析と必須の検査で止まること）---------------
+# 結果は verify-kit.sh の probe_pubargs と同じ（ref / mkt / value / stdout-msg / other と、正規化した stderr の行 E）。
+# 引数は publish-args.tsv の bash の綴りを PS 版のパラメータ名へ読み替え、ハッシュテーブルで渡す（空文字列もそのまま渡る）。
+function Probe-PubArgs {
+  Sec 'pubargs'
+  if ($PSVersionTable.PSVersion.Major -lt 7) { Put 'MODE' 'na'; return }   # 本体が #requires -Version 7
+  $d = Join-Full $script:PT 'pubargs'
+  New-Item -ItemType Directory -Force -Path $d | Out-Null
+  $map = @{ '--marketplace' = 'Marketplace'; '--ref' = 'Ref'; '--plugin' = 'Plugin'; '--name' = 'Name'; '--share' = 'ShareBody' }
+  $ang = ''; $i = 0
+  foreach ($line in (Read-Lines (Join-Path $VkFix 'publish-args.tsv'))) {
+    if ((Oeq $line '') -or $line.StartsWith('#')) { continue }
+    $f = $line.Split("`t")
+    $i++
+    if ($f.Count -lt 3 -or (Oeq $f[2] '-')) { Put 'CASE' "$i -"; continue }
+    $pp = if (Oeq $f[0] 'plugin') { Join-Full $VkRoot 'scripts/publish-plugin.ps1' } elseif (Oeq $f[0] 'share') { Join-Full $VkRoot 'scripts/publish-share.ps1' } else { '' }
+    $h = @{}; $bad = -not $pp
+    for ($k = 3; -not $bad -and $k -lt $f.Count; $k += 2) {
+      if ($k + 1 -ge $f.Count -or -not $map.ContainsKey($f[$k])) { $bad = $true; break }
+      $v = $f[$k + 1]
+      if (Oeq $v '<empty>') { $v = '' }
+      elseif (Oeq $v '<nomkt>') { $v = Join-Full $d 'no-such-marketplace' }
+      elseif (Oeq $v '<noshare>') { $v = Join-Full $d 'no-such-share' }
+      $h[$map[$f[$k]]] = $v
+    }
+    if ($bad) { Put 'CASE' "$i badfixture"; continue }
+    $sd = Join-Full $d "case$i"
+    New-Item -ItemType Directory -Force -Path $sd | Out-Null
+    $savedPath = $env:PATH; $savedSd = $env:VERIFY_KIT_STUB_DIR
+    $cls = 'other'; $r = $null
+    try {
+      $env:PATH = $script:StubPath
+      $env:VERIFY_KIT_STUB_DIR = $sd
+      $ng = Test-Stubs @('git', 'claude')
+      if ($ng) {
+        $cls = 'assert-ng'
+        if (-not $ang) { $ang = $ng }
+      } else {
+        $r = Invoke-Split $pp $h
+      }
+    } finally {
+      $env:PATH = $savedPath
+      [Environment]::SetEnvironmentVariable('VERIFY_KIT_STUB_DIR', $savedSd)
+    }
+    $rc = '-'
+    $errLines = @()
+    if ($r) {
+      $rc = $r.Rc
+      $errLines = @(($r.Err -split "`r?`n") | Where-Object { One $_ '' })
+      $first = ''
+      foreach ($l in $errLines) { if ($l.StartsWith('‼')) { $first = $l; break } }
+      if ($first.Contains('は必須です（既定値は廃止）')) { if (Oeq $rc '2') { $cls = 'ref' } }
+      elseif ($first.Contains('<C-MKT のパス> が必要')) { if (Oeq $rc '2') { $cls = 'mkt' } }
+      elseif ($first.Contains('に値が必要')) { if (Oeq $rc '1') { $cls = 'value' } }
+      if (Test-StdoutMsg $r.Out) { $cls = 'stdout-msg' }
+    }
+    $calls = 0
+    $cf = Join-Full $sd 'calls'
+    if (Test-Path -LiteralPath $cf -PathType Leaf) { $calls = @(Read-ArgFile $cf).Count }
+    Put 'CASE' "$i $cls rc=$rc stubcalls=$calls"
+    foreach ($l in $errLines) { Put 'E' "$i $(Norm $l @($pp, '<SCRIPT>', $d, '<D>'))" }
+  }
+  Put 'ASSERT' $(if ($ang) { $ang } else { 'ok' })
+}
+
+# GIT_CONFIG_GLOBAL（git 2.32 で追加）に対応した版か。$v=git --version の出力。対応していれば空文字、していなければ
+# SKIP の理由を返す（verify-kit.sh の vk_git_cfg_why と同じ判定・同じ文言）
+function Get-GitCfgWhy([string]$v) {
+  $v = $v.Trim()
+  $m = [regex]::Match($v, '^git version ([0-9]+)\.([0-9]+)')
+  if (-not $m.Success) { return "git の版を判定できない（$v）" }
+  $maj = [int]$m.Groups[1].Value; $min = [int]$m.Groups[2].Value
+  if ($maj -gt 2 -or ($maj -eq 2 -and $min -ge 32)) { return '' }
+  return "git $($maj).$($min) は 2.32 未満（GIT_CONFIG_GLOBAL が効かず、一時リポジトリの git から利用者の global 設定を隔離できない）"
+}
+
 function Invoke-ProbeMain {
   if (-not $Out) { Write-Host '‼ -Probe には -Out <出力先> が必要'; exit 2 }
+  # 起動時に git の版を確かめる（満たさなければ plugin.json の name 照合だけを SKIP にする。理由は $script:GitCfgWhy）
+  $script:GitCfgWhy = ''
+  $g = Resolve-Cmd 'git'
+  if ($g) { $script:GitCfgWhy = Get-GitCfgWhy ((Invoke-Proc $g @('--version') 60000).Out) }
   $script:PT = Join-Path ([System.IO.Path]::GetTempPath()) ('verify-kit-' + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Force -Path $script:PT | Out-Null
   try {
@@ -993,9 +1151,11 @@ function Invoke-ProbeMain {
     Probe-CheckAssets
     Probe-CleanEnv
     Probe-CleanEnvBadMode
+    Probe-CleanEnvBadShare
     Probe-PubName
     Probe-PubCase
     Probe-PubManifest
+    Probe-PubArgs
     Sec 'end'
   } finally {
     try { [System.IO.File]::WriteAllText($Out, (($script:ProbeOut -join "`n") + "`n"), $Utf8NoBom) } catch { Write-Host "‼ 結果を書けない: $Out" }
@@ -1501,7 +1661,7 @@ function Item-CleanEnv {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
-  $bad = Test-FixKeys 'clean-test-env.txt' @('PRE', 'OUTHAS', 'ARG', 'ENV', 'CWD', 'SETTINGS', 'AFTER', 'BADMODE', 'BADRC', 'BADOUT') '定義済みの行頭タグ（PRE / OUTHAS / ARG / ENV / CWD / SETTINGS / AFTER / BADMODE / BADRC / BADOUT）'
+  $bad = Test-FixKeys 'clean-test-env.txt' @('PRE', 'OUTHAS', 'ARG', 'ENV', 'CWD', 'SETTINGS', 'AFTER', 'BADMODE', 'BADRC', 'BADOUT', 'BADSHARERC', 'BADSHAREOUT') '定義済みの行頭タグ（PRE / OUTHAS / ARG / ENV / CWD / SETTINGS / AFTER / BADMODE / BADRC / BADOUT / BADSHARERC / BADSHAREOUT）'
   if ($bad) { Verdict 'FAIL' $t $bad; return }
   $fx = @(Read-Lines (Join-Path $VkFix 'clean-test-env.txt'))
   $coreRe ='^(ARG|ENV|CWD|SETTINGS|AFTER)\t'
@@ -1560,6 +1720,30 @@ function Item-CleanEnvBadMode {
     if (-not (Same-All "cleanenv-badmode $i" $avail)) { Fail-Diff $t "'${m}': 出力が $($SysLabel[$script:SameA]) と $($SysLabel[$script:SameB]) で違う"; return }
   }
   Verdict 'PASS' $t "$($modes.Count) ケース（$($modes -join ' / ')）× $(Labels $avail) とも claude 起動前に exit $erc で停止し、出力が一致$(Missing-Note $SysAll)"
+}
+
+function Item-CleanEnvBadShare {
+  $t = 'clean-test-env 存在しない <Share>（スタブ）'
+  $avail = @(Usable $SysAll)
+  if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
+  $c = Crashed-In $avail
+  if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  $fx = @(Read-Lines (Join-Path $VkFix 'clean-test-env.txt'))
+  $erc = @(Tag-Vals $fx 'BADSHARERC') | Select-Object -First 1
+  $frag = @(Tag-Vals $fx 'BADSHAREOUT') | Select-Object -First 1
+  if (-not $erc -or -not $frag) { Verdict 'FAIL' $t 'fixture に BADSHARERC / BADSHAREOUT が無い'; return }
+  foreach ($s in $avail) {
+    $lines = Get-Sec $s 'cleanenv-badshare'
+    $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
+    if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($a) { $a } else { '結果が無い' })"; return }
+    if (Onin (@(Tag-Vals $lines 'RAN')) 'no') { Verdict 'FAIL' $t "$($SysLabel[$s]): 存在しない <Share> のまま claude を起動した"; return }
+    if (Onin (@(Tag-Vals $lines 'RC')) $erc) { Verdict 'FAIL' $t "$($SysLabel[$s]): 終了コードが期待（$erc）と違う（$(@(Tag-Vals $lines 'RC') -join ' ')）"; return }
+    if (@(Tag-Vals $lines 'E' | Where-Object { $_.Contains($frag) }).Count -eq 0) { Verdict 'FAIL' $t "$($SysLabel[$s]): stderr に「$frag」が無い"; return }
+    if (@(Tag-Vals $lines 'O' | Where-Object { $_.Contains($frag) }).Count -gt 0) { Verdict 'FAIL' $t "$($SysLabel[$s]): エラー文が stdout にも出ている（stderr のみのはず）"; return }
+    if (Onin (@(Tag-Vals $lines 'LEFT')) '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): 一時領域に残骸がある（$(@(Tag-Vals $lines 'LEFT') -join ' ') 個。一時ディレクトリを作る前に止まっていない）"; return }
+  }
+  if (-not (Same-All 'cleanenv-badshare' $avail)) { Fail-Diff $t "出力が $($SysLabel[$script:SameA]) と $($SysLabel[$script:SameB]) で違う"; return }
+  Verdict 'PASS' $t "$(Labels $avail) とも一時ディレクトリを作る前に exit $erc で停止（claude 未起動・残骸なし・文言は stderr のみ）し、出力が一致$(Missing-Note $SysAll)"
 }
 
 function Item-PubName {
@@ -1714,6 +1898,59 @@ function Item-PubManifest {
   Verdict 'PASS' $t "実スクリプトのコピー（一時の開発リポ・remote の無い一時 marketplace・実物の git・claude はスタブ・stdin は空）で通過 $npass・不一致で中止 $nmis・読めずに中止 $nunr・python 無しで中止 $nnopy。$(Labels $run) とも期待どおり、中止は validate より前に exit 1・marketplace は無傷（commit も index への追加も無い）$cmpNote$skipNote（5.1 は #requires -Version 7 のため対象外）$(Missing-Note @('bash', 'pwsh'))"
 }
 
+function Item-PubArgs {
+  $t = 'publish-plugin / publish-share 引数の検証（スタブ）'
+  $avail = @(Usable @('bash', 'pwsh'))
+  if ($avail.Count -eq 0) { Verdict 'SKIP' $t 'bash / pwsh 7 がどちらも無い'; return }
+  $c = Crashed-In $avail
+  if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  $bad = Test-FixKeys 'publish-args.tsv' @('plugin', 'share') '対象（plugin / share）' 3
+  if ($bad) { Verdict 'FAIL' $t $bad; return }
+  $rows = @(Read-Lines (Join-Path $VkFix 'publish-args.tsv') | Where-Object { (One $_ '') -and -not $_.StartsWith('#') })
+  $sec = @{}
+  $nref = 0; $nmkt = 0; $nval = 0; $nbash = 0
+  foreach ($s in $avail) {
+    $sec[$s] = Get-Sec $s 'pubargs'   # @() で包まない（Get-Sec は配列を 1 個の値として返す）
+    $a = @(Tag-Vals $sec[$s] 'ASSERT') | Select-Object -First 1
+    if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $a"; return }
+    $col = if ($s -eq 'bash') { 1 } else { 2 }
+    for ($idx = 1; $idx -le $rows.Count; $idx++) {
+      $f = $rows[$idx - 1].Split("`t")
+      $exp = $f[$col]
+      if (Oeq $exp '-') { continue }
+      $rest = @($sec[$s] | Where-Object { $_.StartsWith("CASE`t$idx ") } | ForEach-Object { Val $_ }) | Select-Object -First 1
+      $cls = if ($rest) { $rest.Split(' ')[1] } else { '' }
+      if (One $cls $exp) { Verdict 'FAIL' $t "$($SysLabel[$s]): ケース $idx（$($rows[$idx - 1])）は $exp のはずが $(if ($cls) { $cls } else { '結果なし' })（$rest）"; return }
+      if (-not $rest.EndsWith(' stubcalls=0')) { Verdict 'FAIL' $t "$($SysLabel[$s]): ケース $idx で中止より前に git / claude が呼ばれた（$rest）"; return }
+      if (Oeq $s $avail[0]) {
+        switch -CaseSensitive ($exp) { 'ref' { $nref++ } 'mkt' { $nmkt++ } 'value' { $nval++ } }
+        if (Oeq $f[2] '-') { $nbash++ }
+      }
+    }
+  }
+  # 両版で同じ期待のケースは、stderr の行（正規化済み）と終了コードが一致すること
+  $cmpNote = ''
+  if ($avail.Count -eq 2) {
+    $ncmp = 0
+    for ($idx = 1; $idx -le $rows.Count; $idx++) {
+      $f = $rows[$idx - 1].Split("`t")
+      if ((One ($f[1]) ($f[2])) -or (Oeq ($f[1]) '-')) { continue }
+      $m = @{}
+      foreach ($s in @('bash', 'pwsh')) {
+        $caseLine = @($sec[$s] | Where-Object { $_.StartsWith("CASE`t$idx ") }) | Select-Object -First 1
+        $m[$s] = @($sec[$s] | Where-Object { $_.StartsWith("E`t$idx ") }) + @($caseLine -replace '^.* (rc=[^ ]*) .*$', '$1')
+      }
+      if (-not (Lines-Equal $m['bash'] $m['pwsh'])) {
+        Set-Diff $m['bash'] $m['pwsh'] "bash と pwsh 7 の差分（ケース $idx）:"
+        Fail-Diff $t "ケース $idx（$($f[1])）の中止の文言（stderr）か終了コードが bash / pwsh 7 で違う"; return
+      }
+      $ncmp++
+    }
+    $cmpNote = "・stderr の文言と終了コードは bash / pwsh 7 で一致（$ncmp ケース）"
+  }
+  Verdict 'PASS' $t "実スクリプト（git / claude はスタブ）で必須の ref が空・省略 $nref・marketplace が空・省略 $nmkt（exit 2）・既定値のあるオプションに空 $nval（exit 1）。うち値の欠けた末尾のオプション $nbash は bash のみ（pwsh はバインドで拒否）。$(Labels $avail) とも期待どおり、中止の文言は stderr のみ・git / claude 未呼び出し$cmpNote（5.1 は #requires -Version 7 のため対象外）$(Missing-Note @('bash', 'pwsh'))"
+}
+
 $LeftPaths = @('.claude/option-settings.sh', '.claude/option-settings.ps1', '.claude/custom.env',
                '.claude/launcher/option-settings.sh', '.claude/launcher/option-settings.ps1', '.claude/launcher/custom.env')
 function Snapshot-Left { @($LeftPaths | Where-Object { Test-Path -LiteralPath (Join-Full $VkRoot $_) }) }
@@ -1752,9 +1989,11 @@ try {
   Item-CaLinks
   Item-CleanEnv
   Item-CleanEnvBadMode
+  Item-CleanEnvBadShare
   Item-PubName
   Item-PubCase
   Item-PubManifest
+  Item-PubArgs
   Item-Left $leftBefore
   if ($VkVerbose) {
     foreach ($s in $SysAll) {

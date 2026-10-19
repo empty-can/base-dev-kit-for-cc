@@ -14,6 +14,16 @@
 #   --probe <out>   （内部用）bash 系統の probe を実行し、結果を <out> へ書く
 # 終了コード: FAIL が 1 件以上で 1、なければ 0（CI 利用可）。引数の誤り等は 2。
 #
+# 要件: bash 4.4 以上（mapfile -d）・git 2.32 以上・python 3（python3 / python）・pwsh 7（Windows PowerShell 5.1 は任意）。
+#   - git 2.32 以上: 一時リポジトリに対して実物の git を使う検査は、GIT_CONFIG_GLOBAL（2.32 で追加）に空のファイルを渡して
+#     利用者の global 設定を読ませない。起動時に版を確かめ、2.32 未満なら publish-plugin の plugin.json の name 照合
+#     （実物の git で一時リポジトリから取り出す項目）を理由付きで SKIP にする（他の項目は続行する）。check-assets の
+#     git 層の fixture も同じ変数で隔離しているが、こちらは書き込みが一時リポジトリの init / add / commit だけなので SKIP しない。
+#   - python 3: check-assets.sh の settings.json 検査と publish-plugin.sh の name 照合が使う。
+#   - pwsh 7: PowerShell 版の検査と bash 版との比較。5.1 は見つかれば同じ検査を走らせる（publish 系は #requires -Version 7）。
+# 注記: Linux / macOS では /usr/bin/python3 があるため、publish-plugin の「python 無し」のケース（PATH を /usr/bin:/bin に
+#   絞って python を外す）は python を外せず SKIP になる（Windows の Git Bash では外せる）。
+#
 # 安全上の約束（手作業の検証で、Git Bash の PATH に Windows 形式のパスを渡したため実物の claude が
 # 2 回起動した。以下はコードで強制している）:
 #   - 実物の claude を起動するのは --version だけ。同じ一時ツリー・同じ引数を先にスタブで流し、
@@ -34,6 +44,9 @@
 #     python のディレクトリを末尾に足す。先頭側に置くと WindowsApps の WSL 用 bash.exe が拾われる）で実行し、起動前に
 #     claude の解決先がスタブ、git の解決先が実物、marketplace に remote が無いことを確かめる。stdin は空なので
 #     照合を通っても確認プロンプトで止まる。git の設定は空の一時ファイルに隔離する（global / system を読まない）。
+#   - publish-plugin / publish-share の引数の検証は、引数の解析と必須の検査で止まるケースだけを、git と claude をスタブにした
+#     同じ PATH で実行する。marketplace / 共有本体の値は一時ディレクトリの中の存在しないパスにし（検査が欠けていても
+#     「見つからない」で止まる）、既定値が実物の共有本体を指す --share の省略は使わない。
 #   - check-assets の追跡基準（git 層）の fixture も実物の git を使うが、対象は一時ディレクトリに作ったリポジトリだけで、
 #     書くのはその中の init / add / commit だけ（check-assets 自身は読むだけ）。git の設定は同じく隔離する。
 #   - 実スクリプトを呼ぶ。実スクリプトで検査できない項目は再実装で代用せず SKIP にする。
@@ -138,6 +151,10 @@ vk_stubbed(){
     put RC "$?"
   )
 }
+
+# $1=stdout を受けたファイル。‼ で始まる行があれば 0。publish 系の中止の文言は両版とも stderr に出す約束なので、
+# stdout にあれば誤り（呼び出し側は分類を stdout-msg にする）
+vk_stdout_msg(){ [ -f "$1" ] && [ "$(grep -c '^‼' "$1")" -gt 0 ]; }
 
 vk_put_args(){ # $1=スタブ出力先 … RAN（スタブが動いた証拠＝引数ファイルの有無）と ARG を出す
   local a
@@ -416,7 +433,9 @@ probe_checkassets(){
         : > "$s.gitconfig"; cfg="$(vk_native "$s.gitconfig")"
         if [ "$c" = gcase ]; then
           mkdir -p "$s/.claude/Work"; printf 'verify-kit\n' > "$s/.claude/Work/w.md"
-          set -- .claude/Reports/x.md .claude/plugin-x/Evals/Results/r.json
+          # 日本語名の追跡ファイル（絶対パスを含む）。git 層の 2-e の一覧が 3 系統で一致すること（PS 版は ls-files -z を UTF-8 で読む）
+          printf '%s\n' 'C:\Users\verify-kit\jp' > "$s/.claude/日本語-abspath.md"
+          set -- .claude/Reports/x.md .claude/plugin-x/Evals/Results/r.json .claude/日本語-abspath.md
         else
           set -- .claude/reports/x.md .claude/plugin-x/evals/results/r.json .claude/plugin-x0/evals/results/r.json
         fi
@@ -491,6 +510,7 @@ probe_cleanenv_badmode(){
     sec "cleanenv-badmode $i"
     put MODE "$m"
     mkdir -p "$d/case$i/tmp"
+    [ "$m" = '<empty>' ] && m=""   # 空文字列（設定済みで空）
     vk_stubbed "$d/case$i" claude -- env PERMISSION_MODE="$m" TMPDIR="$d/case$i/tmp" KEEP=1 \
       "$BASH" "$VK_ROOT/scripts/clean-test-env.sh" "$VK_ROOT"
     vk_put_args "$d/case$i"
@@ -498,6 +518,19 @@ probe_cleanenv_badmode(){
     while IFS= read -r l; do put O "$l"; done < <(cat "$d/case$i/stdout" 2>/dev/null | vk_norm "$VK_ROOT" "<R>")
     while IFS= read -r l; do put E "$l"; done < <(cat "$d/case$i/stderr" 2>/dev/null | vk_norm "$VK_ROOT" "<R>")
   done < "$VK_FIX/clean-test-env.txt"
+}
+
+# ---- clean-test-env の存在しない <Share>（スタブ・KEEP=1。一時ディレクトリを作る前に止まり claude が呼ばれないこと）----
+probe_cleanenv_badshare(){
+  local d="$VK_TMP/cleanenv-badshare" l
+  sec cleanenv-badshare
+  mkdir -p "$d/tmp"
+  vk_stubbed "$d" claude -- env -u PERMISSION_MODE TMPDIR="$d/tmp" KEEP=1 \
+    "$BASH" "$VK_ROOT/scripts/clean-test-env.sh" "$d/no-such-share"
+  vk_put_args "$d"
+  while IFS= read -r l; do [ -z "$l" ] || put O "$l"; done < <(cat "$d/stdout" 2>/dev/null | vk_norm "$d" "<D>")
+  while IFS= read -r l; do [ -z "$l" ] || put E "$l"; done < <(cat "$d/stderr" 2>/dev/null | vk_norm "$d" "<D>")
+  put LEFT "$(ls -A "$d/tmp" | wc -l | tr -d ' ')"
 }
 
 # ---- publish-plugin の --name 検証 ----------------------------------------------
@@ -518,7 +551,8 @@ probe_pubname(){
       i=$((i + 1))
       vk_stubbed "$d/case$i" git claude -- "$BASH" "$pp" --marketplace "$d/no-such-marketplace" \
         --ref verify-kit-dummy-ref --name "$name" 3> "$d/assert$i"
-      out="$(cat "$d/case$i/stdout" "$d/case$i/stderr" 2>/dev/null)"
+      # 中止の文言は stderr だけを見る（stdout に ‼ の行があれば stdout-msg。両版とも stderr に出す約束）
+      out="$(cat "$d/case$i/stderr" 2>/dev/null)"
       rc="$(sed -n 's/^RC\t//p' "$d/assert$i")"
       cls=other
       if grep -q "^ASSERT"$'\t'"ok" "$d/assert$i"; then
@@ -527,6 +561,7 @@ probe_pubname(){
           *"marketplace リポジトリが見つからない"*) [ "$rc" = 2 ] && cls=accept;;
           *"--name に値が必要"*|*"-Name に値が必要"*) [ "$rc" = 1 ] && cls=argerr;;
         esac
+        vk_stdout_msg "$d/case$i/stdout" && cls=stdout-msg
       else
         cls=assert-ng
         [ -n "$ang" ] || ang="$(sed -n 's/^ASSERT\t//p' "$d/assert$i")"
@@ -566,7 +601,7 @@ probe_pubcase(){
     printf 'verify-kit\n' > "$d/mkt$i/plugins/$ent/sentinel.txt"
     vk_stubbed "$d/case$i" git claude -- env TMPDIR="$d/case$i/tmp" "$BASH" "$pp" --marketplace "$d/mkt$i" \
       --ref verify-kit-dummy-ref --name "$name" 3> "$d/assert$i"
-    out="$(cat "$d/case$i/stdout" "$d/case$i/stderr" 2>/dev/null)"
+    out="$(cat "$d/case$i/stderr" 2>/dev/null)"   # 中止の文言は stderr だけを見る（probe_pubname と同じ）
     rc="$(sed -n 's/^RC\t//p' "$d/assert$i")"
     # スタブの git.args は最後の呼び出しの引数。取り出しまで進んだら最後は archive になる
     arch=no
@@ -579,6 +614,7 @@ probe_pubcase(){
         *"大文字小文字だけが違う既存エントリ"*) [ "$rc" = 2 ] && [ "$arch" = no ] && cls=clash;;
         *) [ "$arch" = yes ] && cls=pass;;
       esac
+      vk_stdout_msg "$d/case$i/stdout" && cls=stdout-msg
     else
       cls=assert-ng
       [ -n "$ang" ] || ang="$(sed -n 's/^ASSERT\t//p' "$d/assert$i")"
@@ -604,6 +640,8 @@ probe_pubmanifest(){
   sec pubmanifest
   realgit="$(command -v git 2>/dev/null || true)"
   if [ -z "$realgit" ]; then put SKIP "git が無い（一時リポジトリを作れない）"; return; fi
+  # 起動時に確かめた git の版（probe_main）。GIT_CONFIG_GLOBAL が効かない版では実行しない
+  if [ -n "$VK_GIT_WHY" ]; then put SKIP "$VK_GIT_WHY"; return; fi
   gitdir="${realgit%/*}"
   pydir="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
   pydir="${pydir%/*}"
@@ -653,7 +691,7 @@ probe_pubmanifest(){
       *) [ -n "$ang" ] || ang="${a:-ng 事前確認の結果が無い}"; put CASE "$i assert-ng"; continue;;
     esac
     rc="$(cat "$cs/rc" 2>/dev/null)"
-    out="$(cat "$cs/stdout" "$cs/stderr" 2>/dev/null)"
+    out="$(cat "$cs/stderr" 2>/dev/null)"   # 中止の文言は stderr だけを見る（probe_pubname と同じ）
     val=no
     if [ -f "$cs/claude.args" ] && grep -qx validate "$cs/claude.args"; then val=yes; fi
     intact=no
@@ -670,6 +708,7 @@ probe_pubmanifest(){
       *"python が無いため"*) [ "$rc" = 1 ] && [ "$val" = no ] && cls=nopython;;
       *) [ "$val" = yes ] && cls=pass;;
     esac
+    vk_stdout_msg "$cs/stdout" && cls=stdout-msg
     put CASE "$i $cls rc=${rc:--} validate=$val intact=$intact"
     if [ "$cls" != pass ]; then
       while IFS= read -r l; do
@@ -680,8 +719,77 @@ probe_pubmanifest(){
   put ASSERT "${ang:-ok}"
 }
 
+# ---- publish-plugin / publish-share の引数の検証（スタブ。引数の解析と必須の検査で止まること）---------------
+# 結果は「ref / mkt / value（期待どおりの中止）/ stdout-msg / other」。stderr の行は、スクリプトのパスを <SCRIPT>、一時
+# ディレクトリを <D>、オプションの綴りを PS 版の -Ref 等へ揃えて E に書く（比較役が bash / pwsh で突き合わせる）。
+# 値の <nomkt> / <noshare> は一時ディレクトリの中の存在しないパスなので、検査が欠けていても「見つからない」で止まる。
+probe_pubargs(){
+  local d="$VK_TMP/pubargs" i=0 line a script rc cls calls ang="" err first
+  local -a f av
+  sec pubargs
+  mkdir -p "$d"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue;; esac
+    i=$((i + 1))
+    IFS=$'\t' read -r -a f <<< "$line"
+    if [ "${#f[@]}" -lt 3 ] || [ "${f[1]}" = - ]; then put CASE "$i -"; continue; fi
+    case "${f[0]}" in
+      plugin) script="$VK_ROOT/scripts/publish-plugin.sh";;
+      share) script="$VK_ROOT/scripts/publish-share.sh";;
+      *) put CASE "$i badfixture"; continue;;
+    esac
+    av=()
+    for a in "${f[@]:3}"; do
+      case "$a" in
+        '<empty>') av+=("");;
+        '<nomkt>') av+=("$d/no-such-marketplace");;
+        '<noshare>') av+=("$d/no-such-share");;
+        *) av+=("$a");;
+      esac
+    done
+    vk_stubbed "$d/case$i" git claude -- "$BASH" "$script" ${av[@]+"${av[@]}"} 3> "$d/assert$i"
+    rc="$(sed -n 's/^RC\t//p' "$d/assert$i")"
+    cls=other
+    if grep -q "^ASSERT"$'\t'"ok" "$d/assert$i"; then
+      first="$(grep -m1 '^‼' "$d/case$i/stderr" 2>/dev/null)"
+      case "$first" in
+        *"は必須です（既定値は廃止）"*) [ "$rc" = 2 ] && cls=ref;;
+        *"<C-MKT のパス> が必要"*) [ "$rc" = 2 ] && cls=mkt;;
+        *"に値が必要"*) [ "$rc" = 1 ] && cls=value;;
+      esac
+      vk_stdout_msg "$d/case$i/stdout" && cls=stdout-msg
+    else
+      cls=assert-ng
+      [ -n "$ang" ] || ang="$(sed -n 's/^ASSERT\t//p' "$d/assert$i")"
+    fi
+    calls=0
+    [ -f "$d/case$i/calls" ] && calls="$(wc -l < "$d/case$i/calls")"
+    put CASE "$i $cls rc=${rc:--} stubcalls=$((calls))"
+    if [ -f "$d/case$i/stderr" ]; then
+      while IFS= read -r err; do [ -z "$err" ] || put E "$i $err"; done < <(vk_norm "$script" "<SCRIPT>" "$d" "<D>" \
+        --marketplace -Marketplace --ref -Ref --plugin -Plugin --name -Name --share -ShareBody < "$d/case$i/stderr")
+    fi
+  done < "$VK_FIX/publish-args.tsv"
+  put ASSERT "${ang:-ok}"
+}
+
+# GIT_CONFIG_GLOBAL（git 2.32 で追加）に対応した版か。$1=git --version の出力。対応していれば何も出さず、していなければ
+# SKIP の理由を出す（verify-kit.ps1 の Get-GitCfgWhy と同じ判定・同じ文言）
+vk_git_cfg_why(){
+  if [[ "$1" =~ ^git\ version\ ([0-9]+)\.([0-9]+) ]]; then
+    if [ "${BASH_REMATCH[1]}" -gt 2 ] || { [ "${BASH_REMATCH[1]}" -eq 2 ] && [ "${BASH_REMATCH[2]}" -ge 32 ]; }; then return 0; fi
+    printf 'git %s.%s は 2.32 未満（GIT_CONFIG_GLOBAL が効かず、一時リポジトリの git から利用者の global 設定を隔離できない）' \
+      "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+  else
+    printf 'git の版を判定できない（%s）' "$1"
+  fi
+}
+
 probe_main(){
   exec 3> "$PROBE_OUT" || exit 2
+  # 起動時に git の版を確かめる（満たさなければ plugin.json の name 照合だけを SKIP にする。理由は VK_GIT_WHY）
+  VK_GIT_WHY=""
+  if command -v git >/dev/null 2>&1; then VK_GIT_WHY="$(vk_git_cfg_why "$(git --version 2>/dev/null)")"; fi
   STUB="$VK_TMP/stub"; mkdir -p "$STUB"
   vk_mkstub claude
   vk_mkstub git
@@ -703,9 +811,11 @@ probe_main(){
   probe_checkassets
   probe_cleanenv
   probe_cleanenv_badmode
+  probe_cleanenv_badshare
   probe_pubname
   probe_pubcase
   probe_pubmanifest
+  probe_pubargs
   sec end
   exec 3>&-
 }
@@ -1171,7 +1281,7 @@ item_cleanenv(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
-  if ! bad="$(vk_check_keys clean-test-env.txt "PRE OUTHAS ARG ENV CWD SETTINGS AFTER BADMODE BADRC BADOUT" "定義済みの行頭タグ（PRE / OUTHAS / ARG / ENV / CWD / SETTINGS / AFTER / BADMODE / BADRC / BADOUT）")"; then verdict FAIL "$t" "$bad"; return; fi
+  if ! bad="$(vk_check_keys clean-test-env.txt "PRE OUTHAS ARG ENV CWD SETTINGS AFTER BADMODE BADRC BADOUT BADSHARERC BADSHAREOUT" "定義済みの行頭タグ（PRE / OUTHAS / ARG / ENV / CWD / SETTINGS / AFTER / BADMODE / BADRC / BADOUT / BADSHARERC / BADSHAREOUT）")"; then verdict FAIL "$t" "$bad"; return; fi
   grep -E $'^(ARG|ENV|CWD|SETTINGS|AFTER)\t' "$VK_FIX/clean-test-env.txt" > "$VK_TMP/i-exp"
   for s in "${S[@]}"; do
     getsec "$s" cleanenv > "$VK_TMP/i-ce"
@@ -1228,6 +1338,31 @@ item_cleanenv_badmode(){
     fi
   done
   verdict PASS "$t" "${n} ケース（${modes}）× $(labels "${S[@]}") とも claude 起動前に exit ${erc} で停止し、出力が一致$(missing_note "${SYS_ALL[@]}")"
+}
+
+item_cleanenv_badshare(){
+  local t="clean-test-env 存在しない <Share>（スタブ）" s c erc frag a
+  local -a S
+  mapfile -t S < <(usable "${SYS_ALL[@]}")
+  if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
+  if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  erc="$(sed -n 's/^BADSHARERC\t//p' "$VK_FIX/clean-test-env.txt" | head -n 1)"
+  frag="$(sed -n 's/^BADSHAREOUT\t//p' "$VK_FIX/clean-test-env.txt" | head -n 1)"
+  if [ -z "$erc" ] || [ -z "$frag" ]; then verdict FAIL "$t" "fixture に BADSHARERC / BADSHAREOUT が無い"; return; fi
+  for s in "${S[@]}"; do
+    getsec "$s" cleanenv-badshare > "$VK_TMP/i-bs"
+    a="$(sed -n 's/^ASSERT\t//p' "$VK_TMP/i-bs")"
+    if [ "$a" != ok ]; then verdict FAIL "$t" "${SYS_LABEL[$s]}: ${a:-結果が無い}"; return; fi
+    if ! grep -q $'^RAN\tno$' "$VK_TMP/i-bs"; then verdict FAIL "$t" "${SYS_LABEL[$s]}: 存在しない <Share> のまま claude を起動した"; return; fi
+    if ! grep -q "^RC"$'\t'"${erc}\$" "$VK_TMP/i-bs"; then verdict FAIL "$t" "${SYS_LABEL[$s]}: 終了コードが期待（${erc}）と違う（$(sed -n 's/^RC\t//p' "$VK_TMP/i-bs")）"; return; fi
+    if [ "$(sed -n 's/^E\t//p' "$VK_TMP/i-bs" | grep -cF -- "$frag")" -eq 0 ]; then verdict FAIL "$t" "${SYS_LABEL[$s]}: stderr に「${frag}」が無い"; return; fi
+    if [ "$(sed -n 's/^O\t//p' "$VK_TMP/i-bs" | grep -cF -- "$frag")" -ne 0 ]; then verdict FAIL "$t" "${SYS_LABEL[$s]}: エラー文が stdout にも出ている（stderr のみのはず）"; return; fi
+    if ! grep -q $'^LEFT\t0$' "$VK_TMP/i-bs"; then verdict FAIL "$t" "${SYS_LABEL[$s]}: 一時領域に残骸がある（$(sed -n 's/^LEFT\t//p' "$VK_TMP/i-bs") 個。一時ディレクトリを作る前に止まっていない）"; return; fi
+  done
+  if ! same_all cleanenv-badshare "" "${S[@]}"; then
+    fail_diff "$t" "出力が ${SYS_LABEL[$SAME_A]} と ${SYS_LABEL[$SAME_B]} で違う"; return
+  fi
+  verdict PASS "$t" "$(labels "${S[@]}") とも一時ディレクトリを作る前に exit ${erc} で停止（claude 未起動・残骸なし・文言は stderr のみ）し、出力が一致$(missing_note "${SYS_ALL[@]}")"
 }
 
 item_pubname(){
@@ -1378,6 +1513,58 @@ item_pubmanifest(){
   verdict PASS "$t" "実スクリプトのコピー（一時の開発リポ・remote の無い一時 marketplace・実物の git・claude はスタブ・stdin は空）で通過 ${npass}・不一致で中止 ${nmis}・読めずに中止 ${nunr}・python 無しで中止 ${nnopy}。$(labels "${RUN[@]}") とも期待どおり、中止は validate より前に exit 1・marketplace は無傷（commit も index への追加も無い）${cmpnote}${note:+（SKIP: ${note}）}（5.1 は #requires -Version 7 のため対象外）$(missing_note bash pwsh)"
 }
 
+item_pubargs(){
+  local t="publish-plugin / publish-share 引数の検証（スタブ）" s c line idx exp rest cls bad nref=0 nmkt=0 nval=0 nbash=0 ncmp=0 cmpnote=""
+  local -a S f
+  mapfile -t S < <(usable bash pwsh)
+  if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "bash / pwsh 7 がどちらも無い"; return; fi
+  if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  if ! bad="$(vk_check_keys publish-args.tsv "plugin share" "対象（plugin / share）" 3)"; then verdict FAIL "$t" "$bad"; return; fi
+  for s in "${S[@]}"; do
+    getsec "$s" pubargs > "$VK_TMP/pa-$s"
+    if ! grep -q $'^ASSERT\tok$' "$VK_TMP/pa-$s"; then
+      verdict FAIL "$t" "${SYS_LABEL[$s]}: $(sed -n 's/^ASSERT\t//p' "$VK_TMP/pa-$s" | head -n 1)"; return
+    fi
+    idx=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in ''|'#'*) continue;; esac
+      idx=$((idx + 1))
+      IFS=$'\t' read -r -a f <<< "$line"
+      [ "$s" = bash ] && exp="${f[1]}" || exp="${f[2]}"
+      [ "$exp" = - ] && continue
+      rest="$(grep -m1 "^CASE"$'\t'"${idx} " "$VK_TMP/pa-$s" | cut -f2-)"
+      cls="$(printf '%s' "$rest" | cut -d' ' -f2)"
+      if [ "$cls" != "$exp" ]; then verdict FAIL "$t" "${SYS_LABEL[$s]}: ケース ${idx}（${line}）は ${exp} のはずが ${cls:-結果なし}（${rest}）"; return; fi
+      [[ "$rest" =~ stubcalls=0$ ]] || { verdict FAIL "$t" "${SYS_LABEL[$s]}: ケース ${idx} で中止より前に git / claude が呼ばれた（${rest}）"; return; }
+      if [ "$s" = "${S[0]}" ]; then
+        case "$exp" in ref) nref=$((nref + 1));; mkt) nmkt=$((nmkt + 1));; value) nval=$((nval + 1));; esac
+        [ "${f[2]}" = - ] && nbash=$((nbash + 1))
+      fi
+    done < "$VK_FIX/publish-args.tsv"
+  done
+  # 両版で同じ期待のケースは、stderr の行（正規化済み）と終了コードが一致すること
+  if [ "${#S[@]}" -eq 2 ]; then
+    idx=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in ''|'#'*) continue;; esac
+      idx=$((idx + 1))
+      IFS=$'\t' read -r -a f <<< "$line"
+      [ "${f[1]}" = "${f[2]}" ] && [ "${f[1]}" != - ] || continue
+      for s in bash pwsh; do
+        grep "^E"$'\t'"${idx} " "$VK_TMP/pa-$s" > "$VK_TMP/pam-$s"
+        grep -m1 "^CASE"$'\t'"${idx} " "$VK_TMP/pa-$s" | sed -E 's/.* (rc=[^ ]*) .*/\1/' >> "$VK_TMP/pam-$s"
+      done
+      if ! cmp -s "$VK_TMP/pam-bash" "$VK_TMP/pam-pwsh"; then
+        set_diff "$VK_TMP/pam-bash" "$VK_TMP/pam-pwsh" "bash と pwsh 7 の差分（ケース ${idx}）:"
+        fail_diff "$t" "ケース ${idx}（${f[1]}）の中止の文言（stderr）か終了コードが bash / pwsh 7 で違う"; return
+      fi
+      ncmp=$((ncmp + 1))
+    done < "$VK_FIX/publish-args.tsv"
+    cmpnote="・stderr の文言と終了コードは bash / pwsh 7 で一致（${ncmp} ケース）"
+  fi
+  verdict PASS "$t" "実スクリプト（git / claude はスタブ）で必須の ref が空・省略 ${nref}・marketplace が空・省略 ${nmkt}（exit 2）・既定値のあるオプションに空 ${nval}（exit 1）。うち値の欠けた末尾のオプション ${nbash} は bash のみ（pwsh はバインドで拒否）。$(labels "${S[@]}") とも期待どおり、中止の文言は stderr のみ・git / claude 未呼び出し${cmpnote}（5.1 は #requires -Version 7 のため対象外）$(missing_note bash pwsh)"
+}
+
 LEFT_PATHS=(".claude/option-settings.sh" ".claude/option-settings.ps1" ".claude/custom.env"
             ".claude/launcher/option-settings.sh" ".claude/launcher/option-settings.ps1" ".claude/launcher/custom.env")
 snapshot_left(){ local p; for p in "${LEFT_PATHS[@]}"; do [ -e "$VK_ROOT/$p" ] && printf '%s\n' "$p"; done; }
@@ -1422,9 +1609,11 @@ compare_main(){
   item_ca_links
   item_cleanenv
   item_cleanenv_badmode
+  item_cleanenv_badshare
   item_pubname
   item_pubcase
   item_pubmanifest
+  item_pubargs
   item_left
   if [ "$VERBOSE" -eq 1 ]; then
     for s in "${SYS_ALL[@]}"; do

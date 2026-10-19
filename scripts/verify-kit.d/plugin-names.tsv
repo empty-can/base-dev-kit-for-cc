@@ -1,6 +1,6 @@
 # publish-plugin --name の検証ケース（bash の期待<TAB>pwsh の期待<TAB>名前）。
 #   accept = 名前検証を通過（後段の副作用の無い前提条件「marketplace が無い」で exit 2）
-#   reject = 名前検証で拒否（exit 2）/ argerr = 引数処理で拒否（exit 1。bash は --name の ${2:?}、pwsh は -Name '' の明示検査）
+#   reject = 名前検証で拒否（exit 2）/ argerr = 引数処理で拒否（exit 1。bash は --name "" の、pwsh は -Name '' の明示検査。文言は stderr）
 # 空の名前は名前検証に到達しない: 明示的に空で渡したら両版とも引数エラーで止める
 # （pwsh で -Name を省略したときだけ、既定名＝-Plugin のベース名を使う）。
 # 末尾が . の名前は拒否する（Windows はパス末尾のドットを落とし、plugins\foo. が既存の plugins\foo を指すため）。

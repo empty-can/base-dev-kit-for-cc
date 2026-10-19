@@ -179,9 +179,20 @@ function Get-ClaudeTree([switch]$Files, [string]$SkipTop = '', [string]$Like = '
     }
   }
 }
-# 追跡されている .claude 配下のパス（git 層のみ・/ 区切り・git の順）。2-c / 2-c' が使う
+# 追跡されている .claude 配下のパス（git 層のみ・/ 区切り・git の順）。2-c / 2-c' と、2-e / 2-f の payload 列挙（git 層）が使う。
+# ⚠ -z で呼び、NUL で分ける（bash 版の ls-files -z と同じ）。-z が無いと core.quotepath（既定で有効）により ASCII 以外を含む
+#    パスが ".claude/\346\227\245…" のように引用・エスケープされて返り、実在のファイルを指さなくなる（2-e が黙って見逃す）。
+# ⚠ git の出力（パスは UTF-8 のバイト列）は UTF-8 として読む。PowerShell はネイティブコマンドの出力を [Console]::OutputEncoding で
+#    復号するため、コンソールが CP932（日本語版 Windows の既定）だと -z でも日本語のパスが化ける（実測: 7 / 5.1 とも）。呼び出しの
+#    間だけ UTF-8 にして戻す（コンソールのコードページはプロセスの外にも見えるので必ず戻す。設定できない環境では従来どおり読む）。
+function Invoke-GitUtf8([string[]]$argv) {
+  $saved = $null
+  try { $saved = [Console]::OutputEncoding; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
+  try { & git @argv 2>$null }
+  finally { if ($null -ne $saved) { try { [Console]::OutputEncoding = $saved } catch { } } }
+}
 $trackedClaude = @()
-if ($isGit) { $trackedClaude = @(((git -C $Share ls-files -z -- .claude 2>$null) -join "`n") -split "`0" | Where-Object { $_ }) }
+if ($isGit) { $trackedClaude = @(((Invoke-GitUtf8 @('-C', $Share, 'ls-files', '-z', '--', '.claude')) -join "`n") -split "`0" | Where-Object { $_ }) }
 # 2-c の候補（.claude\<直下の名前>）。追跡: 追跡パスの最初の要素（重複なし・git の順）／実在: 直下のエントリ（序数順）
 $topTracked = @()
 $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
@@ -341,9 +352,11 @@ foreach ($guard in @('.claude\.gitignore', '.claude\.gitattributes')) {
 #    非 git 層は Get-ClaudeTree で列挙する（ジャンクション・シンボリックリンクは辿らず数えない。bash 版の find -P -type f）。
 # ⚠ 並びは序数にそろえる（2-e / 2-f の一覧の順。bash 版の LC_ALL=C sort -z と同じ）。/ 区切りのまま並べてから \ に直す
 #    （\ は数字・英大文字より後ろに来るので、\ のまま並べると bash 版と順が割れる）。git 層は ls-files の順（パスのバイト順）のまま。
+# ⚠ git 層は $trackedClaude（ls-files -z を UTF-8 で読んだもの）を使う。以前はここだけ -z なしでコンソールの符号化のまま読んでおり、
+#    日本語名の追跡ファイルが PS 版だけ化けて 2-e から漏れた（bash 版は -z）。
 function Get-PayloadFiles {
   if ($isGit) {
-    (git -C $Share ls-files -- .claude) | Where-Object { $_ } | ForEach-Object { $_ -replace '/', '\' }
+    $trackedClaude | ForEach-Object { $_.Replace('/', '\') }
   } else {
     Sort-Ordinal @(Get-ClaudeTree -Files) | ForEach-Object { $_.Replace('/', '\') }
   }

@@ -25,22 +25,39 @@
 # （実測: ref の打ち間違いで『‼ ref が存在しない』(exit 2) ではなく NativeCommandError の生スタックが出る）。
 # 対象シェルを機械で宣言して fail fast させる。
 #requires -Version 7
+# ⚠ -Marketplace / -Ref に [Parameter(Mandatory)] を付けない。非対話で省略すると PowerShell 独自の文言で落ち
+#    （対話ではプロンプトになる）、空文字列はバインドの段階で拒否されるため、bash 版と同じ文言・終了コードにできない。
+#    本文で明示的に検査する（bash 版の必須の検査と同じ文言・exit 2）。
 param(
-  [Parameter(Mandatory = $true)][string]$Marketplace,
-  [Parameter(Mandatory = $true)][string]$Ref,
+  [string]$Marketplace = '',
+  [string]$Ref = '',
   [string]$Plugin = 'plugin',
   [string]$Name = ''
 )
 $ErrorActionPreference = 'Stop'
 
-# ⚠ エラー出力に Write-Error を使わない: $ErrorActionPreference='Stop' 下では Write-Error が
-#    terminating error になり、直後の exit <code> に到達せず終了コードが不定になる。
+# ⚠ 中止のメッセージ（‼ の行とその続きの行）は bash 版と同じく stderr へ出す（Write-Host は stdout）。
+#    Write-Error は使わない: $ErrorActionPreference='Stop' 下では Write-Error が terminating error になり、
+#    直後の exit <code> に到達せず終了コードが不定になる。
+function Write-Err([string]$m) { [Console]::Error.WriteLine($m) }
 
-# -Name を明示的に空で渡したら引数エラーで止める（bash 版の --name "" が ${2:?} で止まるのと対称。exit 1）。
-# 既定名（-Plugin のベース名）を使うのは -Name を省略したときだけ。
-if ($PSBoundParameters.ContainsKey('Name') -and $Name -eq '') {
-  Write-Host '‼ -Name に値が必要（空の名前は指定できない。既定名を使うなら -Name を省略する）'
+# 引数の検査（bash 版の引数の解析と必須の検査と同じ順・同じ文言・同じ終了コード）:
+#   -Plugin / -Name を明示的に空で渡したら引数エラーで止める（exit 1。既定値を使うのは省略したときだけ）→
+#   -Marketplace が空・省略なら exit 2 → -Ref が空・省略なら exit 2。
+if ($PSBoundParameters.ContainsKey('Plugin') -and $Plugin -eq '') {
+  Write-Err '‼ -Plugin に値が必要（空のディレクトリは指定できない。既定の plugin を使うなら -Plugin を省略する）'
   exit 1
+}
+if ($PSBoundParameters.ContainsKey('Name') -and $Name -eq '') {
+  Write-Err '‼ -Name に値が必要（空の名前は指定できない。既定名を使うなら -Name を省略する）'
+  exit 1
+}
+if ($Marketplace -eq '') { Write-Err '‼ -Marketplace <C-MKT のパス> が必要'; exit 2 }
+# ⚠ -Ref に既定値を持たせない（publish-share.ps1 と同じ理由）。publish する ref は毎回意識して選ぶ。
+if ($Ref -eq '') {
+  Write-Err '‼ -Ref は必須です（既定値は廃止）。publish する ref を明示してください。'
+  Write-Err "   例: $PSCommandPath -Marketplace <path> -Ref v1.0.0"
+  exit 2
 }
 if (-not $Name) { $Name = Split-Path -Leaf $Plugin }
 
@@ -58,7 +75,7 @@ if (-not $Name) { $Name = Split-Path -Leaf $Plugin }
 #    checkout できないパスになる。判定は「最初の . より前」が予約名かどうか（foo.con は予約名ではない）。
 if ($Name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z' -or $Name.EndsWith('.') -or
     $Name -imatch '^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?\z') {
-  Write-Host "‼ plugin 名として不正: '$Name'（英数字と . _ - のみ・先頭は英数字・末尾は . 以外・Windows の予約名（CON / NUL / COM1 等。拡張子付きも）以外・128 文字以内）"
+  Write-Err "‼ plugin 名として不正: '$Name'（英数字と . _ - のみ・先頭は英数字・末尾は . 以外・Windows の予約名（CON / NUL / COM1 等。拡張子付きも）以外・128 文字以内）"
   exit 2
 }
 
@@ -95,22 +112,22 @@ function Get-PluginJsonName([string]$path) {
 $Here    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DevRoot = (Resolve-Path (Join-Path $Here '..')).Path
 git -C $DevRoot rev-parse --git-dir *> $null
-if ($LASTEXITCODE -ne 0) { Write-Host "‼ 開発リポジトリが見つからない: $DevRoot"; exit 2 }
+if ($LASTEXITCODE -ne 0) { Write-Err "‼ 開発リポジトリが見つからない: $DevRoot"; exit 2 }
 
 # marketplace の検査: .git が「ディレクトリ」であること（submodule の .git はファイル＝gitlink）。
 # -PathType Container を付けないと gitlink にも Test-Path が true を返し、submodule の checkout を
 # 配布先に指定できてしまう。ミラー処理が .git を壊し、親リポジトリへ commit/push する事故になる。
 if (-not (Test-Path -LiteralPath (Join-Path $Marketplace '.git') -PathType Container)) {
-  Write-Host "‼ marketplace リポジトリが見つからない: $Marketplace"
-  Write-Host '   .git がディレクトリである独立クローンを指定してください（submodule の checkout は不可）。'
+  Write-Err "‼ marketplace リポジトリが見つからない: $Marketplace"
+  Write-Err '   .git がディレクトリである独立クローンを指定してください（submodule の checkout は不可）。'
   exit 2
 }
 # ルート判定は --show-prefix の空判定で行う（パス文字列の比較は表記揺れで壊れる）。
 $mktPrefix = (git -C $Marketplace rev-parse --show-prefix 2>$null)
-if ($LASTEXITCODE -ne 0) { Write-Host "‼ marketplace が git リポジトリではない: $Marketplace"; exit 2 }
+if ($LASTEXITCODE -ne 0) { Write-Err "‼ marketplace が git リポジトリではない: $Marketplace"; exit 2 }
 if ($mktPrefix -and $mktPrefix.Trim() -ne '') {
-  Write-Host "‼ marketplace はリポジトリのルートを指す必要があります: $Marketplace"
-  Write-Host "   （リポジトリ内のサブディレクトリを指しています: $($mktPrefix.Trim())）"
+  Write-Err "‼ marketplace はリポジトリのルートを指す必要があります: $Marketplace"
+  Write-Err "   （リポジトリ内のサブディレクトリを指しています: $($mktPrefix.Trim())）"
   exit 2
 }
 
@@ -127,15 +144,15 @@ if (Test-Path -LiteralPath $pluginsDir -PathType Container) {
   foreach ($e in @(Get-ChildItem -Force -LiteralPath $pluginsDir)) {
     if ($e.Name -ceq $Name) { continue }
     if ($e.Name -cmatch '^[\x00-\x7F]*\z' -and $e.Name.ToLowerInvariant() -ceq $lname) {
-      Write-Host "‼ marketplace の plugins/ に大文字小文字だけが違う既存エントリがある: '$($e.Name)'（plugin 名 '$Name'）。publish 中止"
-      Write-Host '   Windows / macOS では同じフォルダを指し、ミラーが別の plugin を消します。既存の名前に揃えるか、別の名前にしてください。'
+      Write-Err "‼ marketplace の plugins/ に大文字小文字だけが違う既存エントリがある: '$($e.Name)'（plugin 名 '$Name'）。publish 中止"
+      Write-Err '   Windows / macOS では同じフォルダを指し、ミラーが別の plugin を消します。既存の名前に揃えるか、別の名前にしてください。'
       exit 2
     }
   }
 }
 
 git -C $DevRoot rev-parse --verify "$Ref^{commit}" *> $null
-if ($LASTEXITCODE -ne 0) { Write-Host "‼ ref が存在しない: $Ref"; exit 2 }
+if ($LASTEXITCODE -ne 0) { Write-Err "‼ ref が存在しない: $Ref"; exit 2 }
 
 # 0. symlink（mode 120000）を含む ref は publish しない。zip 経由の本版は symlink を
 #    「ターゲットのパス文字列を中身とする通常ファイル」として配布してしまう（件数照合もすり抜ける）。
@@ -143,8 +160,8 @@ $links = @(git -C $DevRoot ls-tree -r $Ref -- $Plugin |
   Where-Object { $_ -match '^120000\s' } |
   ForEach-Object { ($_ -split "`t", 2)[1] })
 if ($links.Count -gt 0) {
-  Write-Host '‼ plugin に symlink が含まれている。publish 中止（配布先で壊れたファイルになる）:'
-  $links | ForEach-Object { Write-Host "   $_" }
+  Write-Err '‼ plugin に symlink が含まれている。publish 中止（配布先で壊れたファイルになる）:'
+  $links | ForEach-Object { Write-Err "   $_" }
   exit 1
 }
 
@@ -161,14 +178,14 @@ try {
   #       （Git for Windows の既定は autocrlf=true）。bash 版と対称にすること。
   $zip = Join-Path $tmp 'plugin.zip'
   git -c core.autocrlf=false -C $DevRoot archive $Ref $Plugin --format=zip -o $zip
-  if ($LASTEXITCODE -ne 0) { Write-Host "‼ $Ref から $Plugin を取り出せない（パス誤り? 未コミット?）"; exit 1 }
+  if ($LASTEXITCODE -ne 0) { Write-Err "‼ $Ref から $Plugin を取り出せない（パス誤り? 未コミット?）"; exit 1 }
   Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force   # → $tmp\$Plugin\
   $src = Join-Path $tmp $Plugin
 
   # 2. 安全弁: 空 / manifest 不在なら中止
-  if (-not (Test-Path $src) -or -not (Get-ChildItem -Force $src)) { Write-Host "‼ $Ref の $Plugin が空。中止"; exit 1 }
+  if (-not (Test-Path $src) -or -not (Get-ChildItem -Force $src)) { Write-Err "‼ $Ref の $Plugin が空。中止"; exit 1 }
   if (-not (Test-Path (Join-Path $src '.claude-plugin/plugin.json'))) {
-    Write-Host "‼ $Plugin/.claude-plugin/plugin.json が無い（plugin ではない?）。中止"; exit 1
+    Write-Err "‼ $Plugin/.claude-plugin/plugin.json が無い（plugin ではない?）。中止"; exit 1
   }
 
   # 2-a. marketplace 側の名前（-Name）と plugin.json の name が一致しなければ中止する（bash 版と同じ文言・終了コード）。
@@ -178,13 +195,13 @@ try {
   #      （-cne はカルチャ依存の比較で、無視される文字を含む値を一致とみなしうる）。
   $mname = Get-PluginJsonName (Join-Path $src '.claude-plugin/plugin.json')
   if ($null -eq $mname) {
-    Write-Host "‼ $Plugin/.claude-plugin/plugin.json の name を読めない（UTF-8 / JSON として不正・最上位がオブジェクトでない・name が無いか文字列でない）。中止"
+    Write-Err "‼ $Plugin/.claude-plugin/plugin.json の name を読めない（UTF-8 / JSON として不正・最上位がオブジェクトでない・name が無いか文字列でない）。中止"
     exit 1
   }
   if (-not [string]::Equals($mname, $Name, [StringComparison]::Ordinal)) {
-    Write-Host "‼ $Plugin/.claude-plugin/plugin.json の name（'$mname'）と marketplace 側の名前（'$Name'）が違う。中止"
-    Write-Host "   このまま進むと、ミラーが marketplace の plugins/$Name をこの plugin の中身で置き換えて公開します。"
-    Write-Host '   どちらが正しいか確かめ、marketplace 側の名前（marketplace.json のエントリ名も）と plugin.json の name を揃えてください。'
+    Write-Err "‼ $Plugin/.claude-plugin/plugin.json の name（'$mname'）と marketplace 側の名前（'$Name'）が違う。中止"
+    Write-Err "   このまま進むと、ミラーが marketplace の plugins/$Name をこの plugin の中身で置き換えて公開します。"
+    Write-Err '   どちらが正しいか確かめ、marketplace 側の名前（marketplace.json のエントリ名も）と plugin.json の name を揃えてください。'
     exit 1
   }
 
@@ -192,17 +209,17 @@ try {
   $expected = (git -C $DevRoot ls-tree -r --name-only $Ref -- $Plugin | Measure-Object).Count
   $actual   = (Get-ChildItem -Recurse -File -Force -LiteralPath $src | Measure-Object).Count
   if ($actual -ne $expected) {
-    Write-Host "‼ plugin の展開に失敗（期待 $expected ファイル / 実際 $actual ファイル）。publish 中止"
-    Write-Host '   ファイル名の文字コードが原因の可能性があります。'
+    Write-Err "‼ plugin の展開に失敗（期待 $expected ファイル / 実際 $actual ファイル）。publish 中止"
+    Write-Err '   ファイル名の文字コードが原因の可能性があります。'
     exit 1
   }
 
   # 3. ゲート: claude plugin validate（--strict）
-  if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { Write-Host '‼ claude CLI が PATH に無い。中止'; exit 1 }
+  if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { Write-Err '‼ claude CLI が PATH に無い。中止'; exit 1 }
   #    終了コード: 0=合格（--strict では警告もゼロ）/ 1=不合格 / 2=validator 自体の失敗（パス不可読等）。どちらも中止。
   claude plugin validate --strict $src
-  if ($LASTEXITCODE -eq 2) { Write-Host '‼ validate 自体が失敗した（パス不可読等。plugin の不合格ではない）。publish 中止'; exit 1 }
-  if ($LASTEXITCODE -ne 0) { Write-Host '‼ plugin validate FAIL。publish 中止'; exit 1 }
+  if ($LASTEXITCODE -eq 2) { Write-Err '‼ validate 自体が失敗した（パス不可読等。plugin の不合格ではない）。publish 中止'; exit 1 }
+  if ($LASTEXITCODE -ne 0) { Write-Err '‼ plugin validate FAIL。publish 中止'; exit 1 }
 
   # 4. /security-review は対話のため手動確認
   $ok = Read-Host "→ $Name について /security-review を実行済みなら y で続行"
@@ -221,11 +238,11 @@ try {
   #       事前にディレクトリであることを検査し、作成後も確認する。
   $script:dest = Join-Path $Marketplace "plugins/$Name"
   if (Test-Path -LiteralPath $script:dest -PathType Leaf) {
-    Write-Host "‼ 配布先 $script:dest がディレクトリではない（ファイルが占有している）。publish 中止"; exit 1
+    Write-Err "‼ 配布先 $script:dest がディレクトリではない（ファイルが占有している）。publish 中止"; exit 1
   }
   New-Item -ItemType Directory -Force -Path $script:dest | Out-Null
   if (-not (Test-Path -LiteralPath $script:dest -PathType Container)) {
-    Write-Host "‼ 配布先ディレクトリを作れない: $script:dest。publish 中止"; exit 1
+    Write-Err "‼ 配布先ディレクトリを作れない: $script:dest。publish 中止"; exit 1
   }
   Get-ChildItem -Force -LiteralPath $script:dest |
     Where-Object { $_.Name -ne '.git' } |
@@ -238,23 +255,23 @@ try {
   $copied = (Get-ChildItem -Recurse -File -Force -LiteralPath $script:dest |
     Where-Object { $_.FullName -notlike (Join-Path $script:dest '.git*') } | Measure-Object).Count
   if ($copied -ne $expected) {
-    Write-Host "‼ ミラーの結果が payload と一致しない（payload $expected / 配布先 $copied）。publish 中止"
+    Write-Err "‼ ミラーの結果が payload と一致しない（payload $expected / 配布先 $copied）。publish 中止"
     exit 1
   }
 } finally { Remove-Item -Recurse -Force $tmp }
 
 # 6. commit & push（失敗を握りつぶさない。publish 未完了なのに ✓ を出さない）
 git -C $Marketplace add -A
-if ($LASTEXITCODE -ne 0) { Write-Host '‼ add 失敗。publish 中止'; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Err '‼ add 失敗。publish 中止'; exit 1 }
 git -C $Marketplace diff --cached --quiet
 if ($LASTEXITCODE -eq 0) { Write-Host '変更なし。publish 不要'; exit 0 }
 $short = (git -C $DevRoot rev-parse --short $Ref).Trim()
 git -C $Marketplace commit -m "publish: sync plugin '$Name' from <Dev>@$short (ref: $Ref)"
-if ($LASTEXITCODE -ne 0) { Write-Host '‼ commit 失敗。publish は完了していない'; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Err '‼ commit 失敗。publish は完了していない'; exit 1 }
 git -C $Marketplace push
 if ($LASTEXITCODE -ne 0) {
-  Write-Host '‼ push 失敗。publish は完了していない（marketplace にローカルコミットが残っている）'
-  Write-Host "   認証・保護ブランチ設定を確認し、$Marketplace で push し直してください。"
+  Write-Err '‼ push 失敗。publish は完了していない（marketplace にローカルコミットが残っている）'
+  Write-Err "   認証・保護ブランチ設定を確認し、$Marketplace で push し直してください。"
   exit 1
 }
 

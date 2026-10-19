@@ -29,11 +29,18 @@ REF=""
 PLUGIN_DIR="plugin"
 MARKETPLACE=""
 NAME=""
+# 値の無いオプションは ${2:?} で止めない（bash 独自の文言・行番号入りになり、PS 版と揃わない）。
+#   - --ref / --marketplace: 既定値の無い必須オプション。値が空・欠けていても、ここでは止めずに「省略」と同じ扱いにし、
+#     下の必須の検査が同じ文言・exit 2 で止める（PS 版は -Ref / -Marketplace の Mandatory をやめて本文で同じ検査をする）。
+#   - --plugin / --name: 既定値のあるオプション。明示的に空を渡したら引数エラー（exit 1）で止める（既定値を使うなら省略する）。
+# 判定の順も PS 版と揃える: 引数エラー（--plugin / --name）→ --marketplace → --ref。
 while [ $# -gt 0 ]; do
   case "$1" in
-    --ref)         REF="${2:?--ref に値が必要}"; shift 2;;
-    --plugin)      PLUGIN_DIR="${2:?--plugin に値が必要}"; shift 2;;
-    --marketplace) MARKETPLACE="${2:?--marketplace に値が必要}"; shift 2;;
+    --ref)         REF="${2:-}"; shift; [ $# -gt 0 ] && shift;;
+    --marketplace) MARKETPLACE="${2:-}"; shift; [ $# -gt 0 ] && shift;;
+    --plugin)
+      [ -n "${2:-}" ] || { echo "‼ --plugin に値が必要（空のディレクトリは指定できない。既定の plugin を使うなら --plugin を省略する）" >&2; exit 1; }
+      PLUGIN_DIR="$2"; shift 2;;
     --name)
       [ -n "${2:-}" ] || { echo "‼ --name に値が必要（空の名前は指定できない。既定名を使うなら --name を省略する）" >&2; exit 1; }
       NAME="$2"; shift 2;;
@@ -156,21 +163,33 @@ SRC="$tmp/$PLUGIN_DIR"
 # ⚠ name はバイト列（UTF-8）で書き出す。テキストで書くと Windows ではパイプのコードページ（cp932 等）で符号化され、
 #    表せない文字で例外になる。CRLF への変換も起きない。
 # ⚠ encoding は utf-8-sig（先頭の BOM 1 個を読み飛ばす。PS 版も同じ）。utf-8 だと BOM 付きの plugin.json を読めない。
+# ⚠ python の json は PS 版の System.Text.Json より寛容なので、読めないものを PS 版に揃えて厳格にする（実測）:
+#    - NaN / Infinity / -Infinity（JSON の値ではない）: python は受理し、System.Text.Json は文書のどこにあっても解析で拒否する。
+#      parse_constant で例外にして、文書のどこにあっても読めない扱いにする。
+#    - 孤立サロゲート（"\ud800" 等のエスケープ）: どちらも解析は通すが、System.Text.Json は name の値を文字列として
+#      取り出す段で拒否する（ほかのキーの値にあっても拒否しない）。python は取り出した name を厳格に UTF-8 へ符号化
+#      できなければ読めない扱いにする（以前は "replace" で ? に置き換え、不一致として扱っていた）。
 [ -n "$PY" ] || {
   echo "‼ python が無いため $PLUGIN_DIR/.claude-plugin/plugin.json の name を照合できない。中止" >&2
   echo "   python 3（python3 / python の順に探す）を PATH に置いて再実行してください。" >&2
   exit 1; }
 _mname="$("$PY" -c '
 import json, sys
+def reject_constant(c):
+    raise ValueError(c)
 try:
     with open(sys.argv[1], encoding="utf-8-sig") as f:
-        j = json.load(f)
+        j = json.load(f, parse_constant=reject_constant)
 except Exception:
     sys.exit(4)
 v = j.get("name") if isinstance(j, dict) else None
 if not isinstance(v, str):
     sys.exit(4)
-sys.stdout.buffer.write(v.encode("utf-8", "replace"))
+try:
+    b = v.encode("utf-8")
+except UnicodeEncodeError:
+    sys.exit(4)
+sys.stdout.buffer.write(b)
 sys.exit(0 if v == sys.argv[2] else 3)
 ' "$SRC/.claude-plugin/plugin.json" "$NAME" 2>/dev/null)"
 _rc=$?

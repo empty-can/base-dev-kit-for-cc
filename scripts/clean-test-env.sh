@@ -26,13 +26,23 @@ SHARE="${1:-}"
 
 # 権限モードの検証は、一時ディレクトリを作るより前に済ませる（PS 版と同じ順序・同じメッセージ・同じ終了コード）。
 # 大文字小文字を区別する（claude に渡す値は公式の綴りに限る。以前の PS 版は ValidateSet が区別せず、AUTO をそのまま渡していた）。
-PERMISSION_MODE="${PERMISSION_MODE:-default}"
+# 既定値の default を使うのは未設定のときだけ（${…-…}）。設定済みで空の値は不正値として止める（PS 版の -PermissionMode '' と
+# 同じ。以前の ${PERMISSION_MODE:-default} は空を黙って default にしていた）。
+PERMISSION_MODE="${PERMISSION_MODE-default}"
 case "$PERMISSION_MODE" in
   default|acceptEdits|plan|auto|dontAsk|bypassPermissions|manual) ;;
   *)
     echo "‼ 権限モードが不正: '$PERMISSION_MODE'（default / acceptEdits / plan / auto / dontAsk / bypassPermissions / manual のいずれか。大文字小文字を区別する）" >&2
     exit 2;;
 esac
+
+# <Share> の検査も一時ディレクトリを作るより前に済ませる（PS 版と同じ順序・同じ文言・同じ終了コード・stderr）。
+# 以前は mktemp の後にあり、不正な <Share> でも一時ディレクトリの作成・削除の表示が出て、KEEP=1 なら残骸が残った。
+SHARE_ABS=""
+if [[ -n "$SHARE" ]]; then
+  if [[ ! -d "$SHARE" ]]; then echo "‼ <Share> が見つかりません: $SHARE" >&2; exit 1; fi
+  SHARE_ABS="$(cd "$SHARE" && pwd)"
+fi
 
 CFG="$(mktemp -d -t cc-clean-cfg-XXXXXX)"
 WORK="$(mktemp -d -t cc-clean-work-XXXXXX)"
@@ -69,9 +79,7 @@ done
 cli=(--permission-mode "$PERMISSION_MODE")
 echo "[clean-test-env] 起動モード: --permission-mode $PERMISSION_MODE"
 
-if [[ -n "$SHARE" ]]; then
-  if [[ ! -d "$SHARE" ]]; then echo "ERROR: <Share> が見つかりません: $SHARE" >&2; exit 1; fi
-  SHARE_ABS="$(cd "$SHARE" && pwd)"
+if [[ -n "$SHARE_ABS" ]]; then
   cli+=(--add-dir "$SHARE_ABS")
   export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1   # CLAUDE.md / .claude/CLAUDE.md / .claude/rules/*.md / CLAUDE.local.md も結合（skills / agents / commands は変数なしでも来る）
   echo "[clean-test-env] 結合: --add-dir $SHARE_ABS（+ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1）"
