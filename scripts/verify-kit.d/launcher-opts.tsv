@@ -1,0 +1,7 @@
+# ランチャー引数列検査で .claude/option-settings.* に書く起動オプション（キー<TAB>値。値 true は値なしフラグ）。
+# bash 版ランチャーはキーを C ロケールの辞書順、PS 版は書いた順に並べるので、ここは辞書順で書くこと。
+# 最後のキー --tools は値を複数取るフラグで、直後のプロンプトを取り込む（ランチャーが -- を補う理由）。
+--add-dir	./verify kit/share
+--debug=mcp,startup	true
+--model	opus
+--tools	Read

@@ -1,0 +1,37 @@
+# clean-test-env 検査（区切りは TAB）。
+#   PRE    … 呼び出し元に置く環境変数（<unset> は未設定にする）
+#   OUTHAS … 出力のどこかの行に含まれるべき断片
+#   それ以外 … スタブの claude で観測されるべき値（<R> = <Share>、<CFG> / <WORK> = 一時 config dir / 作業ディレクトリ）
+#   AFTER  … 実行後の呼び出し元の環境変数（PowerShell 版は $env: がプロセス全体なので復元が要る）
+#   BADMODE … 不正な権限モード（.sh は PERMISSION_MODE、.ps1 は -PermissionMode に渡す。1 行 1 ケース）。
+#             両版とも起動前に止まること: 終了コード BADRC・claude 未起動・BADOUT が stderr にあり stdout には無い・出力が両版で一致
+BADMODE	AUTO
+BADMODE	foo
+BADRC	2
+BADOUT	権限モードが不正
+PRE	CLAUDE_CONFIG_DIR=verify-kit-dummy-config-dir
+PRE	CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=<unset>
+PRE	CLAUDE_CODE_PLUGIN_DIRS=verify-kit-dummy-plugin-dirs
+PRE	CLAUDE_CODE_PLUGIN_SEED_DIR=verify-kit-dummy-seed-dir
+PRE	CLAUDE_CODE_PLUGIN_CACHE_DIR=verify-kit-dummy-cache-dir
+PRE	CLAUDE_CODE_SAFE_MODE=1
+OUTHAS	CLAUDE_CODE_SAFE_MODE=1 が設定されている
+ARG	--permission-mode
+ARG	default
+ARG	--add-dir
+ARG	<R>
+ARG	--settings
+ARG	<R>/.claude/settings.json
+ENV	CLAUDE_CONFIG_DIR=<CFG>
+ENV	CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
+ENV	CLAUDE_CODE_PLUGIN_DIRS=<unset>
+ENV	CLAUDE_CODE_PLUGIN_SEED_DIR=<unset>
+ENV	CLAUDE_CODE_PLUGIN_CACHE_DIR=<unset>
+CWD	<WORK>
+SETTINGS	{"syncClaudeAiSkills": false, "syncClaudeAiPlugins": false, "disableClaudeAiConnectors": true}
+AFTER	CLAUDE_CONFIG_DIR=verify-kit-dummy-config-dir
+AFTER	CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=<unset>
+AFTER	CLAUDE_CODE_PLUGIN_DIRS=verify-kit-dummy-plugin-dirs
+AFTER	CLAUDE_CODE_PLUGIN_SEED_DIR=verify-kit-dummy-seed-dir
+AFTER	CLAUDE_CODE_PLUGIN_CACHE_DIR=verify-kit-dummy-cache-dir
+AFTER	CLAUDE_CODE_SAFE_MODE=1

@@ -34,6 +34,12 @@ CLAUDE.local.md
 /workspace/
 /agent-memory-local/
 work_instructions.txt
+# --worktree / EnterWorktree の作業ツリー（利用先では .claude/ が submodule なので、ここに作られる）
+/worktrees/
+# 永続化したスケジュールタスク（作成したフォルダでしか動かない個人状態）
+/scheduled_tasks.json
+# claude plugin eval の結果（skills 配下の skills-dir plugin を評価すると、その evals/results/ に書かれる）
+**/evals/results/
 
 # --- .bat の UTF-8 作業コピー（hooks/bat_cp932_guard.py が生成する）---
 # .bat は CP932 で保存するため Claude のツールが直接読み書きできない。原本には触れず、

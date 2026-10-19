@@ -1,0 +1,15 @@
+{
+  "permissions": { "defaultMode": "bypassPermissions", "deny": ["Edit(**/*.bat)"] },
+  "autoMode": { "classifyAllShell": true },
+  "skipAutoPermissionPrompt": true,
+  "sandbox": { "filesystem": { "disabled": true }, "network": { "allowManagedDomainsOnly": true } },
+  "strictKnownMarketplaces": [],
+  "prependPlugins": [],
+  "env": {
+    "CLAUDE_CONFIG_DIR": "verify-kit-dummy",
+    "OTEL_EXPORTER_OTLP_METRICS_HEADERS": "dummy-not-a-secret",
+    "ComSpec": "verify-kit-dummy",
+    "systemroot": "verify-kit-dummy",
+    "VERIFY_KIT_JP": "日本語の値"
+  }
+}

@@ -12,6 +12,14 @@
 #   実体基準（対象が非 git = publish 時に取り出した payload の実体）:
 #     - 実在               → FAIL（実際に配布される中身なので追跡状態は無関係）
 #
+# 名前の照合（2-c 成果物クラス・2-c' */evals/results/・3. の E 区分の env キー）は二段階で、照合と判定を分けている:
+#   照合: まず完全一致（大文字小文字を区別）、一致しなければ ASCII（A〜Z）だけを小文字へ畳んだ同士で比べ、
+#         「完全一致 / 大文字小文字だけ違う / 不一致」に分類する（下の name_class）。
+#   判定: 完全一致は上の基準のまま。大文字小文字だけ違うものは、成果物（2-c / 2-c'）では実体基準（payload）で FAIL、
+#         追跡基準（git）で WARN、env キー（3.）では層によらず WARN。区別する OS では正当な別物でありうるが、区別しない
+#         Windows では .gitignore をすり抜けた成果物でありうる。publish-share は FAIL でしか止まらない（WARN は確認
+#         プロンプトを経て公開まで進む）ため、配布する実体では止め、開発中の作業ツリーでは人の確認に回す。対応は各節の判定表。
+#
 # 使い方:  ./check-assets.sh [--payload] <Share-path>
 #   --payload  実体基準を強制する（publish-share から payload を検査する時に使う）
 # 終了コード: FAIL が1件以上で 1、なければ 0（CI 利用可）。
@@ -95,27 +103,191 @@ check_personal ".claude/option-settings.ps1" ".claude/option-settings.ps1"
 #          gitignore 済みで実在するだけなら WARN（payload には乗らないため）。
 #          ここを実体基準にすると、work/ を持つ通常の開発マシンで常時 FAIL し、
 #          「いつもの誤検知」として無視される habit を生む（ゲートの信号価値が死ぬ）。
+#      名前は二段階で照合し（下の「名前の照合」）、大文字小文字だけが違うものは payload で FAIL、git で WARN にする（判定表）。
 #
+# ---- 名前の照合（チェックロジック）。分類を返すだけで、判定（PASS / WARN / FAIL と文言）は各節の判定表に置く ----
+#   1) 完全一致（大文字小文字を区別）  2) 一致しなければ ASCII（A〜Z）だけを小文字へ畳んだ同士で比べる
+#   → exact（完全一致）/ case（大文字小文字だけが違う）/ none（不一致）
+# ⚠ 存在検査（[[ -e .claude/reports ]]）で照合しない。Windows ではそれ自体が大文字小文字を無視して真になり、
+#    区別する OS とで判定が割れる。エントリ名・追跡パスを列挙して文字列で比べる（publish-plugin の
+#    大文字小文字違い検査と同じ方式）。
+# ⚠ 畳むのは A〜Z だけ（LC_ALL=C の tr）。${x,,} や PS の ToLowerInvariant() は非 ASCII も畳む（K と KELVIN SIGN 等）
+#    ため両版の結果が割れる。PS 版の Fold-Ascii と同じ。1 件ずつ $(...) で畳むと Windows では fork が遅いので、
+#    候補は NUL 区切りの一覧のまま 1 回で畳み、分類は NC で返す（サブシェルを立てない）。
+fold_z(){ LC_ALL=C tr 'A-Z' 'a-z'; }
+name_class(){ # $1=実際の名前 $2=その畳み $3=期待する名前 $4=その畳み → NC=exact / case / none
+  if [[ "$1" == "$3" ]]; then NC=exact
+  elif [[ "$2" == "$4" ]]; then NC=case
+  else NC=none; fi
+}
+# コマンド "$@" が出す NUL 区切りの一覧を CAND へ、その畳みを CANDF へ読む（添字で対応する）
+load_cands(){
+  local x
+  CAND=(); CANDF=()
+  while IFS= read -r -d '' x; do CAND+=("$x"); done < <("$@")
+  [[ ${#CAND[@]} -gt 0 ]] || return 0
+  while IFS= read -r -d '' x; do CANDF+=("$x"); done < <(printf '%s\0' "${CAND[@]}" | fold_z)
+}
+# CAND の各要素を期待する名前 $1（畳み $2）と照合し、exact の要素を M_EXACT へ、case の要素を M_CASE へ入れる
+match_cands(){
+  local i
+  M_EXACT=(); M_CASE=()
+  for (( i = 0; i < ${#CAND[@]}; i++ )); do
+    name_class "${CAND[i]}" "${CANDF[i]}" "$1" "$2"
+    case "$NC" in exact) M_EXACT+=("${CAND[i]}");; case) M_CASE+=("${CAND[i]}");; esac
+  done
+}
+tracked_claude(){ git -C "$SHARE" ls-files -z -- .claude 2>/dev/null; }
+# 2-c の候補（.claude/<直下の名前>）。追跡: 追跡パスの最初の要素（重複なし・git の順）／実在: 直下のエントリ（バイト順）
+tracked_tops(){
+  local p t seen=$'\n'
+  while IFS= read -r -d '' p; do
+    t="${p#.claude/}"; t=".claude/${t%%/*}"
+    case "$seen" in *$'\n'"$t"$'\n'*) continue;; esac
+    seen+="$t"$'\n'; printf '%s\0' "$t"
+  done < <(tracked_claude)
+}
+disk_tops(){
+  local e
+  [[ -d "$SHARE/.claude" ]] || return 0
+  while IFS= read -r -d '' e; do printf '.claude/%s\0' "${e##*/}"; done \
+    < <(find "$SHARE/.claude" -mindepth 1 -maxdepth 1 -print0 2>/dev/null) | LC_ALL=C sort -z
+}
+_LAYER=payload; [[ $IS_GIT -eq 1 ]] && _LAYER=git
+
+# 大文字小文字だけが違うパスの判定（2-c / 2-c' の判定表が共有する文言）。$1=層:出どころ $2=実際のパス $3=クラス
+#   payload は FAIL（publish-share は FAIL でしか止まらないので、WARN では公開まで進む）、git は WARN（開発中の確認用）。
+verdict_case(){
+  local same="（$3 と同一視される OS がある。"
+  case "$1" in
+    git:tracked) warn "大文字小文字だけが違う成果物クラスらしきパスが Git 追跡されている（payload に乗る）: $2${same}意図したものか確認すること）";;
+    git:disk)    warn "大文字小文字だけが違う成果物クラスらしきパスが実在する（未追跡。配布はされない）: $2${same}意図したものか確認すること）";;
+    *)           bad  "大文字小文字だけが違う成果物クラスらしきパスが配布ペイロードに含まれている: $2${same}公開前に名前を直すか除外すること）";;
+  esac
+}
+# 2-c の判定表（照合の分類 → 判定）。1 クラスにつき判定は 1 つで、上の行ほど優先する（呼び出し側が選ぶ）:
+#   層:出どころ:分類          判定
+#   git:tracked:exact         FAIL  Git 追跡されている（payload に乗る）
+#   git:tracked:case          WARN  大文字小文字だけが違うパスが Git 追跡されている（パスごとに 1 行）
+#   git:disk:exact            WARN  実在するが未追跡（配布はされない）
+#   git:disk:case             WARN  大文字小文字だけが違うパスが実在する（未追跡）
+#   payload:disk:exact        FAIL  配布ペイロードに含まれている
+#   payload:disk:case         FAIL  大文字小文字だけが違うパスが配布ペイロードに含まれている（パスごとに 1 行）
+#   none                      PASS  なし
+verdict_artifact(){ # $1=層:出どころ:分類 $2=クラス 残り=case で一致した実際のパス
+  local key="$1" cls="$2" p; shift 2
+  case "$key" in
+    git:tracked:exact)  bad "$cls が Git 追跡されている（payload に乗り配布される）。git rm --cached して .gitignore へ";;
+    git:disk:exact)     warn "$cls が実在するが未追跡（配布はされない。掃除推奨）";;
+    payload:disk:exact) bad "$cls が配布ペイロードに含まれている（内部成果物は配布しない）。grooming 済みの ref を publish すること";;
+    *:case)             for p in "$@"; do verdict_case "${key%:case}" "$p" "$cls"; done;;
+    *)                  pass "$cls なし";;
+  esac
+}
+
 # 成果物クラスの正本リストは本配列。root/.claude 双方の .gitignore はこれに追随させること。
-for _artifact in ".claude/reports" ".claude/work" ".claude/workspace" ".claude/plans" \
-                 ".claude/agent-memory-local" ".claude/work_instructions.txt" \
-                 ".claude/.bat-shadow"; do
+# 位置が固定でないクラス（evals/results/）は直後の 2-c' が正本。
+#   .claude/worktrees            … --worktree / EnterWorktree が作る git worktree（公式も .gitignore を推奨）
+#   .claude/scheduled_tasks.json … 永続化したスケジュールタスク（作成したフォルダでしか動かない個人状態）
+_ARTIFACTS=(".claude/reports" ".claude/work" ".claude/workspace" ".claude/plans"
+            ".claude/agent-memory-local" ".claude/work_instructions.txt"
+            ".claude/.bat-shadow" ".claude/worktrees" ".claude/scheduled_tasks.json")
+load_cands printf '%s\0' "${_ARTIFACTS[@]}"; _ART=("${CAND[@]}"); _ARTF=("${CANDF[@]}")
+_TOP=(); _TOPF=()
+if [[ $IS_GIT -eq 1 ]]; then load_cands tracked_tops; _TOP=(${CAND[@]+"${CAND[@]}"}); _TOPF=(${CANDF[@]+"${CANDF[@]}"}); fi
+load_cands disk_tops; _DISK=(${CAND[@]+"${CAND[@]}"}); _DISKF=(${CANDF[@]+"${CANDF[@]}"})
+for (( _i = 0; _i < ${#_ART[@]}; _i++ )); do
+  _key=none; _hits=()
   if [[ $IS_GIT -eq 1 ]]; then
-    if [[ -n "$(git -C "$SHARE" ls-files -- "$_artifact" 2>/dev/null)" ]]; then
-      bad "$_artifact が Git 追跡されている（payload に乗り配布される）。git rm --cached して .gitignore へ"
-    elif [[ -e "$SHARE/$_artifact" ]]; then
-      warn "$_artifact が実在するが未追跡（配布はされない。掃除推奨）"
-    else
-      pass "$_artifact なし"
-    fi
-  else
-    if [[ -e "$SHARE/$_artifact" ]]; then
-      bad "$_artifact が配布ペイロードに含まれている（内部成果物は配布しない）。grooming 済みの ref を publish すること"
-    else
-      pass "$_artifact なし"
-    fi
+    CAND=(${_TOP[@]+"${_TOP[@]}"}); CANDF=(${_TOPF[@]+"${_TOPF[@]}"})
+    match_cands "${_ART[_i]}" "${_ARTF[_i]}"
+    if [[ ${#M_EXACT[@]} -gt 0 ]]; then _key=git:tracked:exact
+    elif [[ ${#M_CASE[@]} -gt 0 ]]; then _key=git:tracked:case; _hits=("${M_CASE[@]}"); fi
   fi
+  if [[ $_key == none ]]; then
+    CAND=(${_DISK[@]+"${_DISK[@]}"}); CANDF=(${_DISKF[@]+"${_DISKF[@]}"})
+    match_cands "${_ART[_i]}" "${_ARTF[_i]}"
+    if [[ ${#M_EXACT[@]} -gt 0 ]]; then _key=$_LAYER:disk:exact
+    elif [[ ${#M_CASE[@]} -gt 0 ]]; then _key=$_LAYER:disk:case; _hits=("${M_CASE[@]}"); fi
+  fi
+  verdict_artifact "$_key" "${_ART[_i]}" ${_hits[@]+"${_hits[@]}"}
 done
+
+# 2-c'. 置き場所が固定でない成果物クラス: claude plugin eval の結果（評価した plugin / skill の evals/results/。v2.1.269〜）
+#       追跡パス（git 層）と .claude 配下のディレクトリ（両層）を列挙し、evals/results の 2 要素を二段階で照合する。
+#       追跡パスはファイル名を除いたディレクトリ部分のどこか（旧 pathspec ':(glob).claude/**/evals/results/**' と同じ範囲）、
+#       ディレクトリは末尾の 2 要素（旧 find -path '*/evals/results' と同じ）を見る。
+#       ⚠ .claude/worktrees（丸ごとの git チェックアウト。2-c で別途判定する）には降りない（名前は完全一致で除外）。
+#          降りると遅いうえ、worktree 内の evals/results を payload の成果物と誤って数える。
+_EVR="evals/results"; _EVR_CLS='*/evals/results/'
+# $1=パス $2=その畳み $3=file（ディレクトリ部分のどこか）/ dir（末尾の 2 要素）→ NC=分類、NC_DIR=一致した …/results まで
+evr_class(){
+  local IFS=/ n i lo best=none dir=""
+  local -a p f
+  read -r -a p <<< "$1"; read -r -a f <<< "$2"
+  n=${#p[@]}
+  if [[ "$3" == dir ]]; then lo=$((n - 2)); else lo=1; n=$((n - 1)); fi
+  [[ $lo -lt 1 ]] && lo=1                        # p[0] は .claude
+  for (( i = lo; i + 1 < n; i++ )); do
+    name_class "${p[i]}/${p[i+1]}" "${f[i]}/${f[i+1]}" "$_EVR" "$_EVR"
+    if [[ $NC == exact ]]; then best=exact; dir="${p[*]:0:i+2}"; break; fi
+    if [[ $NC == case && $best == none ]]; then best=case; dir="${p[*]:0:i+2}"; fi
+  done
+  NC=$best; NC_DIR=$dir
+}
+# -iname は候補を絞るだけ（作業ツリーの .claude/work 等は数千ディレクトリになり、全件を照合すると遅い）。
+# ASCII の大文字小文字を畳む一致は必ず含むので取りこぼさず、分類はこのあと evr_class が行う（PS 版の -like と同じ役割）。
+evr_dirs(){
+  [[ -d "$SHARE/.claude" ]] || return 0
+  ( cd "$SHARE" && find .claude -path .claude/worktrees -prune -o -type d -iname results -print0 2>/dev/null ) | LC_ALL=C sort -z
+}
+# 2-c' の判定表（照合の分類 → 判定）。2-c と同じ優先順位で判定は 1 つ。列挙は 5 件まで:
+#   git:tracked:exact    FAIL  Git 追跡されている（追跡ファイルを列挙）
+#   git:tracked:case     WARN  大文字小文字だけが違うパスが Git 追跡されている（…/results のディレクトリごとに 1 行）
+#   git:disk:exact       WARN  実在するが未追跡
+#   git:disk:case        WARN  大文字小文字だけが違うパスが実在する（未追跡）
+#   payload:disk:exact   FAIL  配布ペイロードに含まれている（ディレクトリを列挙）
+#   payload:disk:case    FAIL  大文字小文字だけが違うパスが配布ペイロードに含まれている（…/results のディレクトリごとに 1 行）
+#   none                 PASS  なし
+verdict_evr(){ # $1=層:出どころ:分類 残り=列挙するパス
+  local key="$1" p; shift
+  case "$key" in
+    git:tracked:exact)
+      bad "plugin eval の結果（*/evals/results/）が Git 追跡されている（payload に乗り配布される）。git rm -r --cached して .gitignore へ:"
+      for p in "$@"; do echo "         $p"; done;;
+    git:disk:exact) warn "plugin eval の結果（*/evals/results/）が実在するが未追跡（配布はされない。掃除推奨）";;
+    payload:disk:exact)
+      bad "plugin eval の結果（*/evals/results/）が配布ペイロードに含まれている:"
+      for p in "$@"; do echo "         $p"; done;;
+    *:case) for p in "$@"; do verdict_case "${key%:case}" "$p" "$_EVR_CLS"; done;;
+    *) pass "plugin eval の結果（*/evals/results/）なし";;
+  esac
+}
+_key=none; _hits=()
+if [[ $IS_GIT -eq 1 ]]; then
+  load_cands tracked_claude
+  _ex=(); _cs=()
+  for (( _i = 0; _i < ${#CAND[@]}; _i++ )); do
+    evr_class "${CAND[_i]}" "${CANDF[_i]}" file
+    case "$NC" in
+      exact) _ex+=("${CAND[_i]}");;
+      case) [[ ${#_cs[@]} -gt 0 && "${_cs[${#_cs[@]}-1]}" == "$NC_DIR" ]] || _cs+=("$NC_DIR");;   # git の順なので同じディレクトリは隣接する
+    esac
+  done
+  if [[ ${#_ex[@]} -gt 0 ]]; then _key=git:tracked:exact; _hits=("${_ex[@]:0:5}")
+  elif [[ ${#_cs[@]} -gt 0 ]]; then _key=git:tracked:case; _hits=("${_cs[@]:0:5}"); fi
+fi
+if [[ $_key == none ]]; then
+  load_cands evr_dirs
+  _ex=(); _cs=()
+  for (( _i = 0; _i < ${#CAND[@]}; _i++ )); do
+    evr_class "${CAND[_i]}" "${CANDF[_i]}" dir
+    case "$NC" in exact) _ex+=("${CAND[_i]}");; case) _cs+=("${CAND[_i]}");; esac
+  done
+  if [[ ${#_ex[@]} -gt 0 ]]; then _key=$_LAYER:disk:exact; _hits=("${_ex[@]:0:5}")
+  elif [[ ${#_cs[@]} -gt 0 ]]; then _key=$_LAYER:disk:case; _hits=("${_cs[@]:0:5}"); fi
+fi
+verdict_evr "$_key" ${_hits[@]+"${_hits[@]}"}
 
 # 2-d. 配布先の統制ファイル（payload に無いと配布先から「消える」クラス）
 #      publish-share のミラーは payload に無いものを削除するため、これらを欠いた ref を
@@ -153,10 +325,17 @@ payload_files() {
 #      （実例: skill が `C:\workspace\...\claude-plugins-official\plugins\` を参照していた）
 #      説明用の例示を弾ききれないので WARN 止まり（人間が判断する）。
 _abs_re='(^|[^A-Za-z])[A-Za-z]:\\[A-Za-z]|(^|[^A-Za-z])/home/[a-z][a-z0-9_-]*/|/Users/[a-z][a-z0-9_-]*/'
+# 製品が規定する公式パス（managed-settings.json の配置先、Git for Windows の既定）は環境固有ではないので除く。
+# 行から公式パスの部分文字列だけを取り除き、残りを絶対パスのパターンで判定する（行ごと除外すると、同じ行にある
+# 開発者固有パスを見逃す。ファイル単位ならなおさら）。PS 版と同じ表・同じ判定（大文字小文字を区別する）にすること。
+# ⚠ grep -q で受けない。pipefail の下では後段の -q が先に終わると前段の grep が SIGPIPE（141）で落ち、
+#    パイプライン全体が偽になってヒットが失われる（実測: 該当行が 20000 行のファイルで毎回見逃した）。件数で受ける。
+_abs_allow='[A-Za-z]:\\Program Files( \(x86\))?\\(ClaudeCode|Git)\\'
 _abs_hits=""
 while IFS= read -r -d '' _f; do
   case "$_f" in */skills/win-file-encoding/*) continue ;; esac   # 変換 skill は CP932 パスが題材
-  if grep -qIE "$_abs_re" "$SHARE/$_f" 2>/dev/null; then _abs_hits+="${_f}"$'\n'; fi
+  _n="$(grep -IE "$_abs_re" "$SHARE/$_f" 2>/dev/null | sed -E "s#${_abs_allow}##g" | grep -cE "$_abs_re")"
+  if [[ "${_n:-0}" -gt 0 ]]; then _abs_hits+="${_f}"$'\n'; fi
 done < <(payload_files)
 if [[ -n "$_abs_hits" ]]; then
   warn "配布物に環境固有の絶対パスらしき記述がある（公開前に確認すること）:"
@@ -180,32 +359,111 @@ while IFS= read -r -d '' _f; do
 done < <(payload_files)
 [[ $_ps1_nobom -eq 0 ]] && pass "配布される .ps1 は全て BOM 付き"
 
-# 3. settings.json の JSON 構文 ＋ project/local で無視される security キーの検出
+# 3. settings.json の JSON 構文 ＋ project（.claude/settings.json）では効かないキーの検出
+#    根拠: settings-reference の Scope 欄。`Any file` 以外のキーは共有 project ファイルからは適用されない。
+#    「直し方」が違うので区分を分けて報告する:
+#      U = user / local / managed / --settings でのみ有効。方法 A（.claude/ を project として配置）では
+#          無視されるが、方法 B と clean-test-env（--settings で結合）では有効になる＝配布方式で挙動が割れる。
+#      M = managed 専用。project でも --settings でも無視される（組織の managed settings で配る）。
+#      E = env ブロックのうち project / local からは設定できない変数（テレメトリの off 値だけは例外的に効く）。
+#          キー名は 2-c と同じ二段階で照合する（_ENV_RE に完全一致 → A〜Z だけ畳んだ同士で一致）。判定は、
+#          完全一致 → 従来の WARN、大文字小文字だけ違う（systemroot 等）→ 「Windows でのみ同一視される」旨の別の WARN。
+#          環境変数名の大文字小文字を区別しないのは Windows だけなので、区別する OS では別の変数でありうる。
+#    ⚠ 判定はキーパス（a.b.c）で行い、PS 版と同じ表・同じ意味に揃えること（raw grep は
+#       sandbox.filesystem.disabled の "disabled" のような汎用名を区別できない）。
+#    ⚠ 表を更新したら PS 版の $uKeys / $mKeys / $envRe も同時に更新する。
+_U_KEYS=(skipDangerousModePermissionPrompt useAutoModeDuringPlan autoMode skipAutoPermissionPrompt
+         processWrapper pluginConfigs syncClaudeAiSkills syncClaudeAiPlugins
+         sandbox.allowAppleEvents sandbox.ripgrep sandbox.filesystem.disabled
+         sandbox.network.strictAllowlist sandbox.network.tlsTerminate
+         sandbox.credentials.allowPlaintextInject sandbox.credentials.awsPairs sandbox.credentials.sigv4)
+# prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く
+_M_KEYS=(prependPlugins appendPlugins
+         allowManagedPermissionRulesOnly allowManagedHooksOnly allowManagedMcpServersOnly managedMcpServers
+         strictKnownMarketplaces allowedMarketplaces blockedMarketplaces strictPluginOnlyCustomization
+         disableSideloadFlags disableCommandPluginSources claudeMd policyHelper allowedProviders
+         deniedModels availableModelsMatch requiredMinimumVersion requiredMaximumVersion sshHostAllowlist
+         channelsEnabled allowedChannelPlugins
+         sandbox.bwrapPath sandbox.socatPath sandbox.filesystem.allowManagedReadPathsOnly
+         sandbox.network.allowManagedDomainsOnly)
+# ⚠ 二段階目は _ENV_RE 自体も A〜Z を畳んで照合する。畳めるのは \D \S \W \B 等の「大文字で意味が変わるエスケープ」を
+#    含まないから。追加するときもリテラルと . * ( ) | ? だけで書くこと（PS 版の $envRe も同じ）。
+_ENV_RE='^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_TMPDIR|HOME|TMPDIR|TMP|TEMP|XDG_.*|SystemRoot|ComSpec|ProgramData|LOCALAPPDATA|PATHEXT|PSModulePath|ProgramFiles.*|CommonProgramFiles.*|ALLUSERSPROFILE|SystemDrive|CLAUDE_CODE_ENABLE_TELEMETRY|CLAUDE_CODE_ENHANCED_TELEMETRY_BETA|ENABLE_ENHANCED_TELEMETRY_BETA|OTEL_(LOGS|METRICS|TRACES)_EXPORTER|OTEL_LOG_.*|OTEL_EXPORTER_OTLP_(.*_)?(ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)|OTEL_EXPORTER_PROMETHEUS_(HOST|PORT)|ENABLE_BETA_TRACING_DETAILED|BETA_TRACING_ENDPOINT|CLAUDE_CODE_PROCESS_WRAPPER|CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)|CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR|CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS|CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS|CLAUDE_CODE_DISABLE_(ATTACHMENTS|FILE_MENTIONS)|CLAUDE_CODE_PROJECT_DIR_NAME|CLAUDE_CODE_RESTRICTED)$'
 SETTINGS="$SHARE/.claude/settings.json"
-if [[ -f "$SETTINGS" ]]; then
+# ⚠ 先頭の UTF-8 BOM は専用メッセージで FAIL にする（JSON 構文・キーの検査には進まない）。Claude Code が BOM 付きの
+#    settings.json を読める保証が無い（RFC 8259 §8.1 は BOM を付けないよう求め、無視するかはパーサ次第）。かつては
+#    bash 版（python の utf-8）が「不正な JSON」で FAIL、PS 版（Get-Content -Encoding UTF8 が BOM を剥がす）が PASS と
+#    判定が割れていた。両版とも fail-closed にそろえる。
+_settings_bom=""
+[[ -f "$SETTINGS" ]] && _settings_bom="$(head -c 3 "$SETTINGS" | od -An -tx1 | tr -d ' \n')"
+if [[ "$_settings_bom" == "efbbbf" ]]; then
+  bad "settings.json の先頭に UTF-8 BOM がある（Claude Code が BOM 付きを読める保証が無い）。BOM なしの UTF-8 で保存し直すこと（JSON 構文とキーの検査は BOM を外してから行う）"
+elif [[ -f "$SETTINGS" ]]; then
   # python3 が無い環境では python を試す。どちらも無ければ「検査していない」ことを明示する
   # （黙ってスキップすると、検査した結果 PASS したのか未検査なのか区別できない）。
   PY=""
   command -v python3 >/dev/null 2>&1 && PY="python3"
   [[ -z "$PY" ]] && command -v python >/dev/null 2>&1 && PY="python"
   if [[ -n "$PY" ]]; then
-    if "$PY" -c "import json,sys; json.load(open(sys.argv[1]))" "$SETTINGS" >/dev/null 2>&1; then
+    # ⚠ encoding を明示する。省略すると日本語 Windows では cp932 で読まれ、日本語を含む正しい
+    #    UTF-8 の JSON を「不正な JSON」と誤判定する（実測）。
+    if "$PY" -c "import json,sys; json.load(open(sys.argv[1], encoding='utf-8'))" "$SETTINGS" >/dev/null 2>&1; then
       pass "settings.json は valid JSON"
+      # ⚠ python の失敗を PASS に化けさせない（出力が空でも成功扱いにすると fail-open になる。実測）
+      if _res="$("$PY" - "$SETTINGS" "${_U_KEYS[*]}" "${_M_KEYS[*]}" "$_ENV_RE" 2>/dev/null <<'PYEOF'
+import json, re, sys
+d = json.load(open(sys.argv[1], encoding='utf-8'))
+if not isinstance(d, dict):
+    d = {}
+def has(path):
+    cur = d
+    for k in path.split('.'):
+        if not isinstance(cur, dict) or k not in cur:
+            return False
+        cur = cur[k]
+    return True
+u = [k for k in sys.argv[2].split() if has(k)]
+perm = d.get('permissions') if isinstance(d.get('permissions'), dict) else {}
+for src in (perm, d):
+    if src.get('defaultMode') in ('auto', 'bypassPermissions'):
+        u.insert(0, 'defaultMode:' + src['defaultMode'])
+        break
+m = [k for k in sys.argv[3].split() if has(k)]
+env = d.get('env') if isinstance(d.get('env'), dict) else {}
+# E 区分の照合（二段階。2-c の name_class と同じ規則）。re.I や str.lower() は非 ASCII も畳むので使わず、A〜Z だけを畳む
+FOLD = {c: c + 32 for c in range(0x41, 0x5B)}
+pat = sys.argv[4]
+patf = pat.translate(FOLD)
+def env_class(k):
+    if re.match(pat, k):
+        return 'exact'
+    if re.match(patf, k.translate(FOLD)):
+        return 'case'
+    return 'none'
+cls = {k: env_class(k) for k in env}
+e = [k for k in env if cls[k] == 'exact']
+ec = [k for k in env if cls[k] == 'case']
+print(' '.join(u)); print(' '.join(m)); print(' '.join(e)); print(' '.join(ec))
+PYEOF
+)"; then
+        { IFS= read -r _u; IFS= read -r _m; IFS= read -r _e; IFS= read -r _ec; } <<< "$_res"
+        # ⚠ Windows の python はパイプへ CRLF で書くため、行末の CR を落とす（残すと WARN 文の途中に CR が混ざり、
+        #    空判定（-n）も「CR だけの行」を非空と誤る）。
+        _u="${_u%$'\r'}"; _m="${_m%$'\r'}"; _e="${_e%$'\r'}"; _ec="${_ec%$'\r'}"
+        # 判定（E 区分は 完全一致 → 従来の WARN／大文字小文字だけ違う → 別文言の WARN）
+        [[ -n "$_u" ]] && warn "方法 A（.claude/ を project として配置）では無視されるキー: $_u（方法 B / clean-test-env の --settings 結合では有効になり、配布方式で挙動が割れる。各自に効かせるなら ~/.claude/settings.json へ）"
+        [[ -n "$_m" ]] && warn "project でも --settings でも無視されるキー: $_m（managed 専用。prependPlugins / appendPlugins だけは条件付きで user も可。組織の managed settings で配る）"
+        [[ -n "$_e" ]] && warn "env で project / local からは設定できない変数: $_e（シェル・~/.claude/settings.json・managed で設定する。テレメトリの off 値 none / 0 だけは例外。CLAUDE_CODE_PROJECT_DIR_NAME / CLAUDE_CODE_RESTRICTED は起動環境からしか読まれない）"
+        [[ -n "$_ec" ]] && warn "env で project / local からは設定できない変数と大文字小文字だけが違う変数: $_ec（Windows でのみ同一視される。環境変数名の大文字小文字を区別しないのは Windows だけで、Windows では設定できない変数と同じ扱いになりうる。意図したものか確認すること）"
+        [[ -z "$_u$_m$_e$_ec" ]] && pass "project で効かないキーなし（settings.json）"
+      else
+        warn "settings.json のキー検査に失敗した（未検査）"
+      fi
     else
-      bad "settings.json が不正な JSON（/doctor でも検出される）"
+      bad "settings.json が不正な JSON（claude doctor / /doctor でも検出される）"
     fi
   else
-    warn "python が見つからず settings.json の JSON 構文を検査できなかった（未検査）"
-  fi
-  hits=""
-  grep -Eq '"defaultMode"[[:space:]]*:[[:space:]]*"auto"'  "$SETTINGS" && hits="$hits defaultMode:auto"
-  grep -Eq '"skipDangerousModePermissionPrompt"'           "$SETTINGS" && hits="$hits skipDangerousModePermissionPrompt"
-  grep -Eq '"autoMode"'                                    "$SETTINGS" && hits="$hits autoMode"
-  grep -Eq '"useAutoModeDuringPlan"'                       "$SETTINGS" && hits="$hits useAutoModeDuringPlan"
-  if [[ -n "$hits" ]]; then
-    warn "project/local では無視される可能性のあるキー:$hits（効かせるなら ~/.claude/settings.json へ）"
-  else
-    pass "project/local 無視キーなし（settings.json）"
+    warn "python が見つからず settings.json の JSON 構文とキーを検査できなかった（未検査）"
   fi
 else
   warn "settings.json が無い（settings を共有しない構成なら問題なし）"

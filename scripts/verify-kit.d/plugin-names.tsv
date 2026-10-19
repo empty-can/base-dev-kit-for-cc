@@ -1,0 +1,33 @@
+# publish-plugin --name の検証ケース（bash の期待<TAB>pwsh の期待<TAB>名前）。
+#   accept = 名前検証を通過（後段の副作用の無い前提条件「marketplace が無い」で exit 2）
+#   reject = 名前検証で拒否（exit 2）/ argerr = 引数処理で拒否（exit 1。bash は --name の ${2:?}、pwsh は -Name '' の明示検査）
+# 空の名前は名前検証に到達しない: 明示的に空で渡したら両版とも引数エラーで止める
+# （pwsh で -Name を省略したときだけ、既定名＝-Plugin のベース名を使う）。
+# 末尾が . の名前は拒否する（Windows はパス末尾のドットを落とし、plugins\foo. が既存の plugins\foo を指すため）。
+# Windows の予約デバイス名（CON / PRN / AUX / NUL / COM0〜9 / LPT0〜9。大文字小文字を区別せず、拡張子付きも）は拒否する。
+# 予約名かどうかは最初の . より前で決まる（foo.con・COM10・console は予約名ではない）。
+accept	accept	my-plugin
+accept	accept	a.b_c-1
+argerr	argerr
+reject	reject	.
+reject	reject	..
+reject	reject	a.
+reject	reject	foo..
+reject	reject	../x
+reject	reject	a/b
+reject	reject	a\b
+reject	reject	-x
+reject	reject	a b
+reject	reject	@
+reject	reject	プラグイン
+reject	reject	CON
+reject	reject	nul
+reject	reject	Aux
+reject	reject	prn.md
+reject	reject	com1.txt
+reject	reject	COM0
+reject	reject	lpt9
+reject	reject	nul.tar.gz
+accept	accept	COM10
+accept	accept	console
+accept	accept	foo.con

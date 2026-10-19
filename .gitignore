@@ -25,6 +25,13 @@ CLAUDE.local.md
 # Claude Code: .bat の UTF-8 作業コピー（hooks/bat_cp932_guard.py が生成する再生成可能な派生物）
 .claude/.bat-shadow/
 
+# Claude Code: --worktree / EnterWorktree が作る git worktree（チェックアウト一式。公式も除外を推奨）
+.claude/worktrees/
+# Claude Code: 永続化したスケジュールタスク（作成したフォルダでしか動かない個人状態）
+.claude/scheduled_tasks.json
+# claude plugin eval の結果（評価した plugin / skill の evals/results/ に毎回書かれる。公式も除外を推奨）
+**/evals/results/
+
 # 環境変数・機密情報
 .env
 .env.*

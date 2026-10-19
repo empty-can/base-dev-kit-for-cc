@@ -1,0 +1,40 @@
+# ランチャー引数列のケース（区切りは TAB）。
+#   case<TAB>名前<TAB>opts|none … opts は launcher-opts.tsv から option-settings を作る / none は作らない
+#   in<TAB>引数  … ランチャーへの起動時引数（1 行 1 引数）
+#   out<TAB>引数 … claude（スタブ）に届くべき引数列（1 行 1 引数）
+case	prompt-only	opts
+in	verify-kit prompt
+out	--add-dir
+out	./verify kit/share
+out	--debug=mcp,startup
+out	--model
+out	opus
+out	--tools
+out	Read
+out	--
+out	verify-kit prompt
+case	flag-first	opts
+in	--model
+in	sonnet
+in	verify-kit-prompt
+out	--add-dir
+out	./verify kit/share
+out	--debug=mcp,startup
+out	--model
+out	opus
+out	--tools
+out	Read
+out	--model
+out	sonnet
+out	verify-kit-prompt
+case	no-args	opts
+out	--add-dir
+out	./verify kit/share
+out	--debug=mcp,startup
+out	--model
+out	opus
+out	--tools
+out	Read
+case	prompt-no-opts	none
+in	verify-kit prompt
+out	verify-kit prompt

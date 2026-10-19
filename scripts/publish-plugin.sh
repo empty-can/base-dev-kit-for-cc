@@ -9,9 +9,13 @@
 #     --marketplace  marketplace リポジトリ（<C-MKT>）クローンのパス（必須）
 #     --ref          取り出し元 ref（必須）
 #     --plugin       publish するプラグインの repo 相対ディレクトリ（既定: plugin）
-#     --name         marketplace 内の plugin 名（既定: --plugin のベース名）
+#     --name         marketplace 内の plugin 名（既定: --plugin のベース名）。英数字と . _ - のみ・先頭は英数字・
+#                    末尾は . 以外・Windows の予約デバイス名（CON / NUL / COM1 等。拡張子付きも）以外・128 文字以内。
+#                    marketplace の plugins/ に大文字小文字だけが違う既存エントリがあれば中止する。
+#                    plugin.json の name と一致しなければ中止する（name を読めない場合も中止）
 #
 # 前提: `claude` CLI が PATH 上にあること（plugin validate ゲートに使用）。
+#       python 3（python3 / python の順に探す）が PATH 上にあること（plugin.json の name の照合に使用。無ければ中止）。
 # 終了コード: ゲート失敗・エラーで非0。
 # 注記（ドラフト）: プラグイン組成フェーズ未了のため既定 --plugin=plugin は仮。marketplace.json の
 #   エントリ整備は本スクリプト範囲外（コピー後にリマインドを表示）。
@@ -30,7 +34,9 @@ while [ $# -gt 0 ]; do
     --ref)         REF="${2:?--ref に値が必要}"; shift 2;;
     --plugin)      PLUGIN_DIR="${2:?--plugin に値が必要}"; shift 2;;
     --marketplace) MARKETPLACE="${2:?--marketplace に値が必要}"; shift 2;;
-    --name)        NAME="${2:?--name に値が必要}"; shift 2;;
+    --name)
+      [ -n "${2:-}" ] || { echo "‼ --name に値が必要（空の名前は指定できない。既定名を使うなら --name を省略する）" >&2; exit 1; }
+      NAME="$2"; shift 2;;
     *) echo "‼ 不明な引数: $1（使い方: $0 --marketplace <path> --ref <ref> [--plugin <dir>] [--name <name>]）" >&2; exit 2;;
   esac
 done
@@ -44,14 +50,28 @@ done
   exit 2; }
 [ -n "$NAME" ] || NAME="$(basename "$PLUGIN_DIR")"
 
+# plugin.json の name を照合するための python（無ければ 2-a で中止する。照合しないまま先へ進めない）
+PY=""; command -v python3 >/dev/null 2>&1 && PY="python3"
+[ -z "$PY" ] && command -v python >/dev/null 2>&1 && PY="python"
+
 # NAME はそのまま plugins/<NAME> というパスに連結される。検証しないと `..` や `.` や
 # スラッシュ入りの値で DEST が marketplace のルートや plugins/ 自体を指し、後段の
 # 「.git 以外を全削除」がそこへ走る（実測: --name .. で全 plugin が消えた状態が push された）。
 # 過去の CR-B（submodule を配布先に指定できて親リポを壊す）と同型の入力検証欠如。
-case "$NAME" in
-  ""|"."|".."|*[/\\]*)
-    echo "‼ plugin 名として不正: '$NAME'（'/' '\\' '.' '..' は使えない）" >&2; exit 2;;
-esac
+# 加えて marketplace のエントリ名（install id の前半）の公式規則（英数字と . _ - のみ・先頭は英数字）に
+# 合わない名前は validate が落とし、Claude Code は install できない。この規則は '.' '..' '/' '\' も構造的に排除する。
+# ⚠ [A-Za-z] はロケールで意味が変わるため LC_ALL=C の grep で判定し、改行入りの値は先に弾く（grep は行単位）。
+# ⚠ 末尾が . の名前も拒否する。Windows はパスの末尾のドットを落とすため plugins/foo. が既存の plugins/foo を指し、
+#    後段のミラー（.git 以外を全削除）が別の plugin を消す。正規表現とは別の条件にしているのは、PS 版と同じ
+#    正規表現の文字列を保つため（verify-kit が両版の正規表現を突き合わせる）。
+# ⚠ Windows の予約デバイス名（CON / PRN / AUX / NUL / COM0〜COM9 / LPT0〜LPT9。大文字小文字を区別せず、
+#    nul.txt のように拡張子が付いた形も）も拒否する。Windows では plugins\nul がフォルダではなくデバイスを指し、
+#    ミラーとコピーが plugins/<名前> 以外に作用する。Linux / macOS で publish しても、Windows の clone では
+#    checkout できないパスになる。判定は「最初の . より前」が予約名かどうか（foo.con は予約名ではない）。
+if [[ "$NAME" == *$'\n'* ]] || [[ "$NAME" == *. ]] || ! printf '%s' "$NAME" | LC_ALL=C grep -Eqx '[A-Za-z0-9][A-Za-z0-9._-]{0,127}' \
+   || printf '%s' "$NAME" | LC_ALL=C grep -Eiqx '(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?'; then
+  echo "‼ plugin 名として不正: '$NAME'（英数字と . _ - のみ・先頭は英数字・末尾は . 以外・Windows の予約名（CON / NUL / COM1 等。拡張子付きも）以外・128 文字以内）" >&2; exit 2
+fi
 
 # 開発リポの位置はスクリプトの場所から解決する（CWD に依存させない。別リポジトリ内から
 # 実行して、そのリポのプラグインを publish してしまう事故を防ぐ）。
@@ -74,6 +94,27 @@ if [ $? -ne 0 ] || [ -n "$_mkt_prefix" ]; then
   echo "‼ marketplace はリポジトリのルートを指す必要があります: $MARKETPLACE" >&2
   echo "   （リポジトリ内のサブディレクトリを指しています: ${_mkt_prefix:-判定不能}）" >&2
   exit 2
+fi
+
+# marketplace の plugins/ に、大文字小文字だけが違う既存エントリ（--name Foo に対する plugins/foo）があれば中止する。
+# Windows（と macOS の既定）のファイルシステムは大文字小文字を区別しないため plugins/Foo が既存の plugins/foo を指し、
+# 後段のミラー（.git 以外を全削除）が別の plugin を消す（末尾の . を拒否したのと同じ故障クラス）。大文字小文字を
+# 区別する OS で publish しても、Windows / macOS の clone では 2 つのフォルダが衝突する。
+# 存在検査（[ -d plugins/Foo ]）では判定しない。それ自体が大文字小文字を無視して真になるため、エントリ名を
+# 列挙して文字列で比べる。畳むのは ASCII だけ（名前は ASCII に限定済みで、PS 版と結果を揃えるため）。
+# 完全一致のエントリ（通常の更新）は通す。破壊的な操作より前、取り出しや validate より前に判定する。
+if [ -d "$MARKETPLACE/plugins" ]; then
+  _lname="$(printf '%s' "$NAME" | LC_ALL=C tr 'A-Z' 'a-z')"
+  for _e in "$MARKETPLACE/plugins"/*; do
+    { [ -e "$_e" ] || [ -L "$_e" ]; } || continue
+    _b="${_e##*/}"
+    [ "$_b" = "$NAME" ] && continue
+    if [ "$(printf '%s' "$_b" | LC_ALL=C tr 'A-Z' 'a-z')" = "$_lname" ]; then
+      echo "‼ marketplace の plugins/ に大文字小文字だけが違う既存エントリがある: '$_b'（plugin 名 '$NAME'）。publish 中止" >&2
+      echo "   Windows / macOS では同じフォルダを指し、ミラーが別の plugin を消します。既存の名前に揃えるか、別の名前にしてください。" >&2
+      exit 2
+    fi
+  done
 fi
 
 git -C "$DEV_ROOT" rev-parse --verify "$REF^{commit}" >/dev/null 2>&1 || { echo "‼ ref が存在しない: $REF" >&2; exit 2; }
@@ -105,6 +146,46 @@ SRC="$tmp/$PLUGIN_DIR"
 [ -d "$SRC" ] && [ -n "$(ls -A "$SRC" 2>/dev/null)" ] || { echo "‼ $REF の $PLUGIN_DIR が空。中止" >&2; exit 1; }
 [ -f "$SRC/.claude-plugin/plugin.json" ] || { echo "‼ $PLUGIN_DIR/.claude-plugin/plugin.json が無い（plugin ではない?）。中止" >&2; exit 1; }
 
+# 2-a. marketplace 側の名前（--name）と plugin.json の name が一致しなければ中止する（PS 版と同じ文言・終了コード）。
+#      警告だけでは止まらない: --name を誤ると、後段のミラー（plugins/<名前> の .git 以外を全削除してコピー）が
+#      別の plugin の中身を置き換えたまま公開 push まで進む（例: statusline の資材を --name pre-compact で publish）。
+#      name を読めない（UTF-8 / JSON として不正・最上位がオブジェクトでない・name が無いか文字列でない）場合も、
+#      照合できないので中止する。python が無い場合も同じ（照合しないまま先へ進めない）。
+#      照合は python の中で文字列の完全一致として行い、結果を終了コードで返す（0=一致 / 3=不一致 / 4=読めない）。
+#      標準出力の name は表示にだけ使う。
+# ⚠ name はバイト列（UTF-8）で書き出す。テキストで書くと Windows ではパイプのコードページ（cp932 等）で符号化され、
+#    表せない文字で例外になる。CRLF への変換も起きない。
+# ⚠ encoding は utf-8-sig（先頭の BOM 1 個を読み飛ばす。PS 版も同じ）。utf-8 だと BOM 付きの plugin.json を読めない。
+[ -n "$PY" ] || {
+  echo "‼ python が無いため $PLUGIN_DIR/.claude-plugin/plugin.json の name を照合できない。中止" >&2
+  echo "   python 3（python3 / python の順に探す）を PATH に置いて再実行してください。" >&2
+  exit 1; }
+_mname="$("$PY" -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        j = json.load(f)
+except Exception:
+    sys.exit(4)
+v = j.get("name") if isinstance(j, dict) else None
+if not isinstance(v, str):
+    sys.exit(4)
+sys.stdout.buffer.write(v.encode("utf-8", "replace"))
+sys.exit(0 if v == sys.argv[2] else 3)
+' "$SRC/.claude-plugin/plugin.json" "$NAME" 2>/dev/null)"
+_rc=$?
+case "$_rc" in
+  0) ;;
+  3) echo "‼ $PLUGIN_DIR/.claude-plugin/plugin.json の name（'$_mname'）と marketplace 側の名前（'$NAME'）が違う。中止" >&2
+     echo "   このまま進むと、ミラーが marketplace の plugins/$NAME をこの plugin の中身で置き換えて公開します。" >&2
+     echo "   どちらが正しいか確かめ、marketplace 側の名前（marketplace.json のエントリ名も）と plugin.json の name を揃えてください。" >&2
+     exit 1;;
+  4) echo "‼ $PLUGIN_DIR/.claude-plugin/plugin.json の name を読めない（UTF-8 / JSON として不正・最上位がオブジェクトでない・name が無いか文字列でない）。中止" >&2
+     exit 1;;
+  *) echo "‼ python（$PY）で $PLUGIN_DIR/.claude-plugin/plugin.json の name を照合できない（python の終了コード $_rc）。中止" >&2
+     exit 1;;
+esac
+
 # 2-b. 安全弁: 展開したファイル数が ref の追跡ファイル数と一致するか（fail-closed）
 #      tar がエラーを出しても終了コードに現れないケースがあるため、件数でも裏を取る。
 _expected="$(git -C "$DEV_ROOT" ls-tree -r --name-only "$REF" -- "$PLUGIN_DIR" | wc -l)"
@@ -117,7 +198,13 @@ fi
 
 # 3. ゲート: claude plugin validate（--strict）
 command -v claude >/dev/null 2>&1 || { echo "‼ claude CLI が PATH に無い。validate できないため中止" >&2; exit 1; }
-claude plugin validate --strict "$SRC" || { echo "‼ plugin validate FAIL。publish 中止" >&2; exit 1; }
+#    終了コード: 0=合格（--strict では警告もゼロ）/ 1=不合格 / 2=validator 自体の失敗（パス不可読等）。どちらも中止。
+claude plugin validate --strict "$SRC"; _rc=$?
+if [ "$_rc" -ne 0 ]; then
+  [ "$_rc" -eq 2 ] && echo "‼ validate 自体が失敗した（パス不可読等。plugin の不合格ではない）。publish 中止" >&2 \
+                   || echo "‼ plugin validate FAIL。publish 中止" >&2
+  exit 1
+fi
 
 # 4. /security-review は対話コマンドのため手動確認
 read -r -p "→ $NAME について /security-review を実行済みなら y で続行: " ok

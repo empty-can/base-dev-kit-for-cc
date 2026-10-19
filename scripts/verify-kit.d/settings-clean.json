@@ -1,0 +1,4 @@
+{
+  "permissions": { "defaultMode": "acceptEdits", "allow": ["Bash(git status:*)"] },
+  "env": { "DISABLE_AUTO_COMPACT": "1" }
+}
