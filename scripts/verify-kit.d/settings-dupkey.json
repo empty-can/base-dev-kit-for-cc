@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "defaultMode": "plan"
+  },
+  "env": {
+    "systemroot": "verify-kit",
+    "\u0053ystemRoot": "verify-kit"
+  }
+}

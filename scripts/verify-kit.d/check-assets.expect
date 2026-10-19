@@ -3,8 +3,10 @@
 # 出力の \ は / に正規化してから照合する。各ケースの payload（verify-kit の probe が実行時に作る）:
 #   ume / clean / broken … settings-<ケース>.json。ume には abspath-mixed.md（公式パスと開発者固有パスが同じ行）・
 #                          win-file-encoding-abspath.md（skills/ 外の同名ファイル）・big-abspath.md（20000 行。
-#                          後段の grep -q が先に終わると前段が SIGPIPE で落ちる量）、clean には abspath-allowed.md
-#                          （公式パスだけ）を置く。ume の env は完全一致（CLAUDE_CONFIG_DIR / OTEL_… / ComSpec）と
+#                          後段の grep -q が先に終わると前段が SIGPIPE で落ちる量）・late-nul-abspath.md（先頭 8000
+#                          バイトの直後に NUL。2-e のバイナリ判定の窓の外なのでテキストとして検査される）、clean には
+#                          abspath-allowed.md（公式パスだけ）と binary-abspath.bin（先頭に NUL ＋ 絶対パス。バイナリとして
+#                          2-e の対象外）を置く。ume の env は完全一致（CLAUDE_CONFIG_DIR / OTEL_… / ComSpec）と
 #                          大文字小文字だけが違うもの（systemroot。正本の表記は SystemRoot）を混ぜる
 #   bom      … settings-clean.json の先頭に UTF-8 BOM を付けたもの
 #   worktree … settings-clean.json ＋ .claude/worktrees/wt/.claude/evals/results/（worktree 内の eval 結果。数えない）
@@ -14,9 +16,22 @@
 #   pexact   … settings-clean.json ＋ .claude/reports/x.md と .claude/plugin-x/evals/results/r.json
 #   gcase    … 一時の git リポジトリ（ルート＝追跡基準）。pcase と同じ 2 ファイルを git add -f で追跡し、
 #              .claude/Work/w.md を未追跡で置く（settings は settings-clean.json）
-#   gexact   … 一時の git リポジトリ。pexact と同じ 2 ファイルを git add -f で追跡する
-# ⚠ 大文字小文字だけが違う env キーを 1 つの settings に並べない（systemroot と SystemRoot 等）。PowerShell の
-#    ConvertFrom-Json がキーの重複として拒否し、PS 版だけが「不正な JSON」になる（python は受理する）。
+#   gexact   … 一時の git リポジトリ。pexact と同じ 2 ファイルと .claude/plugin-x0/evals/results/r.json を git add -f で
+#              追跡する（2-c' の列挙が 2 件。並びは ls-files の順 = バイト順で、/ と \ のどちらで並べるかで前後が変わる組）
+#   hidden   … settings-clean.json ＋ 隠し属性の .claude/.hidden-abspath.md と、隠し属性の .claude/.hidden-dir/ の中の
+#              abspath.md（どちらも絶対パス）。非 git 層の列挙は隠し属性も数える（find と同じ）
+#   dupkey   … settings-dupkey.json（permissions に完全一致の defaultMode が 2 つ、env に systemroot と \u0053ystemRoot。
+#              エスケープを解いてから比べる）。重複キーの専用 FAIL で、キーの検査には進まない
+#   pmulti   … settings-clean.json ＋ .claude/{p,p-x,p0,pZ,p_,pa}/evals/results/（2-c' の列挙は序数順の先頭 5 件で pa が落ちる）と
+#              .claude/a/y.md・.claude/a0.md（絶対パス。2-e の一覧は序数順で a/y.md が先）。並びは系統間の出力の一致で検査する
+#   wtcase   … settings-clean.json ＋ .claude/Worktrees/evals/results/。2-c' は A〜Z を畳んで worktrees とみなして降りず（PASS）、
+#              2-c が大文字小文字だけが違う成果物クラスとして FAIL にする
+#   以下は別の項目（check-assets リンク）で判定する。リンクを作れない系統はこのケースだけを SKIP する。
+#   junction … settings-clean.json ＋ .claude/x（外の outside-x/ へのリンク。outside-x/evals/results/r.md に絶対パス）と
+#              .claude/y/evals/results（空の outside-y/ へのリンクそのもの）。Windows はジャンクション、それ以外は symlink。
+#              どちらも辿らず、…/results のディレクトリとしても数えない（bash の find -P と同じ）
+# ⚠ 重複キー（完全一致、または systemroot と SystemRoot のような大文字小文字だけの違い）を 1 つのオブジェクトに並べるのは
+#    dupkey だけにする。両版とも重複キーの FAIL で止まり、U/M/E の検査に進まない。
 ume	0	WARN	defaultMode:bypassPermissions autoMode skipAutoPermissionPrompt sandbox.filesystem.disabled
 ume	0	WARN	prependPlugins strictKnownMarketplaces sandbox.network.allowManagedDomainsOnly
 ume	0	WARN	env で project / local からは設定できない変数: CLAUDE_CONFIG_DIR OTEL_EXPORTER_OTLP_METRICS_HEADERS ComSpec（シェル
@@ -25,6 +40,7 @@ ume	0	PASS	settings.json は valid JSON
 ume	0	WARN	配布物に環境固有の絶対パスらしき記述がある
 ume	0	-	.claude/abspath-mixed.md
 ume	0	-	.claude/big-abspath.md
+ume	0	-	.claude/late-nul-abspath.md
 ume	0	-	.claude/win-file-encoding-abspath.md
 clean	0	PASS	project で効かないキーなし（settings.json）
 clean	0	PASS	配布物に環境固有の絶対パスなし
@@ -46,3 +62,21 @@ gcase	0	PASS	.claude/plans なし
 gexact	1	FAIL	.claude/reports が Git 追跡されている（payload に乗り配布される）
 gexact	1	FAIL	plugin eval の結果（*/evals/results/）が Git 追跡されている（payload に乗り配布される）
 gexact	1	-	.claude/plugin-x/evals/results/r.json
+gexact	1	-	.claude/plugin-x0/evals/results/r.json
+hidden	0	WARN	配布物に環境固有の絶対パスらしき記述がある
+hidden	0	-	.claude/.hidden-abspath.md
+hidden	0	-	.claude/.hidden-dir/abspath.md
+dupkey	1	FAIL	settings.json の同じオブジェクト内でキーが重複している（大文字小文字だけが違うものを含む）: defaultMode / defaultMode、systemroot / SystemRoot（どの値が効くかは読み手によって変わる
+pmulti	1	FAIL	plugin eval の結果（*/evals/results/）が配布ペイロードに含まれている:
+pmulti	1	-	.claude/p-x/evals/results
+pmulti	1	-	.claude/p/evals/results
+pmulti	1	-	.claude/p0/evals/results
+pmulti	1	-	.claude/pZ/evals/results
+pmulti	1	-	.claude/p_/evals/results
+pmulti	1	WARN	配布物に環境固有の絶対パスらしき記述がある
+pmulti	1	-	.claude/a/y.md
+pmulti	1	-	.claude/a0.md
+wtcase	1	FAIL	大文字小文字だけが違う成果物クラスらしきパスが配布ペイロードに含まれている: .claude/Worktrees（.claude/worktrees と同一視される OS がある。公開前に名前を直すか除外すること）
+wtcase	1	PASS	plugin eval の結果（*/evals/results/）なし
+junction	0	PASS	plugin eval の結果（*/evals/results/）なし
+junction	0	PASS	配布物に環境固有の絶対パスなし

@@ -21,6 +21,8 @@
           追跡基準（git）で WARN、env キー（3.）では層によらず WARN。区別する OS では正当な別物でありうるが、区別しない
           Windows では .gitignore をすり抜けた成果物でありうる。publish-share は FAIL でしか止まらない（WARN は確認
           プロンプトを経て公開まで進む）ため、配布する実体では止め、開発中の作業ツリーでは人の確認に回す。対応は各節の判定表。
+    ただし settings.json の同じオブジェクト内に完全一致または大文字小文字だけが違うキーが並ぶもの（systemroot と SystemRoot 等）は、
+    照合の前に重複キーとして層によらず FAIL（どちらの値が効くかが読み手で変わる。3. を参照）。
 
   FAIL が1件以上で終了コード 1、なければ 0（CI 利用可）。
 
@@ -140,6 +142,43 @@ function Sort-Ordinal([string[]]$a) {
   $k
 }
 $claudeDir = Join-Path $Share '.claude'
+# .claude 配下の再帰列挙（2-c' の探索と、非 git 層の payload 列挙が使う）。bash 版の find -P と同じものを返す:
+#   - ジャンクション・シンボリックリンクには降りず、ディレクトリ / ファイルとしても返さない（find -P は辿らず、-type d /
+#     -type f は symlink 自体も含めない。Git Bash の find はジャンクションも symlink として扱う。実測）。
+#     判定は ReparsePoint 属性かつ LinkType が Junction / SymbolicLink。ReparsePoint 属性だけで判定しない ―― OneDrive 配下の
+#     ディレクトリ・ファイルは LinkType の無い再解析ポイント（クラウドのプレースホルダ）で、find は通常のディレクトリとして
+#     降りる（実測）。属性だけで止めると本版だけが OneDrive 配下で何も見なくなる。
+#   - Get-ChildItem -Recurse は使わない。リンクを辿るかが版で揃う保証が無く、起点にジャンクションを渡すと中身を列挙する。
+#     .NET の列挙は隠し属性・システム属性の項目も返す（Get-ChildItem -Force 相当。find は属性を見ない）。
+#   - A〜Z だけ畳んで $SkipTop（小文字で渡す）に一致する .claude 直下のディレクトリには降りない（2-c' の worktrees 除外。
+#     bash 版の -path '.claude/[Ww][Oo]…' -prune と同じ）。$Like に一致する名前だけを返す。
+#   戻り値は $Share からの相対パス（/ 区切り）。並びは呼び出し側で揃える。
+function Test-LinkEntry($e) {
+  (($e.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) -and (@('Junction', 'SymbolicLink') -ccontains [string]$e.LinkType)
+}
+function Get-ClaudeTree([switch]$Files, [string]$SkipTop = '', [string]$Like = '*') {
+  $root = New-Object System.IO.DirectoryInfo $claudeDir
+  if (-not $root.Exists) { return }
+  $todo = New-Object 'System.Collections.Generic.Stack[System.IO.DirectoryInfo]'
+  $todo.Push($root)
+  while ($todo.Count -gt 0) {
+    $d = $todo.Pop()
+    $atTop = [string]::Equals($d.FullName, $root.FullName, [StringComparison]::Ordinal)
+    try { $subs = $d.GetDirectories() } catch { continue }   # 読めないディレクトリは飛ばす（find の 2>/dev/null と同じ）
+    foreach ($e in $subs) {
+      if (Test-LinkEntry $e) { continue }
+      if ($atTop -and $SkipTop -and [string]::Equals((Fold-Ascii $e.Name), $SkipTop, [StringComparison]::Ordinal)) { continue }
+      if (-not $Files -and $e.Name -like $Like) { $e.FullName.Substring($Share.Length + 1).Replace('\', '/') }
+      $todo.Push($e)
+    }
+    if ($Files) {
+      try { $fis = $d.GetFiles() } catch { continue }
+      foreach ($e in $fis) {
+        if (-not (Test-LinkEntry $e) -and $e.Name -like $Like) { $e.FullName.Substring($Share.Length + 1).Replace('\', '/') }
+      }
+    }
+  }
+}
 # 追跡されている .claude 配下のパス（git 層のみ・/ 区切り・git の順）。2-c / 2-c' が使う
 $trackedClaude = @()
 if ($isGit) { $trackedClaude = @(((git -C $Share ls-files -z -- .claude 2>$null) -join "`n") -split "`0" | Where-Object { $_ }) }
@@ -209,8 +248,10 @@ foreach ($artifact in @('.claude\reports', '.claude\work', '.claude\workspace', 
 #       bash 版と対称。追跡パス（git 層）と .claude 配下のディレクトリ（両層）を列挙し、evals/results の 2 要素を
 #       二段階で照合する。追跡パスはファイル名を除いたディレクトリ部分のどこか（旧 pathspec ':(glob).claude/**/evals/results/**'
 #       と同じ範囲）、ディレクトリは末尾の 2 要素（旧 Name / Parent.Name の比較と同じ）を見る。
-#       ⚠ .claude\worktrees（丸ごとの git チェックアウト。2-c で別途判定する）には降りない（bash 版の find -prune と対称。
-#          名前は完全一致で除外）。降りると遅いうえ、worktree 内の evals\results を payload の成果物と誤って数える。
+#       ⚠ .claude\worktrees（丸ごとの git チェックアウト。2-c で別途判定する）には降りない（bash 版の find -prune と対称）。
+#          名前は A〜Z だけ畳んだ一致で除外する（Worktrees / WORKTREES も降りない。2-c がそれを大文字小文字だけが違う
+#          成果物クラスとして報告する）。降りると遅いうえ、worktree 内の evals\results を payload の成果物と誤って数える。
+#       ⚠ ジャンクション・シンボリックリンクは辿らず、…\results のディレクトリとしても数えない（Get-ClaudeTree。bash 版の find -P）。
 $evrWant = 'evals/results'; $evrCls = '*\evals\results\'
 $sep = [System.IO.Path]::DirectorySeparatorChar
 # $path（/ 区切り）の分類と、一致した …/results までのディレクトリを返す。$isDir: 末尾の 2 要素 / それ以外: ディレクトリ部分のどこか
@@ -229,15 +270,9 @@ function Get-EvrClass([string]$path, [bool]$isDir) {
 }
 # -like は候補を絞るだけ（作業ツリーの .claude\work 等は数千ディレクトリになり、全件を照合すると遅い）。ASCII の
 # 大文字小文字を畳む一致は必ず含むので取りこぼさず、分類はこのあと Get-EvrClass が行う（bash 版の find -iname と同じ役割）。
-$evrDirs = @()
-if (Test-Path -LiteralPath $claudeDir -PathType Container) {
-  $evrDirs = @(Sort-Ordinal @(Get-ChildItem -Directory -Force -LiteralPath $claudeDir -ErrorAction SilentlyContinue |
-    Where-Object { -not [string]::Equals($_.Name, 'worktrees', [StringComparison]::Ordinal) } |
-    ForEach-Object { $_; Get-ChildItem -Recurse -Directory -Force -LiteralPath $_.FullName -ErrorAction SilentlyContinue } |
-    Where-Object { $_.Name -like 'results' } |
-    ForEach-Object { $_.FullName.Substring($Share.Length + 1) -replace '\\', '/' }))
-}
-# 2-c' の判定表（照合の分類 → 判定）。bash 版の verdict_evr と同じ表・同じ優先順位で判定は 1 つ。列挙は 5 件まで:
+$evrDirs = @(Sort-Ordinal @(Get-ClaudeTree -SkipTop 'worktrees' -Like 'results'))
+# 2-c' の判定表（照合の分類 → 判定）。bash 版の verdict_evr と同じ表・同じ優先順位で判定は 1 つ。列挙は序数順の先頭 5 件まで
+# （git 層は ls-files の順 = パスのバイト順、実在は / 区切りのまま Sort-Ordinal。bash 版の git の順 / LC_ALL=C sort と同じ順になる）:
 #   git:tracked:exact    FAIL  Git 追跡されている（追跡ファイルを列挙）
 #   git:tracked:case     WARN  大文字小文字だけが違うパスが Git 追跡されている（…\results のディレクトリごとに 1 行）
 #   git:disk:exact       WARN  実在するが未追跡
@@ -303,15 +338,14 @@ foreach ($guard in @('.claude\.gitignore', '.claude\.gitattributes')) {
 # ⚠ 二層基準をここにも適用すること。作業ツリーに対して単純に再帰列挙すると、gitignored で
 #    payload には乗らない .claude\work\ 等まで検査対象になり、通常の開発マシンで常時 FAIL する
 #    （IM-2 でゲートのオオカミ少年化として指摘された故障をそのまま再発させる）。bash 版と対称。
+#    非 git 層は Get-ClaudeTree で列挙する（ジャンクション・シンボリックリンクは辿らず数えない。bash 版の find -P -type f）。
+# ⚠ 並びは序数にそろえる（2-e / 2-f の一覧の順。bash 版の LC_ALL=C sort -z と同じ）。/ 区切りのまま並べてから \ に直す
+#    （\ は数字・英大文字より後ろに来るので、\ のまま並べると bash 版と順が割れる）。git 層は ls-files の順（パスのバイト順）のまま。
 function Get-PayloadFiles {
   if ($isGit) {
     (git -C $Share ls-files -- .claude) | Where-Object { $_ } | ForEach-Object { $_ -replace '/', '\' }
   } else {
-    $base = (Join-Path $Share '.claude')
-    if (Test-Path $base) {
-      Get-ChildItem -Recurse -File -LiteralPath $base |
-        ForEach-Object { $_.FullName.Substring($Share.Length + 1) }
-    }
+    Sort-Ordinal @(Get-ClaudeTree -Files) | ForEach-Object { $_.Replace('/', '\') }
   }
 }
 $payloadFiles = @(Get-PayloadFiles)
@@ -327,9 +361,26 @@ $absPattern = '(^|[^A-Za-z])[A-Za-z]:\\[A-Za-z]|(^|[^A-Za-z])/home/[a-z][a-z0-9_
 #   - -creplace / -cmatch で大文字小文字を区別する（bash の grep -E / sed -E と同じ。-match は区別しない）
 #   - 除外するのは skills\win-file-encoding\ 配下だけ（bash 版の */skills/win-file-encoding/* と同じ。
 #     名前に win-file-encoding を含むだけのファイル（rules\win-file-encoding.md 等）は検査する）
+#   - バイナリは対象外。判定は bash 版の is_binary と同じ明示的な規則: 先頭 8000 バイトに NUL があればバイナリ
+#     （8000 は git が text=auto / diff でバイナリと見なす窓と同じ。UTF-16 のテキストも NUL を含むのでバイナリ扱い）。
+#     bash 版は grep -I に頼らない（判定が grep の版とロケールに依存する）ので、本版もこの規則だけで決める。
+#     Get-Content -Encoding Byte（7 に無い）/ -AsByteStream（5.1 に無い）は両系統で使えないので FileStream で読む。
+$binHead = 8000
+function Test-BinaryHead([string]$path) {
+  $fs = $null
+  try {
+    $fs = [System.IO.File]::OpenRead($path)
+    $buf = New-Object byte[] $binHead
+    $n = 0
+    while ($n -lt $buf.Length) { $r = $fs.Read($buf, $n, $buf.Length - $n); if ($r -le 0) { break }; $n += $r }
+    return ([Array]::IndexOf($buf, [byte]0, 0, $n) -ge 0)
+  } catch { return $false }   # 読めないものはテキスト扱い（続く Get-Content も読めずヒットしない。bash 版と同じ）
+  finally { if ($null -ne $fs) { $fs.Dispose() } }
+}
 $absAllow = '[A-Za-z]:\\Program Files( \(x86\))?\\(ClaudeCode|Git)\\'
 $absHits = $payloadFiles |
   Where-Object { $_ -cnotlike '*\skills\win-file-encoding\*' } |
+  Where-Object { -not (Test-BinaryHead (Join-Path $Share $_)) } |
   Where-Object {
     $lines = Get-Content -LiteralPath (Join-Path $Share $_) -Encoding UTF8 -ErrorAction SilentlyContinue
     @($lines | Where-Object { ($_ -creplace $absAllow, '') -cmatch $absPattern }).Count -gt 0
@@ -358,6 +409,9 @@ if (-not $noBom) { Pass "配布される .ps1 は全て BOM 付き" }
 #    区分・根拠は bash 版 3. と同じ（U / M / E）。表を更新したら bash 版の _U_KEYS / _M_KEYS / _ENV_RE も同時に更新する。
 #    E 区分のキー名は 2-c と同じ二段階で照合する（$envRe に完全一致 → A〜Z だけ畳んだ同士で一致。Get-EnvClass）。
 #    判定は、完全一致 → 従来の WARN、大文字小文字だけ違う（systemroot 等）→ 「Windows でのみ同一視される」旨の別の WARN。
+#    同じオブジェクト内のキーの重複（完全一致、または A〜Z だけ畳んで一致 = 大文字小文字だけの違い。env 以外の階層も同じ）は
+#    専用メッセージで FAIL にし、キーの検査には進まない（bash 版と同じ。理由も同じ）。判定の順は BOM → JSON 構文 → 重複キー →
+#    キーの検査。構文が先なので、壊れた JSON は重複があっても「不正な JSON」になる（Get-JsonDupKeys の注記）。
 $uKeys =@('skipDangerousModePermissionPrompt', 'useAutoModeDuringPlan', 'autoMode', 'skipAutoPermissionPrompt',
            'processWrapper', 'pluginConfigs', 'syncClaudeAiSkills', 'syncClaudeAiPlugins',
            'sandbox.allowAppleEvents', 'sandbox.ripgrep', 'sandbox.filesystem.disabled',
@@ -393,6 +447,59 @@ function Get-EnvClass([string]$k) {
   if ((Fold-Ascii $k) -cmatch $envReFold) { return 'case' }
   return 'none'
 }
+# JSON の文字列トークン（両端の " を含む）のエスケープを解く（python の json と同じ値にして比べるため）
+function ConvertFrom-JsonStringToken([string]$tok) {
+  $s = $tok.Substring(1, $tok.Length - 2)
+  if ($s.IndexOf([char]'\') -lt 0) { return $s }
+  $sb = New-Object System.Text.StringBuilder
+  for ($j = 0; $j -lt $s.Length; $j++) {
+    if ($s[$j] -ne [char]'\' -or $j + 1 -ge $s.Length) { [void]$sb.Append($s[$j]); continue }
+    $j++
+    $e = [int]$s[$j]
+    if ($e -eq 117 -and $j + 4 -lt $s.Length -and $s.Substring($j + 1, 4) -match '^[0-9A-Fa-f]{4}$') {   # \uXXXX
+      [void]$sb.Append([char][Convert]::ToInt32($s.Substring($j + 1, 4), 16)); $j += 4
+    } elseif ($e -eq 98) { [void]$sb.Append([char]8) }       # \b
+    elseif ($e -eq 102) { [void]$sb.Append([char]12) }       # \f
+    elseif ($e -eq 110) { [void]$sb.Append([char]10) }       # \n
+    elseif ($e -eq 114) { [void]$sb.Append([char]13) }       # \r
+    elseif ($e -eq 116) { [void]$sb.Append([char]9) }        # \t
+    else { [void]$sb.Append($s[$j]) }                         # \" \\ \/（それ以外は不正な JSON。構文の判定は ConvertFrom-Json）
+  }
+  return $sb.ToString()
+}
+# 同じオブジェクト内の重複キーを、bash 版の object_pairs_hook と同じ形で返す: 1 組 = 完全一致または A〜Z だけ畳んで一致する
+# キーを文書順に ' / ' で結んだもの（同じ組は 1 つにまとめる。並びは呼び出し側で序数に揃える）。
+# ⚠ ConvertFrom-Json に任せない。完全一致の重複は 7 / 5.1 とも黙って後勝ちで受理し、大文字小文字だけの違いは例外で拒否する
+#    （実測。python はどちらも後勝ちで受理する）。どちらも拾うため、ConvertFrom-Json の前に文字列と括弧だけを走査する。
+#    構文は検証しない（壊れた JSON に対する結果は使わない。構文は ConvertFrom-Json で判定する）。
+function Get-JsonDupKeys([string]$text) {
+  $groups = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+  $stack = New-Object 'System.Collections.Generic.Stack[object]'   # オブジェクトはキーの一覧、配列は '['
+  $toks = [regex]::Matches($text, '"[^"\\]*(?:\\.[^"\\]*)*"|[{}\[\]:]')
+  for ($i = 0; $i -lt $toks.Count; $i++) {
+    $t = $toks[$i].Value
+    $c = [int]$t[0]
+    if ($c -eq 123) { $stack.Push((New-Object 'System.Collections.Generic.List[string]')) }   # {
+    elseif ($c -eq 91) { $stack.Push('[') }                                                  # [
+    elseif ($c -eq 125 -or $c -eq 93) {                                                      # } ]
+      if ($stack.Count -eq 0) { break }
+      $keys = $stack.Pop()
+      if ($keys -isnot [System.Collections.Generic.List[string]]) { continue }
+      $byFold = New-Object System.Collections.Hashtable ([StringComparer]::Ordinal)
+      $order = New-Object 'System.Collections.Generic.List[string]'
+      foreach ($k in $keys) {
+        $f = Fold-Ascii $k
+        if (-not $byFold.ContainsKey($f)) { $byFold[$f] = New-Object 'System.Collections.Generic.List[string]'; $order.Add($f) }
+        $byFold[$f].Add($k)
+      }
+      foreach ($f in $order) { if ($byFold[$f].Count -gt 1) { [void]$groups.Add(($byFold[$f] -join ' / ')) } }
+    } elseif ($c -eq 34 -and $i + 1 -lt $toks.Count -and [string]::Equals($toks[$i + 1].Value, ':', [StringComparison]::Ordinal) -and
+              $stack.Count -gt 0 -and $stack.Peek() -is [System.Collections.Generic.List[string]]) {   # キー（: が続く文字列）
+      $stack.Peek().Add((ConvertFrom-JsonStringToken $t))
+    }
+  }
+  $groups
+}
 $settings = Join-Path $Share '.claude\settings.json'
 # ⚠ 先頭の UTF-8 BOM は専用メッセージで FAIL にする（JSON 構文・キーの検査には進まない。bash 版と同じ）。
 #    Claude Code が BOM 付きの settings.json を読める保証が無い。かつては本版（Get-Content -Encoding UTF8 が
@@ -405,11 +512,27 @@ if (Test-Path -LiteralPath $settings -PathType Leaf) {
 if ($settingsBom) {
   Bad "settings.json の先頭に UTF-8 BOM がある（Claude Code が BOM 付きを読める保証が無い）。BOM なしの UTF-8 で保存し直すこと（JSON 構文とキーの検査は BOM を外してから行う）"
 } elseif (Test-Path $settings) {
-  $json = $null
+  $json = $null; $raw = $null; $dups = @(); $dupRejected = $false
   # ⚠ -Encoding UTF8 を明示する。Windows PowerShell 5.1 は BOM なし UTF-8 を ANSI（CP932）で読み、
   #    日本語を含む正しい JSON を「不正な JSON」と誤判定する（実測）。bash 版の encoding='utf-8' と対称。
-  try { $json = Get-Content -LiteralPath $settings -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $json = $null }
-  if ($null -eq $json) {
+  try { $raw = Get-Content -LiteralPath $settings -Raw -Encoding UTF8 -ErrorAction Stop } catch { $raw = $null }
+  if ($null -ne $raw) {
+    $dups = @(Sort-Ordinal @(Get-JsonDupKeys $raw))
+    try { $json = ConvertFrom-Json -InputObject $raw -ErrorAction Stop }
+    catch {
+      $json = $null
+      # 構文は通ったうえで大文字小文字だけが違うキーとして拒否された（7: KeysWithDifferentCasingInJsonString /
+      # 5.1: DuplicateKeysInJsonString。どちらも構文の誤りより後に出る。実測）。それ以外の例外は不正な JSON
+      $id = [string]$_.FullyQualifiedErrorId
+      $dupRejected = $id.StartsWith('KeysWithDifferentCasingInJsonString,', [StringComparison]::Ordinal) -or
+                     $id.StartsWith('DuplicateKeysInJsonString,', [StringComparison]::Ordinal)
+    }
+  }
+  # ⚠ 拒否されたのに A〜Z の畳みでは重複が見つからない（σ と Σ 等、非 ASCII の大文字小文字だけの違い）ものは
+  #    「不正な JSON」のまま（PowerShell は非 ASCII も畳んで拒否するが、bash 版は A〜Z だけを畳むので受理する。残る差）
+  if ($dups.Count -gt 0 -and ($null -ne $json -or $dupRejected)) {
+    Bad ("settings.json の同じオブジェクト内でキーが重複している（大文字小文字だけが違うものを含む）: " + ($dups -join '、') + "（どの値が効くかは読み手によって変わる。Windows の環境変数名のように大文字小文字を区別しない読み手では同じキーになる。1 つにまとめること。キーの検査は重複を解消してから行う）")
+  } elseif ($null -eq $json) {
     Bad "settings.json が不正な JSON（claude doctor / /doctor でも検出される）"
   } else {
     Pass "settings.json は valid JSON"

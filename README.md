@@ -209,7 +209,8 @@ PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.
   `.claude/agent-memory-local/` `work_instructions.txt` `.claude/.bat-shadow/` `.claude/worktrees/`
   `.claude/scheduled_tasks.json`（**この一覧が正本**。`check-assets` の 2-c 配列がそれで、ルートと `.claude/`
   双方の `.gitignore` はこれに追随させる）。置き場所が固定でない plugin eval の結果 `*/evals/results/` は 2-c'
-  （`.claude/worktrees/` の中は数えない）
+  （`.claude/worktrees/` の中は数えない。`Worktrees/` 等の大文字小文字違いも中は数えず、それ自体を 2-c が大文字小文字
+  だけが違う成果物として報告する。ジャンクション・シンボリックリンクは辿らない）
 - **配布先の統制ファイルの不在** ―― `.claude/.gitignore` / `.claude/.gitattributes`。ミラー処理は payload に
   無いファイルを配布先から削除するため、これらを欠いた ref を publish すると**配布先の除外設定・改行保護が
   黙って消える**（payload では FAIL / 作業ツリーでは WARN）
@@ -230,7 +231,11 @@ PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.
 すり抜けた成果物（env なら同じ変数）でありうる。`publish-share` は **FAIL でしか止まらず**、WARN は確認プロンプトを
 経て公開まで進むため、成果物は**配布する実体（payload）では FAIL にして publish を中止**する（公開前に名前を直すか
 除外する）。開発中の作業ツリー（追跡基準）では WARN に留めるので、読んで意図したものか確かめること。env キーは
-配布物の流出ではないため、層によらず WARN のまま。
+配布物の流出ではないため、層によらず WARN のまま。ただし `settings.json` の**同じオブジェクト内**に完全一致または
+大文字小文字だけが違うキーが並ぶもの（`systemroot` と `SystemRoot` 等。`env` 以外の階層も同じ）は、照合の前に
+**重複キーとして層によらず FAIL** にする ―― どちらの値が効くかが読み手で変わる（python と PowerShell は完全一致の
+重複を黙って後勝ちにし、PowerShell は大文字小文字だけの違いを拒否する）うえ、Windows の環境変数名は大文字小文字を
+区別しない。
 
 ### 配布（publish）
 

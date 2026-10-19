@@ -483,7 +483,17 @@ function Invoke-CheckAssets([string]$share, [string]$label, [bool]$payload) {
 }
 
 # fixture のケース（check-assets.expect の 1 列目。probe と比較役が同じ順で使う。verify-kit.sh の CA_CASES と同じ）
-$CaCases = @('ume', 'clean', 'broken', 'bom', 'worktree', 'pcase', 'pexact', 'gcase', 'gexact')
+$CaCases = @('ume', 'clean', 'broken', 'bom', 'worktree', 'pcase', 'pexact', 'gcase', 'gexact', 'hidden', 'dupkey', 'pmulti', 'wtcase')
+# リンク（Windows はジャンクション、それ以外は symlink）を作るケース。作れない系統はそのケースを SKIP し、比較役の
+# Drop-Skipping は項目単位で系統を除くので、ほかのケースを巻き添えにしないよう別の項目（Item-CaLinks）で判定する（verify-kit.sh と同じ）。
+$CaLinkCases = @('junction')
+# $link に $target へのリンクを作る。Windows はジャンクション（管理者権限不要）、それ以外は symlink。リンクとして見えるときだけ $true
+function New-TestLink([string]$link, [string]$target) {
+  try {
+    New-Item -ItemType $(if ($OnWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $link -Target $target -ErrorAction Stop | Out-Null
+    return [bool]((Get-Item -LiteralPath $link -Force -ErrorAction Stop).LinkType)
+  } catch { return $false }
+}
 
 function Probe-CheckAssets {
   Sec 'checkassets root'
@@ -491,7 +501,7 @@ function Probe-CheckAssets {
   else { Invoke-CheckAssets $VkRoot '<ROOT>' $false }
   # ケースごとの payload は check-assets.expect の冒頭に記した内容で作る（verify-kit.sh と同じ）。
   # g で始まるケースは一時の git リポジトリ（ルート＝追跡基準）で、それ以外は -Payload（実体基準）で検査する。
-  foreach ($c in $CaCases) {
+  foreach ($c in @($CaCases) + @($CaLinkCases)) {
     Sec "checkassets $c"
     $repo = $c.StartsWith('g', [StringComparison]::Ordinal)
     if ($repo) {
@@ -509,31 +519,72 @@ function Probe-CheckAssets {
     } elseif (Oeq $c 'worktree') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-clean.json') -Destination $dst
       New-Item -ItemType Directory -Force -Path (Join-Full $cd 'worktrees/wt/.claude/evals/results') | Out-Null
+    } elseif (Oeq $c 'wtcase') {
+      Copy-Item -LiteralPath (Join-Path $VkFix 'settings-clean.json') -Destination $dst
+      New-Item -ItemType Directory -Force -Path (Join-Full $cd 'Worktrees/evals/results') | Out-Null
     } elseif (Oeq $c 'pcase') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-envcase.json') -Destination $dst
-    } elseif (Oin (@('pexact', 'gcase', 'gexact')) $c) {
+    } elseif (Oin (@('pexact', 'gcase', 'gexact', 'junction', 'hidden', 'pmulti')) $c) {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-clean.json') -Destination $dst
     } else {
       Copy-Item -LiteralPath (Join-Path $VkFix "settings-$c.json") -Destination $dst
     }
-    $art = @()
-    if (Oeq $c 'ume') {
+    $art = @(); $links = @()
+    if (Oeq $c 'junction') {
+      # .claude\x は外のディレクトリ（evals\results と絶対パスを書いたファイルを持つ）へのリンク、.claude\y\evals\results は
+      # リンクそのもの（空のディレクトリへ）。実体はケースのディレクトリの中（.claude の外）に置く（verify-kit.sh と同じ）
+      New-Item -ItemType Directory -Force -Path (Join-Full $s 'outside-x/evals/results'), (Join-Full $s 'outside-y'), (Join-Full $cd 'y/evals') | Out-Null
+      [System.IO.File]::WriteAllText((Join-Full $s 'outside-x/evals/results/r.md'), "C:\Users\verify-kit\linked`n", $Utf8NoBom)
+      foreach ($pair in @(@('x', 'outside-x'), @('y/evals/results', 'outside-y'))) {
+        $l = Join-Full $cd $pair[0]
+        if (-not (New-TestLink $l (Join-Full $s $pair[1]))) { break }
+        $links += $l
+      }
+      if ($links.Count -lt 2) { Put 'SKIP' 'ジャンクション / シンボリックリンクを作れない'; continue }
+    } elseif (Oeq $c 'hidden') {
+      # 隠し属性のファイルと、隠し属性のディレクトリの中のファイル（どちらも絶対パスを書く）。名前も . で始める
+      # （Windows 以外の .NET は . 始まりを隠しとみなし、属性は設定できないことがある）。verify-kit.sh と同じ
+      New-Item -ItemType Directory -Force -Path (Join-Full $cd '.hidden-dir') | Out-Null
+      foreach ($h in @('.hidden-abspath.md', '.hidden-dir/abspath.md')) {
+        [System.IO.File]::WriteAllText((Join-Full $cd $h), "C:\Users\verify-kit\hidden`n", $Utf8NoBom)
+      }
+      foreach ($h in @('.hidden-abspath.md', '.hidden-dir')) {
+        $p = Join-Full $cd $h
+        try { [System.IO.File]::SetAttributes($p, [System.IO.File]::GetAttributes($p) -bor [System.IO.FileAttributes]::Hidden) } catch { }
+      }
+    } elseif (Oeq $c 'ume') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'abspath-mixed.md') -Destination $cd
       [System.IO.File]::WriteAllText((Join-Full $cd 'win-file-encoding-abspath.md'), "C:\Users\verify-kit\work`n", $Utf8NoBom)
       [System.IO.File]::WriteAllText((Join-Full $cd 'big-abspath.md'), ((@('C:\Users\verify-kit\big') * 20000) -join "`n") + "`n", $Utf8NoBom)
+      # 25 バイトの行 + x を 7975 バイト（計 8000）の直後に NUL。NUL が先頭 8000 バイトの外なのでテキスト扱い（verify-kit.sh と同じ）
+      [System.IO.File]::WriteAllBytes((Join-Full $cd 'late-nul-abspath.md'),
+        [byte[]]([System.Text.Encoding]::ASCII.GetBytes("C:\Users\verify-kit\late`n" + ('x' * 7975)) + [byte[]](0) + [System.Text.Encoding]::ASCII.GetBytes("tail`n")))
     } elseif (Oeq $c 'clean') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'abspath-allowed.md') -Destination $cd
+      [System.IO.File]::WriteAllBytes((Join-Full $cd 'binary-abspath.bin'),
+        [byte[]]([System.Text.Encoding]::ASCII.GetBytes('verify-kit') + [byte[]](0) + [System.Text.Encoding]::ASCII.GetBytes("C:\Users\verify-kit\binary`n")))
     } elseif (Oin (@('pcase', 'gcase')) $c) {
       $art = @('.claude/Reports/x.md', '.claude/plugin-x/Evals/Results/r.json')
     } elseif (Oin (@('pexact', 'gexact')) $c) {
       $art = @('.claude/reports/x.md', '.claude/plugin-x/evals/results/r.json')
+      if (Oeq $c 'gexact') { $art += '.claude/plugin-x0/evals/results/r.json' }
+    } elseif (Oeq $c 'pmulti') {
+      # 並びの検査。/ 区切りの序数順と \ 区切り・カルチャ順・列挙の順で前後が入れ替わる名前を混ぜる（列挙は先頭 5 件。verify-kit.sh と同じ）
+      foreach ($d in @('p', 'p-x', 'p0', 'pZ', 'p_', 'pa')) { New-Item -ItemType Directory -Force -Path (Join-Full $cd "$d/evals/results") | Out-Null }
+      New-Item -ItemType Directory -Force -Path (Join-Full $cd 'a') | Out-Null
+      foreach ($m in @('a/y.md', 'a0.md')) { [System.IO.File]::WriteAllText((Join-Full $cd $m), "C:\Users\verify-kit\multi`n", $Utf8NoBom) }
     }
     foreach ($a in $art) {
       $f = Join-Full $s $a
       New-Item -ItemType Directory -Force -Path (Split-Path -Parent $f) | Out-Null
       [System.IO.File]::WriteAllText($f, $(if ($a.EndsWith('.json')) { "{}`n" } else { "verify-kit`n" }), $Utf8NoBom)
     }
-    if (-not $repo) { Invoke-CheckAssets $s '<SHARE>' $true; continue }
+    if (-not $repo) {
+      Invoke-CheckAssets $s '<SHARE>' $true
+      # リンクは実行後すぐ外す（後始末の Remove-Item -Recurse がリンクの先へ降りないように。リンク自体だけを消す）
+      foreach ($l in $links) { try { [System.IO.Directory]::Delete($l) } catch { } }
+      continue
+    }
     # 利用者の global / system 設定を読まない（一時リポジトリの作成も check-assets の git 呼び出しも）
     $cfg = "$s.gitconfig"
     [System.IO.File]::WriteAllText($cfg, '', $Utf8NoBom)
@@ -1402,19 +1453,21 @@ function Drop-Skipping([string[]]$secs, [string[]]$systems) {
 }
 function Skip-Note { if ($script:SkipNote) { return "（$($script:SkipNote)）" } else { return '' } }
 
-function Item-CaFixture {
-  $t = 'check-assets fixture（U/M/E・無害・壊れた JSON・BOM・worktree・大文字小文字違い）'
+# check-assets の fixture のケースを全系統で突き合わせ、期待値と照合する（Item-CaFixture / Item-CaLinks が使う。verify-kit.sh の
+# ca_cases_check と同じ）。期待値ファイルの鍵は $CaCases と $CaLinkCases を合わせた列挙に照らす
+function Test-CaCases([string]$t, [string]$desc, [string[]]$cases) {
+  $all = @($CaCases) + @($CaLinkCases)
   $avail = @(Usable $SysAll)
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
-  $bad = Test-FixKeys 'check-assets.expect' $CaCases "ケースの列挙（$($CaCases -join ' ')）" 4
+  $bad = Test-FixKeys 'check-assets.expect' $all "ケースの列挙（$($all -join ' ')）" 4
   if ($bad) { Verdict 'FAIL' $t $bad; return }
-  Drop-Skipping @($CaCases | ForEach-Object { "checkassets $_" }) $avail
+  Drop-Skipping @($cases | ForEach-Object { "checkassets $_" }) $avail
   if ($script:Kept.Count -eq 0) { Verdict 'SKIP' $t $script:SkipNote; return }
   $avail = $script:Kept
   $expect = @(Read-Lines (Join-Path $VkFix 'check-assets.expect') | Where-Object { -not $_.StartsWith('#') })
-  foreach ($cs in $CaCases) {
+  foreach ($cs in $cases) {
     if (@($expect | Where-Object { (Oeq ($_.Split("`t")[0]) $cs) }).Count -eq 0) { Verdict 'FAIL' $t "${cs}: check-assets.expect に期待値が無い"; return }
     if (-not (Same-All "checkassets $cs" $avail)) { Fail-Diff $t "${cs}: 判定が $($SysLabel[$script:SameA]) と $($SysLabel[$script:SameB]) で違う"; return }
     $lines = Get-Sec $avail[0] "checkassets $cs"
@@ -1429,7 +1482,17 @@ function Item-CaFixture {
       }
     }
   }
-  Verdict 'PASS' $t "$($CaCases.Count) ケース × $(Labels $avail) で同一判定・期待どおり（U/M/E と絶対パス混在は WARN・無害は PASS・壊れた JSON と BOM 付き・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN、env キーの大文字小文字違いは WARN で、完全一致は従来どおり）$(Missing-Note $SysAll)$(Skip-Note)"
+  Verdict 'PASS' $t "$($cases.Count) ケース × $(Labels $avail) で同一判定・期待どおり（$desc）$(Missing-Note $SysAll)$(Skip-Note)"
+}
+function Item-CaFixture {
+  Test-CaCases 'check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順）' `
+    "U/M/E と絶対パス混在は WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順" `
+    $CaCases
+}
+function Item-CaLinks {
+  Test-CaCases 'check-assets リンク（ジャンクション / シンボリックリンク）' `
+    "リンクは辿らず、…/results のディレクトリとしても数えない（2-c' は PASS）・リンク先のファイルを 2-e で読まない" `
+    $CaLinkCases
 }
 
 function Item-CleanEnv {
@@ -1686,6 +1749,7 @@ try {
   Item-InternalKeys
   Item-CaRoot
   Item-CaFixture
+  Item-CaLinks
   Item-CleanEnv
   Item-CleanEnvBadMode
   Item-PubName

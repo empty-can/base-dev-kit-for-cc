@@ -19,6 +19,8 @@
 #         追跡基準（git）で WARN、env キー（3.）では層によらず WARN。区別する OS では正当な別物でありうるが、区別しない
 #         Windows では .gitignore をすり抜けた成果物でありうる。publish-share は FAIL でしか止まらない（WARN は確認
 #         プロンプトを経て公開まで進む）ため、配布する実体では止め、開発中の作業ツリーでは人の確認に回す。対応は各節の判定表。
+#   ただし settings.json の同じオブジェクト内に完全一致または大文字小文字だけが違うキーが並ぶもの（systemroot と SystemRoot 等）は、
+#   照合の前に重複キーとして層によらず FAIL（どちらの値が効くかが読み手で変わる。3. を参照）。
 #
 # 使い方:  ./check-assets.sh [--payload] <Share-path>
 #   --payload  実体基準を強制する（publish-share から payload を検査する時に使う）
@@ -217,8 +219,14 @@ done
 #       追跡パス（git 層）と .claude 配下のディレクトリ（両層）を列挙し、evals/results の 2 要素を二段階で照合する。
 #       追跡パスはファイル名を除いたディレクトリ部分のどこか（旧 pathspec ':(glob).claude/**/evals/results/**' と同じ範囲）、
 #       ディレクトリは末尾の 2 要素（旧 find -path '*/evals/results' と同じ）を見る。
-#       ⚠ .claude/worktrees（丸ごとの git チェックアウト。2-c で別途判定する）には降りない（名前は完全一致で除外）。
-#          降りると遅いうえ、worktree 内の evals/results を payload の成果物と誤って数える。
+#       ⚠ .claude/worktrees（丸ごとの git チェックアウト。2-c で別途判定する）には降りない。名前は A〜Z だけ畳んだ一致で
+#          除外する（Worktrees / WORKTREES も降りない。2-c がそれを大文字小文字だけが違う成果物クラスとして報告する）。
+#          降りると遅いうえ、worktree 内の evals/results を payload の成果物と誤って数える。-ipath は使わない（UTF-8 の
+#          ロケールでは非 ASCII も畳みうる。KELVIN SIGN 等）。A〜Z の各文字を [Ww] の形で書いて畳む（PS 版の Fold-Ascii と同じ）。
+#       ⚠ シンボリックリンクは辿らず、…/results のディレクトリとしても数えない。find -P（既定。-P を明示している）は
+#          リンクを辿らず、-type d はリンク自体も含めない。Git Bash の find はジャンクションも symlink として扱う（実測）。
+#          PS 版の Get-ClaudeTree と同じ（LinkType が Junction / SymbolicLink のものだけをリンクとし、OneDrive の
+#          プレースホルダ等ほかの再解析ポイントは通常のディレクトリとして降りる。find も降りる。実測）。
 _EVR="evals/results"; _EVR_CLS='*/evals/results/'
 # $1=パス $2=その畳み $3=file（ディレクトリ部分のどこか）/ dir（末尾の 2 要素）→ NC=分類、NC_DIR=一致した …/results まで
 evr_class(){
@@ -239,9 +247,11 @@ evr_class(){
 # ASCII の大文字小文字を畳む一致は必ず含むので取りこぼさず、分類はこのあと evr_class が行う（PS 版の -like と同じ役割）。
 evr_dirs(){
   [[ -d "$SHARE/.claude" ]] || return 0
-  ( cd "$SHARE" && find .claude -path .claude/worktrees -prune -o -type d -iname results -print0 2>/dev/null ) | LC_ALL=C sort -z
+  ( cd "$SHARE" && find -P .claude -path '.claude/[Ww][Oo][Rr][Kk][Tt][Rr][Ee][Ee][Ss]' -prune -o -type d -iname results -print0 2>/dev/null ) \
+    | LC_ALL=C sort -z
 }
-# 2-c' の判定表（照合の分類 → 判定）。2-c と同じ優先順位で判定は 1 つ。列挙は 5 件まで:
+# 2-c' の判定表（照合の分類 → 判定）。2-c と同じ優先順位で判定は 1 つ。列挙は序数（バイト）順の先頭 5 件まで（git 層は
+# ls-files の順 = パスのバイト順、実在は / 区切りのまま LC_ALL=C sort。PS 版の git の順 / Sort-Ordinal と同じ順になる）:
 #   git:tracked:exact    FAIL  Git 追跡されている（追跡ファイルを列挙）
 #   git:tracked:case     WARN  大文字小文字だけが違うパスが Git 追跡されている（…/results のディレクトリごとに 1 行）
 #   git:disk:exact       WARN  実在するが未追跡
@@ -311,11 +321,16 @@ done
 #    （IM-2 でゲートのオオカミ少年化として指摘された故障をそのまま再発させる）。
 #      - git 層（リポジトリのルート）→ 追跡されているファイルだけが payload に乗る
 #      - 非 git 層（取り出した payload の実体）→ そこにあるものが全て配布される
+#    非 git 層の find -P -type f はシンボリックリンク（Git Bash ではジャンクションも）を辿らず数えない（PS 版の Get-ClaudeTree と同じ）。
+#    隠し属性のファイルも数える（find は属性を見ない。PS 版も隠し属性・システム属性を含めて列挙する）。
+# ⚠ 並びは序数（バイト順）にそろえる（2-e / 2-f の一覧の順。PS 版と同じ）。find の順は readdir の順・深さ優先で、PS の
+#    列挙（ディレクトリごとにファイルが先）と割れる（実測）。git 層の ls-files は index の順 = パスのバイト順なので並べ直さない
+#    （PS 版も同じ出力をそのまま使う）。区切りは / のまま並べる（\ は数字・英大文字より後ろに来るので順が変わる）。
 payload_files() {
   if [[ $IS_GIT -eq 1 ]]; then
     git -C "$SHARE" ls-files -z -- .claude
   else
-    ( cd "$SHARE" && find .claude -type f -print0 2>/dev/null )
+    ( cd "$SHARE" && find -P .claude -type f -print0 2>/dev/null ) | LC_ALL=C sort -z
   fi
 }
 
@@ -330,11 +345,22 @@ _abs_re='(^|[^A-Za-z])[A-Za-z]:\\[A-Za-z]|(^|[^A-Za-z])/home/[a-z][a-z0-9_-]*/|/
 # 開発者固有パスを見逃す。ファイル単位ならなおさら）。PS 版と同じ表・同じ判定（大文字小文字を区別する）にすること。
 # ⚠ grep -q で受けない。pipefail の下では後段の -q が先に終わると前段の grep が SIGPIPE（141）で落ち、
 #    パイプライン全体が偽になってヒットが失われる（実測: 該当行が 20000 行のファイルで毎回見逃した）。件数で受ける。
+# バイナリは対象外にする。判定は PS 版の Test-BinaryHead と同じ明示的な規則: 先頭 8000 バイトに NUL があればバイナリ
+# （8000 は git が text=auto / diff でバイナリと見なす窓と同じ。UTF-16 のテキストも NUL を含むのでバイナリ扱い）。
+#   ⚠ grep -I に頼らない。何をバイナリと見なすか（NUL を探す範囲・符号化の誤りの扱い）が grep の版とロケールに依存し、
+#      PS 版と割れる。テキストと判定したものは grep -a で必ずテキストとして読む。
+#   ⚠ NUL を grep で数えない（引数に NUL を渡せない）。tr で NUL だけを残して wc -c でバイト数を数える。
+#   ⚠ grep / sed は LC_ALL=C で走らせる。パターンは ASCII だけなので UTF-8 の本文には同じ結果になり、UTF-8 として不正な
+#      バイト（CP932 等）も 1 バイト = 1 文字として扱える（PS 版は U+FFFD に置き換えて読む。どちらも [^A-Za-z] に一致する）。
+#      [a-z] 等の範囲もロケールの照合順でなくバイト値になる（PS 版の .NET 正規表現と同じ）。
+_BIN_HEAD=8000
+is_binary(){ local n; n="$(head -c "$_BIN_HEAD" -- "$1" 2>/dev/null | LC_ALL=C tr -cd '\000' | wc -c)"; [[ $((n)) -gt 0 ]]; }
 _abs_allow='[A-Za-z]:\\Program Files( \(x86\))?\\(ClaudeCode|Git)\\'
 _abs_hits=""
 while IFS= read -r -d '' _f; do
   case "$_f" in */skills/win-file-encoding/*) continue ;; esac   # 変換 skill は CP932 パスが題材
-  _n="$(grep -IE "$_abs_re" "$SHARE/$_f" 2>/dev/null | sed -E "s#${_abs_allow}##g" | grep -cE "$_abs_re")"
+  is_binary "$SHARE/$_f" && continue
+  _n="$(LC_ALL=C grep -aE "$_abs_re" "$SHARE/$_f" 2>/dev/null | LC_ALL=C sed -E "s#${_abs_allow}##g" | LC_ALL=C grep -acE "$_abs_re")"
   if [[ "${_n:-0}" -gt 0 ]]; then _abs_hits+="${_f}"$'\n'; fi
 done < <(payload_files)
 if [[ -n "$_abs_hits" ]]; then
@@ -372,6 +398,11 @@ done < <(payload_files)
 #    ⚠ 判定はキーパス（a.b.c）で行い、PS 版と同じ表・同じ意味に揃えること（raw grep は
 #       sandbox.filesystem.disabled の "disabled" のような汎用名を区別できない）。
 #    ⚠ 表を更新したら PS 版の $uKeys / $mKeys / $envRe も同時に更新する。
+#    同じオブジェクト内のキーの重複（完全一致、または A〜Z だけ畳んで一致 = 大文字小文字だけの違い。env 以外の階層も同じ）は
+#    専用メッセージで FAIL にし、キーの検査には進まない。どの値が効くかは読み手で変わり（python / PowerShell 7 / 5.1 は
+#    完全一致の重複を黙って後勝ちで受理し、PowerShell は大文字小文字だけの違いを拒否する。実測）、Windows の環境変数名は
+#    大文字小文字を区別しない。判定の順は BOM → JSON 構文 → 重複キー → キーの検査（PS 版と同じ）。構文が先なので、
+#    壊れた JSON は重複があっても「不正な JSON」になる（PS 版は ConvertFrom-Json が構文を通したかで同じ順にしている）。
 _U_KEYS=(skipDangerousModePermissionPrompt useAutoModeDuringPlan autoMode skipAutoPermissionPrompt
          processWrapper pluginConfigs syncClaudeAiSkills syncClaudeAiPlugins
          sandbox.allowAppleEvents sandbox.ripgrep sandbox.filesystem.disabled
@@ -407,7 +438,35 @@ elif [[ -f "$SETTINGS" ]]; then
   if [[ -n "$PY" ]]; then
     # ⚠ encoding を明示する。省略すると日本語 Windows では cp932 で読まれ、日本語を含む正しい
     #    UTF-8 の JSON を「不正な JSON」と誤判定する（実測）。
-    if "$PY" -c "import json,sys; json.load(open(sys.argv[1], encoding='utf-8'))" "$SETTINGS" >/dev/null 2>&1; then
+    # 構文と重複キーを 1 回で調べる。終了コード 0 = 正しい JSON で重複なし / 3 = 正しい JSON だが重複キーあり（1 組 1 行）/
+    # それ以外 = 不正な JSON。重複は object_pairs_hook で拾うが、読み終えられなければ 1 なので構文の誤りが先に勝つ。
+    _dup="$("$PY" - "$SETTINGS" 2>/dev/null <<'PYEOF'
+import json, sys
+# 1 組 = 同じオブジェクト内で完全一致または A〜Z だけ畳んで一致するキーを、文書順に ' / ' で結んだもの（PS 版の Get-JsonDupKeys
+# と同じ）。str.lower() / casefold() は非 ASCII も畳むので使わない（2-c の name_class と同じ規則）
+FOLD = {c: c + 32 for c in range(0x41, 0x5B)}
+groups = set()
+def hook(pairs):
+    by = {}
+    for k, _ in pairs:
+        by.setdefault(k.translate(FOLD), []).append(k)
+    groups.update(' / '.join(ks) for ks in by.values() if len(ks) > 1)
+    return dict(pairs)
+try:
+    json.load(open(sys.argv[1], encoding='utf-8'), object_pairs_hook=hook)
+except Exception:
+    sys.exit(1)
+if groups:
+    # 序数（コードポイント）順。キーに非 ASCII があってもロケールの符号化に左右されないよう UTF-8 のバイト列で書く
+    sys.stdout.buffer.write(('\n'.join(sorted(groups)) + '\n').encode('utf-8', 'replace'))
+    sys.exit(3)
+PYEOF
+)"; _jrc=$?
+    if [[ $_jrc -eq 3 ]]; then
+      _dupj=""
+      while IFS= read -r _l; do _l="${_l%$'\r'}"; [[ -n "$_l" ]] && _dupj+="${_dupj:+、}${_l}"; done <<< "$_dup"
+      bad "settings.json の同じオブジェクト内でキーが重複している（大文字小文字だけが違うものを含む）: ${_dupj}（どの値が効くかは読み手によって変わる。Windows の環境変数名のように大文字小文字を区別しない読み手では同じキーになる。1 つにまとめること。キーの検査は重複を解消してから行う）"
+    elif [[ $_jrc -eq 0 ]]; then
       pass "settings.json は valid JSON"
       # ⚠ python の失敗を PASS に化けさせない（出力が空でも成功扱いにすると fail-open になる。実測）
       if _res="$("$PY" - "$SETTINGS" "${_U_KEYS[*]}" "${_M_KEYS[*]}" "$_ENV_RE" 2>/dev/null <<'PYEOF'

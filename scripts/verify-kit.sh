@@ -318,7 +318,21 @@ probe_version(){
 
 # ---- check-assets -------------------------------------------------------------
 # fixture のケース（check-assets.expect の 1 列目。probe と比較役が同じ順で使う。verify-kit.ps1 の $CaCases と同じ）
-CA_CASES=(ume clean broken bom worktree pcase pexact gcase gexact)
+CA_CASES=(ume clean broken bom worktree pcase pexact gcase gexact hidden dupkey pmulti wtcase)
+# リンク（Windows はジャンクション、それ以外は symlink）を作るケース。作れない系統はそのケースを SKIP し、比較役の
+# drop_skipping は項目単位で系統を除くので、ほかのケースを巻き添えにしないよう別の項目（item_ca_links）で判定する。
+CA_LINK_CASES=(junction)
+# $1=作るリンク $2=実体のディレクトリ。Windows は mklink /J（管理者権限不要。MSYS の ln -s はディレクトリを複製するので
+# 使えない）、それ以外は ln -s。リンクとして見える（[ -L ]。Git Bash はジャンクションを symlink として扱う）ときだけ 0
+vk_mklink(){
+  if command -v cygpath >/dev/null 2>&1; then
+    command -v cmd.exe >/dev/null 2>&1 || return 1
+    MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /c mklink /J "$(cygpath -w "$1")" "$(cygpath -w "$2")" > /dev/null 2>&1 || return 1
+  else
+    ln -s "$2" "$1" 2> /dev/null || return 1
+  fi
+  [ -L "$1" ]
+}
 probe_checkassets(){
   local c s rc l cfg
   sec "checkassets root"
@@ -331,7 +345,7 @@ probe_checkassets(){
   fi
   # ケースごとの payload は check-assets.expect の冒頭に記した内容で作る（verify-kit.ps1 と同じ）。
   # g で始まるケースは一時の git リポジトリ（ルート＝追跡基準）で、それ以外は --payload（実体基準）で検査する。
-  for c in "${CA_CASES[@]}"; do
+  for c in "${CA_CASES[@]}" "${CA_LINK_CASES[@]}"; do
     sec "checkassets $c"
     if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
       put SKIP "python が無い（check-assets.sh の settings.json 検査が動かない）"; continue
@@ -345,22 +359,56 @@ probe_checkassets(){
       worktree)
         cp "$VK_FIX/settings-clean.json" "$s/.claude/settings.json"
         mkdir -p "$s/.claude/worktrees/wt/.claude/evals/results";;
+      wtcase)
+        cp "$VK_FIX/settings-clean.json" "$s/.claude/settings.json"
+        mkdir -p "$s/.claude/Worktrees/evals/results";;
       pcase) cp "$VK_FIX/settings-envcase.json" "$s/.claude/settings.json";;
-      pexact|gcase|gexact) cp "$VK_FIX/settings-clean.json" "$s/.claude/settings.json";;
+      pexact|gcase|gexact|junction|hidden|pmulti) cp "$VK_FIX/settings-clean.json" "$s/.claude/settings.json";;
       *) cp "$VK_FIX/settings-$c.json" "$s/.claude/settings.json";;
     esac
     case "$c" in
+      junction)
+        # .claude/x は外のディレクトリ（evals/results と絶対パスを書いたファイルを持つ）へのリンク、.claude/y/evals/results は
+        # リンクそのもの（空のディレクトリへ）。実体はケースのディレクトリの中（.claude の外）に置く
+        mkdir -p "$s/outside-x/evals/results" "$s/outside-y" "$s/.claude/y/evals"
+        printf '%s\n' 'C:\Users\verify-kit\linked' > "$s/outside-x/evals/results/r.md"
+        if ! vk_mklink "$s/.claude/x" "$s/outside-x" || ! vk_mklink "$s/.claude/y/evals/results" "$s/outside-y"; then
+          put SKIP "ジャンクション / シンボリックリンクを作れない"; continue
+        fi;;
       ume)
         cp "$VK_FIX/abspath-mixed.md" "$s/.claude/"
         printf '%s\n' 'C:\Users\verify-kit\work' > "$s/.claude/win-file-encoding-abspath.md"
-        yes 'C:\Users\verify-kit\big' | head -n 20000 > "$s/.claude/big-abspath.md";;
-      clean) cp "$VK_FIX/abspath-allowed.md" "$s/.claude/";;
+        yes 'C:\Users\verify-kit\big' | head -n 20000 > "$s/.claude/big-abspath.md"
+        # 25 バイトの行 + x を 7975 バイト（計 8000）の直後に NUL。NUL が先頭 8000 バイトの外なのでテキスト扱い
+        { printf '%s\n' 'C:\Users\verify-kit\late'; printf '%7975s' '' | tr ' ' x; printf '\000tail\n'; } > "$s/.claude/late-nul-abspath.md";;
+      hidden)
+        # 隠し属性のファイルと、隠し属性のディレクトリの中のファイル（どちらも絶対パスを書く）。名前も . で始める
+        # （Windows 以外の .NET は . 始まりを隠しとみなす）。find は属性を見ないが、fixture は PS 版と同じにする
+        mkdir -p "$s/.claude/.hidden-dir"
+        printf '%s\n' 'C:\Users\verify-kit\hidden' > "$s/.claude/.hidden-abspath.md"
+        printf '%s\n' 'C:\Users\verify-kit\hidden' > "$s/.claude/.hidden-dir/abspath.md"
+        if command -v cygpath >/dev/null 2>&1 && command -v attrib.exe >/dev/null 2>&1; then
+          attrib.exe +h "$(cygpath -w "$s/.claude/.hidden-abspath.md")" > /dev/null 2>&1
+          attrib.exe +h "$(cygpath -w "$s/.claude/.hidden-dir")" > /dev/null 2>&1
+        fi;;
+      clean)
+        cp "$VK_FIX/abspath-allowed.md" "$s/.claude/"
+        { printf 'verify-kit\000'; printf '%s\n' 'C:\Users\verify-kit\binary'; } > "$s/.claude/binary-abspath.bin";;
       pcase|gcase)
         mkdir -p "$s/.claude/Reports" "$s/.claude/plugin-x/Evals/Results"
         printf 'verify-kit\n' > "$s/.claude/Reports/x.md"; printf '{}\n' > "$s/.claude/plugin-x/Evals/Results/r.json";;
       pexact|gexact)
         mkdir -p "$s/.claude/reports" "$s/.claude/plugin-x/evals/results"
-        printf 'verify-kit\n' > "$s/.claude/reports/x.md"; printf '{}\n' > "$s/.claude/plugin-x/evals/results/r.json";;
+        printf 'verify-kit\n' > "$s/.claude/reports/x.md"; printf '{}\n' > "$s/.claude/plugin-x/evals/results/r.json"
+        if [ "$c" = gexact ]; then
+          mkdir -p "$s/.claude/plugin-x0/evals/results"; printf '{}\n' > "$s/.claude/plugin-x0/evals/results/r.json"
+        fi;;
+      pmulti)
+        # 並びの検査。/ 区切りの序数順と \ 区切り・カルチャ順・列挙の順で前後が入れ替わる名前を混ぜる（列挙は先頭 5 件）
+        for d in p p-x p0 pZ p_ pa; do mkdir -p "$s/.claude/$d/evals/results"; done
+        mkdir -p "$s/.claude/a"
+        printf '%s\n' 'C:\Users\verify-kit\multi' > "$s/.claude/a/y.md"
+        printf '%s\n' 'C:\Users\verify-kit\multi' > "$s/.claude/a0.md";;
     esac
     case "$c" in
       g*)
@@ -370,7 +418,7 @@ probe_checkassets(){
           mkdir -p "$s/.claude/Work"; printf 'verify-kit\n' > "$s/.claude/Work/w.md"
           set -- .claude/Reports/x.md .claude/plugin-x/Evals/Results/r.json
         else
-          set -- .claude/reports/x.md .claude/plugin-x/evals/results/r.json
+          set -- .claude/reports/x.md .claude/plugin-x/evals/results/r.json .claude/plugin-x0/evals/results/r.json
         fi
         if ! { vk_tgit "$cfg" init -q "$s" \
                && vk_tgit "$cfg" -C "$s" add -- .claude/.gitignore .claude/.gitattributes .claude/CLAUDE.md .claude/settings.json \
@@ -1069,18 +1117,21 @@ drop_skipping(){ # 節… -- 系統…
   done
 }
 
-item_ca_fixture(){
-  local t="check-assets fixture（U/M/E・無害・壊れた JSON・BOM・worktree・大文字小文字違い）" s c d cs erc tag frag n bad
-  local -a S secs=()
+# check-assets の fixture のケースを全系統で突き合わせ、期待値と照合する（item_ca_fixture / item_ca_links が使う）。
+#   $1=項目名 $2=PASS の説明 残り=ケース。期待値ファイルの鍵は CA_CASES と CA_LINK_CASES を合わせた列挙に照らす
+ca_cases_check(){
+  local t="$1" desc="$2" s c d cs erc tag frag n bad all; shift 2
+  local -a S secs=() cases=("$@")
+  all="${CA_CASES[*]} ${CA_LINK_CASES[*]}"
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
-  if ! bad="$(vk_check_keys check-assets.expect "${CA_CASES[*]}" "ケースの列挙（${CA_CASES[*]}）" 4)"; then verdict FAIL "$t" "$bad"; return; fi
-  for cs in "${CA_CASES[@]}"; do secs+=("checkassets $cs"); done
+  if ! bad="$(vk_check_keys check-assets.expect "$all" "ケースの列挙（${all}）" 4)"; then verdict FAIL "$t" "$bad"; return; fi
+  for cs in "${cases[@]}"; do secs+=("checkassets $cs"); done
   drop_skipping "${secs[@]}" -- "${S[@]}"
   if [ "${#KEPT[@]}" -eq 0 ]; then verdict SKIP "$t" "$SKIP_NOTE"; return; fi
   S=("${KEPT[@]}")
-  for cs in "${CA_CASES[@]}"; do
+  for cs in "${cases[@]}"; do
     n="$(cut -f1 "$VK_FIX/check-assets.expect" | grep -cx -- "$cs")"   # grep -q は SIGPIPE を招くので件数で受ける
     if [ "${n:-0}" -eq 0 ]; then verdict FAIL "$t" "${cs}: check-assets.expect に期待値が無い"; return; fi
     if ! same_all "checkassets $cs" "" "${S[@]}"; then
@@ -1101,7 +1152,17 @@ item_ca_fixture(){
       fi
     done < <(grep -v '^#' "$VK_FIX/check-assets.expect")
   done
-  verdict PASS "$t" "${#CA_CASES[@]} ケース × $(labels "${S[@]}") で同一判定・期待どおり（U/M/E と絶対パス混在は WARN・無害は PASS・壊れた JSON と BOM 付き・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN、env キーの大文字小文字違いは WARN で、完全一致は従来どおり）$(missing_note "${SYS_ALL[@]}")${SKIP_NOTE:+（${SKIP_NOTE}）}"
+  verdict PASS "$t" "${#cases[@]} ケース × $(labels "${S[@]}") で同一判定・期待どおり（${desc}）$(missing_note "${SYS_ALL[@]}")${SKIP_NOTE:+（${SKIP_NOTE}）}"
+}
+item_ca_fixture(){
+  ca_cases_check "check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順）" \
+    "U/M/E と絶対パス混在は WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順" \
+    "${CA_CASES[@]}"
+}
+item_ca_links(){
+  ca_cases_check "check-assets リンク（ジャンクション / シンボリックリンク）" \
+    "リンクは辿らず、…/results のディレクトリとしても数えない（2-c' は PASS）・リンク先のファイルを 2-e で読まない" \
+    "${CA_LINK_CASES[@]}"
 }
 
 item_cleanenv(){
@@ -1358,6 +1419,7 @@ compare_main(){
   item_internal_keys
   item_ca_root
   item_ca_fixture
+  item_ca_links
   item_cleanenv
   item_cleanenv_badmode
   item_pubname
