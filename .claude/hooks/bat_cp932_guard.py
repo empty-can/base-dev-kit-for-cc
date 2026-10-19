@@ -17,7 +17,9 @@ back over it. The original is therefore never handed to the file tools.
     block  settings.json denies Edit/Write on *.bat outright. updatedInput is
            IGNORED by Edit and Write (measured) -- they would reach the original
            and write UTF-8 into it -- and a hook cannot be the guarantee anyway:
-           with no Python on PATH it fails open. The deny rule is the hard guard;
+           with no Python on PATH it cannot run (the Read guard in settings.json
+           carries onFailure: "block" since v2.1.295 so a failed start blocks the
+           Read; versions below the kit's minimum, v2.1.295, are out of scope). The deny rule is the hard guard;
            this script is the convenience. Hence the shadow is *.utf8.txt and not
            *.bat: deny beats allow, so a shadow named *.bat would be caught by the
            very rule that protects the original.
@@ -55,8 +57,9 @@ SHADOW_SUBDIR = pathlib.PurePosixPath(".claude/.bat-shadow")
 SHADOW_SUFFIX = ".utf8.txt"
 ORIGIN_SUFFIX = ".origin"
 
-# Wave dash, em dash and friends have no CP932 code point but do have a CP932
-# counterpart; normalise them instead of rejecting the write-back. The table in
+# Characters such as the em dash (U+2014) have no CP932 code point but do have a
+# CP932 counterpart; normalise them instead of rejecting the write-back. (The wave
+# dash U+301C does encode: Python's cp932 maps it to 0x8160, same as U+FF5E.) The table in
 # the win-file-encoding skill is the source of truth -- this is only the fallback.
 MAPPING_JSON = pathlib.PurePosixPath(
     ".claude/skills/win-file-encoding/references/cp932-mapping.json"

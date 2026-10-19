@@ -48,13 +48,15 @@
             "type": "command",
             "if": "Read(**/*.bat)",
             "command": "python",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/bat_cp932_guard.py", "pre"]
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/bat_cp932_guard.py", "pre"],
+            "onFailure": "block"
           },
           {
             "type": "command",
             "if": "Read(//**/*.bat)",
             "command": "python",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/bat_cp932_guard.py", "pre"]
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/bat_cp932_guard.py", "pre"],
+            "onFailure": "block"
           }
         ]
       }
