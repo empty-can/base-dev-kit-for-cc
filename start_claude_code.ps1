@@ -24,10 +24,13 @@
 #    settings（env ブロックを含む）＋引き継がれた構成フラグ」から読む。起動元のシェルから届く env は
 #    公式に列挙されたものだけ（PATH / CLAUDE_CODE_USE_BEDROCK・CLAUDE_CODE_USE_VERTEX /
 #    ANTHROPIC_DEFAULT_*_MODEL / CLAUDE_CODE_EXTRA_BODY。ゲートウェイ変数は条件付き）。
-#    custom.env・setup-environment の値はこの列挙に入るものを除いて background には届かない
-#    （例: CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD は届かず、--add-dir だけが引き継がれる）。
-#    ※ supervisor は全端末で共有され「最初に起動したシェルの env を継承」するため、このランチャーから
-#    起動した claude が supervisor を立ち上げた場合に限り届くことがある＝起動順次第で確実ではない。
+#    それ以外の env（custom.env・setup-environment の値の大半）は dispatch 元ではなく supervisor の env から
+#    受け継がれる（2026-10-20 Windows で実測）。supervisor は全端末で共有され、それを立ち上げたプロセスの env を継承する
+#    ため、届くかは起動順次第で確実ではない ―― このランチャーから起動した claude が supervisor を立ち上げると、
+#    以後は別の端末から dispatch した background セッションにも届き、dispatch 元に同名の値があっても supervisor
+#    側の値が使われる。素のシェル等が先に立ち上げていると、このランチャー経由の claude --bg でも届かない
+#    （例: CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD が欠け、--add-dir だけが引き継がれる）。
+#    その env は supervisor が止まるまで（claude daemon stop --any 等）使われ、auto-update による自己再起動でも変わらない。
 #    background にも効かせたい値は OS の環境変数（永続的なユーザー環境変数。Windows はユーザー環境変数、
 #    macOS / Linux はログインシェルの profile）で設定すること。supervisor は最初に起動したシェルの env を
 #    継承するので、どの端末から起動されても届く（既に動いている service には、それが起動した時点の env が使われる）。

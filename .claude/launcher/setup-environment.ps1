@@ -15,7 +15,10 @@
 #
 # ⚠ このランチャー経由の env が確実に届くのは foreground 起動の claude だけ。
 #    background / agent-view セッションは全端末で共有する supervisor プロセスがホストし、その env は
-#    「supervisor を最初に起動したシェル（ランチャー経由の claude を含む）」から継承される＝届くかは起動順次第。
+#    「supervisor を最初に起動したシェル（ランチャー経由の claude を含む）」から継承される＝届くかは起動順次第
+#    （2026-10-20 Windows で実測: ランチャー経由の claude が立ち上げた supervisor では、別の端末から dispatch したセッションにも
+#    custom.env の値が届き、dispatch 元の同名の値より優先された。素のシェルが先に立ち上げていると、ランチャー経由の
+#    claude --bg でも届かなかった。auto-update による supervisor の自己再起動では env は変わらなかった）。
 #    各セッションは起動ディレクトリの settings（project の env を含む）を読み、dispatch 元シェルからは
 #    PATH・CLAUDE_CODE_USE_*・ANTHROPIC_DEFAULT_*_MODEL・CLAUDE_CODE_EXTRA_BODY（と条件付きでゲートウェイ設定）
 #    だけを引き継ぐ。background にも確実に効かせたい値は OS の環境変数（永続的なユーザー環境変数）で設定する。

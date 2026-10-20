@@ -41,7 +41,7 @@
     - 環境変数や起動時オプションを設定した他のファイルをロードし、それらが適用された状態で Claude Code を起動する
     - 必要があれば、Claude Code起動のために必要なロジック的な処理も実施する（ロードした起動時オプション群から起動コマンドを組み立てる処理、など）
   - 利用者向役割: ランチャースクリプトワンクリックで、適切な値が設定された環境変数や必要な起動時オプションが指定された状態でClaude Codeが起動される
-    - しかも環境変数はローカルスコープなので、他のアプリケーションや**別途起動した** Claude Code プロセスには影響しない（例外の可能性: このランチャーで起動したセッションが最初に background service〔supervisor〕を起動した場合、service はその環境を継承する。ゲートウェイ変数は転送対象から外されるが、他の変数が後続の background セッションに波及するかは公式に記載がない ―― 要実測。§5 参照）
+    - しかも環境変数はローカルスコープなので、他のアプリケーションや**別途起動した** Claude Code プロセスには影響しない（例外: このランチャーで起動したセッションが最初に background service〔supervisor〕を起動した場合、service はその環境を継承し、後続の background セッション〔別の端末から dispatch したものを含む〕へ波及する ―― 2026-10-20 実測。ゲートウェイ変数は転送対象から外される。§5 参照）
   - Git 追跡対象？・・・yes（層1`basic_cc_project`リポジトリで配布する資産）
 2. `setup-environment.sh/.ps1`
   - 機能的役割: 利用者が値を都度設定変更できる`custom.env`の読み込み + 利用者が値を変更不要or変更してはいけない（＝利用メンバー間で決まった値を使うルールになっている）環境変数の値を後勝ち設定で保証する。
@@ -95,12 +95,12 @@
 | 実行ディレクトリの settings（`env` ブロック含む） | 届く | 公式は個人の `~/.claude/settings.json` の `env` を勧めるが、**キットは §3(6) の方針によりこの経路を利用者に使わせない**。組織で固定する分類B/C は managed settings の `env`（管理者の経路）。settings の `env` はシェルの export より優先される |
 | 起動時の構成フラグ | 列挙されたものだけ | `--mcp-config` `--strict-mcp-config` `--settings` `--setting-sources`（v2.1.281〜） `--add-dir` `--plugin-dir` `--fallback-model` `--allow-dangerously-skip-permissions`。セッション中に `/add-dir` で足したディレクトリも届く |
 | dispatch 元シェルの env | 列挙されたものだけ | `PATH`、`CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX`、`ANTHROPIC_DEFAULT_*_MODEL`、`CLAUDE_CODE_EXTRA_BODY`。ゲートウェイ（`ANTHROPIC_BASE_URL` 等）は supervisor 自身が同じゲートウェイを持つシェルから起動された場合などに限る |
-| supervisor を最初に起動したシェルの env | 継承される（起動順次第） | supervisor は全端末で共有され、最初に起動したシェルの環境を継承する。ランチャー経由の `claude` が supervisor を立ち上げた場合に限りランチャーの env が届く＝**確実ではない** |
-| `custom.env` / `setup-environment` の値 | **確実には届かない** | 上の行に入るもの（`PATH`・プロバイダ選択等）だけは届く。例: `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`（分類C）が欠け、`--add-dir <Share>` は引き継がれるのに `<Share>` の CLAUDE.md / rules がロードされない |
+| supervisor を最初に起動したシェルの env | 継承される（起動順次第・2026-10-20 実測） | supervisor は全端末で共有され、それを立ち上げたプロセスの環境を継承する。上の行に無い env はこの経路で決まり、dispatch 元に同名の値があっても supervisor 側の値が使われる。ランチャー経由の `claude` が supervisor を立ち上げた場合に限り、以後は別の端末から dispatch したセッションにもランチャーの env が届く。素のシェル等が先に立ち上げていると、ランチャー経由の `claude --bg` でも届かない＝**確実ではない**。その env は supervisor が止まるまで使われ、auto-update による自己再起動でも変わらない（手順と結果は実装計画 §8-ter (1)） |
+| `custom.env` / `setup-environment` の値 | **確実には届かない** | dispatch 元シェルの行に入るもの（`PATH`・プロバイダ選択等）だけは届く。それ以外は、ランチャー経由の `claude` が supervisor を立ち上げた場合だけ届く（上の行）。例: `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`（分類C）が欠け、`--add-dir <Share>` は引き継がれるのに `<Share>` の CLAUDE.md / rules がロードされない |
 | system prompt 置換・`--tools` 許可リスト | 引き継がれない | これらで起動したセッションは `/fork` を拒否される |
 | Desktop の `/resume` で開いた CLI セッション | ランチャーの env は無い | Windows の Desktop はユーザー／システム環境変数を継承し、PowerShell プロファイルは読まない |
 
-**帰結**: §3 (6) の「`settings.json` 系に `env` を置かない習慣」は background でも例外にしない。background にも効かせたい値は **OS の環境変数**（永続的なユーザー環境変数。Windows はユーザー環境変数、macOS / Linux はログインシェルの profile）で設定する。supervisor は最初に起動したシェルの env を継承するので、OS の環境変数ならどの端末から起動されても届く（既に動いている service には、それが起動した時点の env が使われる）。分類A（機微）も同じく OS 環境変数で供給し、settings には書かない。組織で固定する値だけは managed settings の `env`（管理者の経路）。
+**帰結**: §3 (6) の「`settings.json` 系に `env` を置かない習慣」は background でも例外にしない。background にも効かせたい値は **OS の環境変数**（永続的なユーザー環境変数。Windows はユーザー環境変数、macOS / Linux はログインシェルの profile）で設定する。supervisor は最初に起動したシェルの env を継承するので、OS の環境変数ならどの端末から起動されても届く（既に動いている service には、それが起動した時点の env が使われ、auto-update による自己再起動でも変わらない ―― 2026-10-20 実測）。分類A（機微）も同じく OS 環境変数で供給し、settings には書かない。組織で固定する値だけは managed settings の `env`（管理者の経路）。
 
 ### 5-1. 企業ランチャー（`CLAUDE_CODE_PROCESS_WRAPPER`）との関係
 
@@ -154,4 +154,4 @@ background service と agent view の全セッションを起動装置に通す�
 - 判定は「`-` で始まるか」だけで、claude 側のフラグ型を見ない。そのためフラグが増えても追随は不要だが、利用者自身が並べた引数（`--add-dir X "prompt"` を追加引数で渡す等）は守らない。
 
 ---
-変更履歴: 初版（2026-07-05）。／**2026-10-19（追補）**: §5-3 の「前にオプションがあってもサブコマンドは dispatch される」という推定を実測で確かめた。`-p` なしでは推定どおりだったが、`-p` があると `--` の有無に関係なく dispatch されずプロンプトになるため、限界の記述を分けた。／**2026-10-19**: §5-3 を新設 ―― 値を複数取る／省略できるフラグが位置引数のプロンプトを取り込むことを実測し、ランチャーに `--` の補完（追加引数が全部非フラグのときだけ）と bash 版の組立順ソートを入れた。／**2026-10-18**: Claude Code v2.1.302 までの実行モデル変更を反映 ―― §5「background セッションとランチャーの関係」を新設（経路別の到達表・引き継がれる構成フラグ・supervisor の env 継承）、§5-1 で `CLAUDE_CODE_PROCESS_WRAPPER` が Windows では無視されることを明記、§5-2 でサブコマンド委譲の注意を追加。§3 (1) の「他の Claude Code プロセスに全く影響しない」と §3 (6) の「settings に env を置かない習慣」に background 前提の注記を追加。／**2026-07-12**: 本書を設計書の正本として規定（IM-8）。§3 の誤字（「Gi追跡」「層1?」）と (5) の複写ミス（option-settings を「環境変数が反映」と誤記）を清書（S-3）。(6) `custom.env` を「センシティブな値の受け皿」とする記述を撤回し、分類A は OS 環境変数で供給する方針へ統一（IM-1）。§4「配布レール」を新設し publish 経路を明記（IM-2 / CR-1）。
+変更履歴: 初版（2026-07-05）。／**2026-10-20（追補）**: §5 表の「supervisor を最初に起動したシェルの env」行と「`custom.env` / `setup-environment` の値」行、§3 1. の例外注記を実測で確定した（実装計画 §8-ter (1)）。推定どおり起動順次第で、ランチャー経由の `claude` が supervisor を立ち上げると、別の端末から dispatch したセッションにも値が波及し、dispatch 元の同名の値より優先される。素のシェルが先に立ち上げていると、ランチャー経由の `claude --bg` でも届かない。／**2026-10-19（追補）**: §5-3 の「前にオプションがあってもサブコマンドは dispatch される」という推定を実測で確かめた。`-p` なしでは推定どおりだったが、`-p` があると `--` の有無に関係なく dispatch されずプロンプトになるため、限界の記述を分けた。／**2026-10-19**: §5-3 を新設 ―― 値を複数取る／省略できるフラグが位置引数のプロンプトを取り込むことを実測し、ランチャーに `--` の補完（追加引数が全部非フラグのときだけ）と bash 版の組立順ソートを入れた。／**2026-10-18**: Claude Code v2.1.302 までの実行モデル変更を反映 ―― §5「background セッションとランチャーの関係」を新設（経路別の到達表・引き継がれる構成フラグ・supervisor の env 継承）、§5-1 で `CLAUDE_CODE_PROCESS_WRAPPER` が Windows では無視されることを明記、§5-2 でサブコマンド委譲の注意を追加。§3 (1) の「他の Claude Code プロセスに全く影響しない」と §3 (6) の「settings に env を置かない習慣」に background 前提の注記を追加。／**2026-07-12**: 本書を設計書の正本として規定（IM-8）。§3 の誤字（「Gi追跡」「層1?」）と (5) の複写ミス（option-settings を「環境変数が反映」と誤記）を清書（S-3）。(6) `custom.env` を「センシティブな値の受け皿」とする記述を撤回し、分類A は OS 環境変数で供給する方針へ統一（IM-1）。§4「配布レール」を新設し publish 経路を明記（IM-2 / CR-1）。
