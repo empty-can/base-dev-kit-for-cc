@@ -34,8 +34,12 @@ paths:
 
 ## `.ps1` は普通に編集してよい（ただし新規作成は必ず壊れる）
 
-UTF-8 + BOM なので Claude のツールがそのまま扱える。**変換は不要**。ただし **`Write` ツールは BOM も CRLF も
-保持しない**（実測: `Write` で作った `.ps1` は BOM 無し・LF になる。`Edit` は保持する）。加えて Claude Code は
+UTF-8 + BOM なので Claude のツールがそのまま扱える。**変換は不要**。ただし **`Write` ツールは CRLF を保持せず、
+新規作成では BOM も付かない**（実測: `Write` で作った `.ps1` は BOM 無し・LF になる。`Edit` は BOM も CRLF も保持する）。
+既存ファイルを `Write` で**上書き**したときの BOM は、changelog 2.1.299 が「BOM を落とす Write を修正（now refused）」と
+しているが、docs（tools-reference）には記載が無い。**v2.1.302 での実測**（hook と deny が反応しないよう `.txt` で測定）:
+UTF-8 + BOM + CRLF のファイルを `Write` で上書きすると、拒否されず **BOM は保持され、改行は LF になった**（渡した
+内容の改行のまま書かれ、元の CRLF は残らない）。上書きでも CRLF は壊れる。加えて Claude Code は
 過去に **CRLF を二重化する不具合（v2.1.89 修正）／CRLF ファイルの改行を黙って変換する不具合（v2.1.77 修正）**
 を出しており、**改行と BOM の保全は仕様として保証されていない**（公式 docs にファイル操作ツールの改行・
 文字コードの規定は無い）。
@@ -66,7 +70,13 @@ head -c 3 <file> | od -An -tx1
 
 ## `.bat` は原本に触らない（hook が自動処理する）
 
-`.bat` は CP932 なので、Claude のツールで直接読むと文字化けし、書くと UTF-8 で上書きして壊れる。
+`.bat` は CP932 なので、Claude のツールで直接読むと文字化けする。書く側は、`Edit` が非 UTF-8 ファイルへの変更を
+拒否する（v2.1.296〜。tools-reference「Non-UTF-8 files」）が、**ASCII だけの `.bat` は UTF-8 としても有効なので
+`Edit` が通り、日本語を足すと UTF-8 で保存されて壊れる**。`Write` は docs では「UTF-8 で上書きし元の文字コードは
+失われる」、changelog 2.1.299 では「Shift-JIS 等を黙って UTF-8 化する Write は拒否」とされ、食い違っている。
+**v2.1.302 での実測**（`.txt` で測定）は changelog のとおりで、日本語を含む CP932 のファイルへの `Write` は
+`File is not valid UTF-8` で拒否され、バイト列は変わらなかった。ただし **ASCII だけのファイルは `Write` も通り**、
+日本語を書くと UTF-8・LF で保存された（`Edit` と同じ穴）。
 そのため **`.claude/hooks/bat_cp932_guard.py` が原本を隠し、UTF-8 の作業コピー（影）を見せる**。
 **Claude は以下に従うだけでよく、文字コードを意識する必要はない**。
 
@@ -77,15 +87,27 @@ head -c 3 <file> | od -An -tx1
 | **新規作成する** | `python .claude/hooks/bat_cp932_guard.py new <path>.bat` で空の `.bat` と作業コピーを作り、作業コピーを編集する（`Write` は拒否される） |
 | **中身を検索する** | `python .claude/hooks/bat_cp932_guard.py sync` で全作業コピーを更新してから、`Grep` の対象を `.claude/.bat-shadow/` にする（CP932 のままでは Grep は日本語にヒットしない） |
 
-- **原本への `Edit` / `Write` は `permissions.deny` で拒否される**。hook は Python が無い環境では失敗して素通り
-  するため、**ハードなガードは permission 側が担い、hook は利便性を担う**という二層構造にしてある。
+- **原本への `Edit` / `Write` は `permissions.deny` で拒否される**。hook は Python が無い環境では起動に失敗し、
+  既定ではそのまま操作が素通りする。`.bat` の Read ガード（PreToolUse）には `"onFailure": "block"`（v2.1.295〜）を
+  付けてあるので、起動失敗・タイムアウト・想定外の終了コードでは **Read 自体が止まる**（PostToolUse 側の書き戻し・
+  `.ps1` 検査には付けていない。対応する最低版は v2.1.295 で、それ未満は対象外）。それでも
+  **ハードなガードは permission 側が担い、hook は利便性を担う**という二層構造は変わらない。
   **hook には Python 3.10 以上が `python` として PATH に必要**（無い場合、`.bat` は読めないが原本は壊れない）。
   hook の `if` 条件は **Claude Code v2.1.176 以上**でないと正しくマッチしない（それ以前は起動しない）。
+  最低版の v2.1.295 はこれを包含する。
 - **CP932 に存在しない文字は書き戻し時に拒否される**（原本は書き換わらない）。`⚠` `‼` `✓` `✗` は CP932 に
   符号位置が無いので、`.bat` のメッセージ記号は **ASCII（`[!]` / `[OK]` 等）**を使う。
   `〜` `—` `−` のような和字は `.claude/skills/win-file-encoding/references/cp932-mapping.json` の表で
   CP932 の対応字へ自動正規化されるため、拒否されない。
-- **`.bat` を `sed -i` やリダイレクトで書き換えない**（Bash 経由の書き込みは hook が守れない）。
+- **`.bat` を `sed -i`・リダイレクト・PowerShell の `Set-Content` / `Add-Content` / `Out-File` / `>`・スクリプト
+  （Python 等）で書き換えない**（シェルやスクリプト経由の書き込みは hook が守れない。`permissions.deny` の
+  `Edit(...)` が止めるのも Bash のリダイレクト先と `sed` / `tee` 等までで、PowerShell やスクリプトには保証が無い）。
+  非 UTF-8 のファイルに対する `Edit` / `Write` の拒否メッセージは「文字コードを保つシェルコマンドで直す」を勧め、
+  `Write` のもの（v2.1.302 で実測）はさらに iconv や PowerShell の `Set-Content -Encoding`、「消してから `Write`
+  する」まで挙げるが、`.bat` には従わない。
+  **例外は CP932 + CRLF で書くキット同梱の 2 つだけ**: `bat_cp932_guard.py new`（新規作成）と、`win-file-encoding`
+  skill の `convert_encoding.py --to-win`（UTF-8 で保存されてしまった `.bat` の修復・一括変換。hook が Read を止めた
+  ときに案内する。実行後は作業コピーが古くなるので、原本を Read し直してから編集する）。
 
 > 一括変換・検査を手動で行いたい場合は `win-file-encoding` skill の `convert_encoding.py` を使う
 > （`--to-win --check` で CP932 エンコード可否だけを検査できる）。日常の `.bat` 編集で skill を呼ぶ必要はない。

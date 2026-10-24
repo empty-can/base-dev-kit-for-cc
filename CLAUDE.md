@@ -51,11 +51,18 @@ Claude Code の**共有 `.claude/` キット（`<Share>`）そのもの**。こ�
   `grep -c $'\r'` は**パターンが空になり全行にマッチして総行数**を返し、実 CR をパターンにすると今度は
   **grep が入力の CR を剥がして常に 0** を返す。**「大きい数」と「0」の両方が誤りになりうる**ため、
   before/after を別の書き方で測ると**壊れた計測どうしが「修正が効いた」ように見える**（実際に起きた）。
-  `tr -cd '\r' | wc -c` か `git ls-files --eol` を使う。
+  `tr -cd '\r' | wc -c` か `git ls-files --eol` を使う。PowerShell ツール側で数えるなら
+  `([IO.File]::ReadAllBytes('<file>') | Where-Object { $_ -eq 13 }).Count` でバイトを数える
+  （`Get-Content` / `Select-String` は改行を剥がすので CR を数えられない）。
 
 ## 環境
 
-- Windows がプライマリ。bash（Git Bash）と PowerShell の両方で動く必要がある。
+- Windows がプライマリ。bash（Git Bash）と PowerShell の両方で動く必要がある（スクリプト側の要件）。
+- Claude 自身のシェルツールは、Windows では PowerShell ツールが主になる（Git for Windows があっても
+  claude.ai / Console アカウントでは既定で有効で、Claude は PowerShell を primary shell として扱う。
+  Bash ツールは Git Bash がある場合に POSIX スクリプト用として残り、無ければ登録されない）。
+  bash 版は Bash ツール（Git Bash）で、PS 版は PowerShell ツールで、それぞれ実際に走らせて検証する。
 - Python（CPython 3.x）を使う資産がある（`.claude/hooks/` と `win-file-encoding` skill）。
 - **`.bat` は CP932 で保存する**。Claude は原本に触れず、hook が見せる UTF-8 の作業コピーを編集する。
-  詳細は `.claude/rules/win-file-encoding.md`（`.bat` を読むと自動でロードされる）。
+  詳細は `.claude/rules/win-file-encoding.md`（path-scoped rule。`.bat` や作業コピーを Read / Edit したとき、
+  または Bash の `cat` 等で閲覧したときに自動でロードされる）。

@@ -21,42 +21,62 @@
 # （実測: ref の打ち間違いで『‼ ref が存在しない』(exit 2) ではなく NativeCommandError の生スタックが出る）。
 # 対象シェルを機械で宣言して fail fast させる。
 #requires -Version 7
+# ⚠ -Ref に [Parameter(Mandatory)] を付けない。非対話で省略すると PowerShell 独自の文言で落ち（対話では
+#    プロンプトになる）、空文字列はバインドの段階で拒否されるため、bash 版と同じ文言・終了コードにできない。
+#    本文で明示的に検査する（bash 版の必須の検査と同じ文言・exit 2）。
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$Ref,
+  [string]$Ref = '',
   [string]$ShareBody = 'C:\cc-workspace\basic_dot_claude'
 )
 $ErrorActionPreference = 'Stop'
+
+# ⚠ 中止のメッセージ（‼ の行とその続きの行）は bash 版と同じく stderr へ出す（Write-Host は stdout）。
+#    Write-Error は使わない: $ErrorActionPreference='Stop' 下では Write-Error が terminating error になり、
+#    直後の exit <code> に到達しないため終了コードが不定になる（CI で FAIL の種別を判別できない）。
+function Write-Err([string]$m) { [Console]::Error.WriteLine($m) }
+
+# 引数の検査（bash 版の引数の解析と必須の検査と同じ順・同じ文言・同じ終了コード）:
+#   -ShareBody を明示的に空で渡したら引数エラーで止める（exit 1。既定値を使うのは省略したときだけ）→
+#   -Ref が空・省略なら exit 2。どちらも git や配布先の検査より前に行う。
+if ($PSBoundParameters.ContainsKey('ShareBody') -and $ShareBody -eq '') {
+  Write-Err '‼ -ShareBody に値が必要（空のパスは指定できない。既定の共有本体を使うなら -ShareBody を省略する）'
+  exit 1
+}
+if ($Ref -eq '') {
+  Write-Err '‼ -Ref は必須です（既定値は廃止）。publish する ref を明示してください。'
+  Write-Err "   例: $PSCommandPath -Ref v1.0.0"
+  exit 2
+}
 
 # 開発リポの位置はスクリプトの場所から解決する（CWD に依存させない。別リポジトリ内から
 # 実行して、そのリポの .claude を publish してしまう事故を防ぐ）。
 $Here    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DevRoot = (Resolve-Path (Join-Path $Here '..')).Path
 git -C $DevRoot rev-parse --git-dir *> $null
-if ($LASTEXITCODE -ne 0) { Write-Host "‼ 開発リポジトリが見つからない: $DevRoot"; exit 2 }
+if ($LASTEXITCODE -ne 0) { Write-Err "‼ 開発リポジトリが見つからない: $DevRoot"; exit 2 }
 
 # 共有本体の検査: .git が「ディレクトリ」であること（submodule の .git はファイル＝gitlink）。
 # かつ、指定パスがそのリポジトリのルートそのものであること。
 # これを緩めると、submodule の checkout（例: basic_cc_project\.claude）を配布先に指定でき、
 # ミラー処理が gitlink を壊して親リポジトリへ commit/push してしまう。
 if (-not (Test-Path -LiteralPath (Join-Path $ShareBody '.git') -PathType Container)) {
-  Write-Host "‼ 共有本体（basic_dot_claude のクローン）が見つからない: $ShareBody"
-  Write-Host "   .git がディレクトリである独立クローンを指定してください（submodule の checkout は不可）。"
+  Write-Err "‼ 共有本体（basic_dot_claude のクローン）が見つからない: $ShareBody"
+  Write-Err "   .git がディレクトリである独立クローンを指定してください（submodule の checkout は不可）。"
   exit 2
 }
 # 指定パスがリポジトリの「ルート」かを --show-prefix で判定する（空＝ルート）。
 # ⚠ パス文字列を比較してはいけない。同じ場所を指す表記が複数あるため（Windows 形式 vs MSYS 形式、
 #    マウント別名、symlink）、比較方式では正しい配布先を誤って拒否する。bash 版と同じ判定に揃える。
 $sharePrefix = (git -C $ShareBody rev-parse --show-prefix 2>$null)
-if ($LASTEXITCODE -ne 0) { Write-Host "‼ 共有本体が git リポジトリではない: $ShareBody"; exit 2 }
+if ($LASTEXITCODE -ne 0) { Write-Err "‼ 共有本体が git リポジトリではない: $ShareBody"; exit 2 }
 if ($sharePrefix -and $sharePrefix.Trim() -ne '') {
-  Write-Host "‼ 共有本体はリポジトリのルートを指す必要があります: $ShareBody"
-  Write-Host "   （リポジトリ内のサブディレクトリを指しています: $($sharePrefix.Trim())）"
+  Write-Err "‼ 共有本体はリポジトリのルートを指す必要があります: $ShareBody"
+  Write-Err "   （リポジトリ内のサブディレクトリを指しています: $($sharePrefix.Trim())）"
   exit 2
 }
 
 git -C $DevRoot rev-parse --verify "$Ref^{commit}" *> $null
-if ($LASTEXITCODE -ne 0) { Write-Host "‼ ref が存在しない: $Ref"; exit 2 }
+if ($LASTEXITCODE -ne 0) { Write-Err "‼ ref が存在しない: $Ref"; exit 2 }
 
 # 0. symlink（mode 120000）を含む ref は publish しない。
 #    zip 経由の本版は symlink を「ターゲットのパス文字列を中身とする通常ファイル」として
@@ -67,18 +87,14 @@ $links = @(git -C $DevRoot ls-tree -r $Ref -- .claude |
   Where-Object { $_ -match '^120000\s' } |
   ForEach-Object { ($_ -split "`t", 2)[1] })
 if ($links.Count -gt 0) {
-  Write-Host '‼ payload に symlink が含まれている。publish 中止（配布先で壊れたファイルになる）:'
-  $links | ForEach-Object { Write-Host "   $_" }
+  Write-Err '‼ payload に symlink が含まれている。publish 中止（配布先で壊れたファイルになる）:'
+  $links | ForEach-Object { Write-Err "   $_" }
   exit 1
 }
 
 $tmp = Join-Path $env:TEMP ('pubshare_' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
-  # ⚠ エラー出力に Write-Error を使わない: $ErrorActionPreference='Stop' 下では
-  #    Write-Error が terminating error になり、直後の exit <code> に到達しないため
-  #    終了コードが不定になる（CI で FAIL の種別を判別できない）。Write-Host + exit を使う。
-
   # 1. 追跡ファイルのみを ref から取り出し（checkout 不要・個人/未追跡は構造的に除外）
   #
   #    ⚠ tar ではなく zip を使う。Windows の tar（C:\Windows\System32\tar.exe＝bsdtar）は
@@ -96,13 +112,13 @@ try {
   #       bash 版と対称にすること。
   $zip = Join-Path $tmp 'payload.zip'
   git -c core.autocrlf=false -C $DevRoot archive $Ref .claude --format=zip -o $zip
-  if ($LASTEXITCODE -ne 0) { Write-Host "‼ $Ref から .claude を取り出せない（.claude が無い?）"; exit 1 }
+  if ($LASTEXITCODE -ne 0) { Write-Err "‼ $Ref から .claude を取り出せない（.claude が無い?）"; exit 1 }
   Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force   # → $tmp\.claude\
   $src = Join-Path $tmp '.claude'
 
   # 2. 安全弁: 取り出した .claude が空なら中止
   if (-not (Test-Path $src) -or -not (Get-ChildItem -Force $src)) {
-    Write-Host "‼ $Ref の .claude が空。publish 中止（共有本体を空で上書きしない）"; exit 1
+    Write-Err "‼ $Ref の .claude が空。publish 中止（共有本体を空で上書きしない）"; exit 1
   }
 
   # 2-b. 安全弁: 展開したファイル数が ref の追跡ファイル数と一致するか
@@ -110,8 +126,8 @@ try {
   $expected = (git -C $DevRoot ls-tree -r --name-only $Ref -- .claude | Measure-Object).Count
   $actual   = (Get-ChildItem -Recurse -File -Force -LiteralPath $src | Measure-Object).Count
   if ($actual -ne $expected) {
-    Write-Host "‼ payload の展開に失敗（期待 $expected ファイル / 実際 $actual ファイル）。publish 中止"
-    Write-Host "   ファイル名の文字コードが原因の可能性があります。"
+    Write-Err "‼ payload の展開に失敗（期待 $expected ファイル / 実際 $actual ファイル）。publish 中止"
+    Write-Err "   ファイル名の文字コードが原因の可能性があります。"
     exit 1
   }
 
@@ -120,7 +136,7 @@ try {
   #    check-assets が payload を「追跡基準」で検査してしまい、成果物の混入も統制ファイルの
   #    不在も WARN へ退化してゲートが素通しになる（呼び出し側は層を知っているのだから明示する）。
   & (Join-Path $Here 'check-assets.ps1') -Share $tmp -Payload
-  if ($LASTEXITCODE -ne 0) { Write-Host '‼ check-assets FAIL。publish 中止'; exit 1 }
+  if ($LASTEXITCODE -ne 0) { Write-Err '‼ check-assets FAIL。publish 中止'; exit 1 }
 
   # 4. /security-review は対話のため手動確認
   $ok = Read-Host "→ $Ref の内容について /security-review を実行済みなら y で続行"
@@ -153,24 +169,24 @@ try {
       if (-not (Test-Path -LiteralPath (Join-Path $ShareBody $rel))) { $rel }
     })
   if ($missing.Count -gt 0) {
-    Write-Host "‼ ミラーの結果に payload のファイルが $($missing.Count) 件欠落している。publish 中止"
-    $missing | ForEach-Object { Write-Host "   欠落: $_" }
+    Write-Err "‼ ミラーの結果に payload のファイルが $($missing.Count) 件欠落している。publish 中止"
+    $missing | ForEach-Object { Write-Err "   欠落: $_" }
     exit 1
   }
 } finally { Remove-Item -Recurse -Force $tmp }
 
 # 6. 共有本体を commit & push
 git -C $ShareBody add -A
-if ($LASTEXITCODE -ne 0) { Write-Host '‼ add 失敗。publish 中止'; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Err '‼ add 失敗。publish 中止'; exit 1 }
 git -C $ShareBody diff --cached --quiet
 if ($LASTEXITCODE -eq 0) { Write-Host '変更なし。publish 不要'; exit 0 }
 $short = (git -C $DevRoot rev-parse --short $Ref).Trim()
 git -C $ShareBody commit -m "publish: sync .claude from base-dev-kit-for-cc@$short (ref: $Ref)"
-if ($LASTEXITCODE -ne 0) { Write-Host '‼ commit 失敗。publish は完了していない'; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Err '‼ commit 失敗。publish は完了していない'; exit 1 }
 git -C $ShareBody push
 if ($LASTEXITCODE -ne 0) {
-  Write-Host '‼ push 失敗。publish は完了していない（共有本体にローカルコミットが残っている）'
-  Write-Host "   認証・保護ブランチ設定を確認し、$ShareBody で push し直してください。"
+  Write-Err '‼ push 失敗。publish は完了していない（共有本体にローカルコミットが残っている）'
+  Write-Err "   認証・保護ブランチ設定を確認し、$ShareBody で push し直してください。"
   exit 1
 }
 

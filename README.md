@@ -50,7 +50,7 @@ Claude Code を最大限活用するための、言語中立・クロスプラ�
 
 | 共有したい資産 | 結合方法 |
 |---|---|
-| skills / subagents | `--add-dir <Share>` |
+| skills / commands / subagents | `--add-dir <Share>` |
 | `.claude/CLAUDE.md` / `rules/` | `--add-dir <Share>` ＋ 環境変数 `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` |
 | `settings.json`（permissions / hooks 等） | `--settings <Share>/.claude/settings.json` |
 
@@ -61,16 +61,34 @@ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 \
          --settings /path/to/base-dev-kit-for-cc/.claude/settings.json
 ```
 
-> **注意**: `commands/` 形式・`output-styles/`・hooks 単体は `--add-dir` では結合されない
-> （これらを共有したい場合は方法 A のコピー展開を使う）。`settings.local.json` は個人用・
-> 共有不可。ローカル全リポジトリに効かせたい個人設定は `~/.claude/settings.json` に置く。
+> **background セッション**（agent view・`claude --bg`・`/bg`）にも共有 CLAUDE.md / rules を効かせるには、
+> `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` を **OS の環境変数**（永続的なユーザー環境変数。Windows は
+> ユーザー環境変数、macOS / Linux はログインシェルの profile）として設定する。background service（supervisor）は
+> 最初に起動したシェルの env を継承するので、どの端末から起動されても届く（既に動いている service には、それが
+> 起動した時点の env が使われる）。公式 memory は `~/.claude/settings.json` の `env` を勧めているが、本キットは
+> 利用者に settings の `env` を使わせない方針（`docs/launcher/launcher-scripts-design.md` §3(6)）のため、この経路は使わない。
+> `--add-dir` / `--settings` は background へ引き継がれるが、シェルの export・ランチャーの値は background
+> セッションに確実には届かない（agent-view「Settings and provider」）。
+
+> **注意**: `output-styles/`・hooks 単体は `--add-dir` では結合されない（これらを共有したい場合は方法 A の
+> コピー展開を使う）。`commands/` は結合される（ライブリロードなし。同名なら作業リポ側が優先）。
+> skills / commands / subagents は `project` 設定ソースとしてロードされるため、`--setting-sources` から
+> `project` を外すと結合されない（permissions「Additional directories grant file access, not configuration」）。
+> `settings.local.json` は個人用・共有不可。ローカル全リポジトリに効かせたい個人設定は `~/.claude/settings.json` に置く。
+>
+> **⚠ 方法 A と方法 B では効く settings キーが違う**。`--settings` は user settings に置けるキーなら何でも効く
+> （settings「It can set any key your user settings file can set」）ため、方法 A（`.claude/` を project として配置）
+> では無視されるキー ―― `check-assets` 3. が WARN するもの（`defaultMode` の `auto` / `bypassPermissions`、
+> `autoMode`、`skipDangerousModePermissionPrompt` 等）―― が方法 B では有効になり、**配布方式で挙動が割れる**。
+> 共有 `settings.json` にはこれらを入れず、各自に効かせたいなら `~/.claude/settings.json` に置く。
 >
 > **⚠ hook は方法 B では動作しない**。本キットの hooks（`.claude/hooks/*.py`）は
 > `${CLAUDE_PROJECT_DIR}`（＝**作業リポジトリ**のルート）を基準にコマンドを組み立てるため、
 > `--settings` で hook の定義だけを結合しても**スクリプトの実体が作業リポに存在せず起動に失敗する**。
 > したがって **`.bat` の作業コピー機構と `.ps1` の保存形式検査は方法 A（コピー展開）専用**。
-> 方法 B では `permissions.deny` による原本の保護だけが効く（`.bat` は読むと文字化けするが、
-> 編集は拒否されるので壊れない）。
+> 方法 B では `permissions.deny` による原本の保護だけが効く。`.bat` は**読めない**（スクリプトが見つからない
+> `python` は exit 2 で終わり ―― 実測 ―― PreToolUse の exit 2 は Read を止める。Python 自体が無ければ
+> `onFailure: "block"` が止める）が、編集は拒否されるので壊れない。
 
 ---
 
@@ -139,6 +157,9 @@ docs/                          # ← 配布されない（内部設計ドキュ�
 ```
 
 追加の引数はそのまま `claude` へ委譲される（例: `./start_claude_code.sh --model opus`）。
+プロンプトを起動時引数で渡すときは、**フラグをすべてプロンプトより前に置く**（`--add-dir` のように複数の値を取る
+フラグや値を省略できるフラグは、直後のプロンプトを値として取り込む。ランチャーは追加引数が全部プロンプト〔`-` で
+始まらない〕のときだけ `--` を補ってこれを防ぐ。PowerShell で自分で区切るなら `'--'` と引用する）。
 
 利用者が値を設定するファイルは**テンプレートからコピーして作る**（いずれも `.gitignore` 済みの個人実体）:
 
@@ -185,13 +206,36 @@ PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.
 
 - **個人ファイル** ―― `settings.local.json` / `CLAUDE.local.md` / `custom.env` / `option-settings.{sh,ps1}`
 - **セッション成果物** ―― `.claude/reports/` `.claude/work/` `.claude/workspace/` `.claude/plans/`
-  `.claude/agent-memory-local/` `work_instructions.txt` `.claude/.bat-shadow/`（**この一覧が正本**。
-  `check-assets` の 2-c 配列がそれで、ルートと `.claude/` 双方の `.gitignore` はこれに追随させる）
+  `.claude/agent-memory-local/` `work_instructions.txt` `.claude/.bat-shadow/` `.claude/worktrees/`
+  `.claude/scheduled_tasks.json`（**この一覧が正本**。`check-assets` の 2-c 配列がそれで、ルートと `.claude/`
+  双方の `.gitignore` はこれに追随させる）。置き場所が固定でない plugin eval の結果 `*/evals/results/` は 2-c'
+  （`.claude/worktrees/` の中は数えない。`Worktrees/` 等の大文字小文字違いも中は数えず、それ自体を 2-c が大文字小文字
+  だけが違う成果物として報告する。ジャンクション・シンボリックリンクは辿らない）
 - **配布先の統制ファイルの不在** ―― `.claude/.gitignore` / `.claude/.gitattributes`。ミラー処理は payload に
   無いファイルを配布先から削除するため、これらを欠いた ref を publish すると**配布先の除外設定・改行保護が
   黙って消える**（payload では FAIL / 作業ツリーでは WARN）
 - **`.claude/CLAUDE.md` の不在** ―― **FAIL**。同じ理由で、これを持たない ref を publish すると配布先の
   共通 CLAUDE.md が消える。
+
+**名前は二段階で照合する**（セッション成果物 2-c / 2-c' と、`settings.json` の `env` のうち project / local から
+設定できない変数名 ＝ 3. の E 区分）。まず完全一致（大文字小文字を区別）で比べ、一致しなければ ASCII（A〜Z）だけを
+小文字に畳んで比べる。
+
+| 照合の結果 | 判定 |
+|---|---|
+| 完全一致 | 上の基準のまま（成果物: 追跡基準は追跡で FAIL・未追跡の実在で WARN、実体基準は実在で FAIL。env キー: WARN） |
+| 大文字小文字だけが違う成果物（`.claude/Reports/`・`Evals/Results/` 等） | **実体基準は FAIL・追跡基準は WARN**（別の文言で、実際のパスを示す） |
+| 大文字小文字だけが違う env キー（`systemroot` 等） | **層によらず WARN**（別の文言で、実際のキーを示す） |
+
+大文字小文字だけが違うものは、区別する OS では正当な別物でありうる一方、区別しない Windows では `.gitignore` を
+すり抜けた成果物（env なら同じ変数）でありうる。`publish-share` は **FAIL でしか止まらず**、WARN は確認プロンプトを
+経て公開まで進むため、成果物は**配布する実体（payload）では FAIL にして publish を中止**する（公開前に名前を直すか
+除外する）。開発中の作業ツリー（追跡基準）では WARN に留めるので、読んで意図したものか確かめること。env キーは
+配布物の流出ではないため、層によらず WARN のまま。ただし `settings.json` の**同じオブジェクト内**に完全一致または
+大文字小文字だけが違うキーが並ぶもの（`systemroot` と `SystemRoot` 等。`env` 以外の階層も同じ）は、照合の前に
+**重複キーとして層によらず FAIL** にする ―― どちらの値が効くかが読み手で変わる（python と PowerShell は完全一致の
+重複を黙って後勝ちにし、PowerShell は大文字小文字だけの違いを拒否する）うえ、Windows の環境変数名は大文字小文字を
+区別しない。
 
 ### 配布（publish）
 
@@ -238,18 +282,29 @@ PowerShell では `scripts\publish-share.ps1 -Ref <ref>`。
 
 | 拡張子 | 保存形式 | Claude の扱い |
 |---|---|---|
-| `.ps1` / `.psm1` / `.psd1` | UTF-8 + BOM + CRLF | 普通に読み書きしてよい（**編集後に BOM/CRLF を hook が検査**する。`Write` ツールは BOM も CRLF も保持しないため、新規作成すると必ず壊れる） |
+| `.ps1` / `.psm1` / `.psd1` | UTF-8 + BOM + CRLF | 普通に読み書きしてよい（**編集後に BOM/CRLF を hook が検査**する。`Write` ツールは CRLF を保持せず新規作成では BOM も付かないため、新規作成すると必ず壊れる） |
 | `.bat` | CP932 + CRLF・BOM なし | **原本には触らせない**（下記） |
 | `.cmd` | 使用禁止（`.bat` に一本化） | `.bat` と同じく `permissions.deny` で編集を拒否 |
 | `.reg` | スコープ外 | `permissions.deny` で R/W 禁止 |
 | `.ini` | **規定しない** | `tox.ini` / `pytest.ini` のように **UTF-8 が正しい `.ini` が広く存在する**ため、拡張子で一律に扱えない。**deny もしない**（Win32 プロファイル用途の CP932 な `.ini` を扱うときは都度バイト列で確認する） |
 
-`.bat` は CP932 なので Claude のツールで直接読むと文字化けし、書けば UTF-8 で上書きして壊れる。
-そこで `.claude/hooks/bat_cp932_guard.py` が**原本を隠して UTF-8 の作業コピーを見せる**:
+`.bat` は CP932 なので Claude のツールで直接読むと文字化けする。`Edit` は非 UTF-8 ファイルへの変更を拒否する
+（v2.1.296〜。tools-reference「Non-UTF-8 files」）が、ASCII だけの `.bat` は UTF-8 としても有効なので通ってしまい、
+日本語を足すと UTF-8 で保存されて壊れる。`Write` による上書きは docs では UTF-8 化、changelog 2.1.299 では拒否と
+されていて食い違うが、v2.1.302 の実測（`.txt`）は changelog のとおりで、日本語を含む CP932 ファイルへの `Write` は
+`File is not valid UTF-8` で拒否されバイト列は変わらない（ASCII だけのファイルは `Write` も通り、日本語は UTF-8・LF
+で書かれる。新規作成も UTF-8）。そこで `.claude/hooks/bat_cp932_guard.py` が**原本を隠して UTF-8 の作業コピーを見せる**:
 `Read` は自動で作業コピー（`.claude/.bat-shadow/`・`.gitignore` 済み）へ差し替わり、そこを編集して保存すると
 **CP932 + CRLF で原本へ書き戻される**。CP932 に符号位置の無い文字（`⚠` `✓` 等）があれば書き戻しを中止して
 原本を保全する（fail-closed）。原本への `Edit` / `Write` は `permissions.deny` で拒否される
-（hook は Python が無い環境で素通りするため、**ハードなガードは permission 側が担い、hook は利便性を担う**）。
+（hook は Python が無い環境では既定で素通りする。`.bat` の Read ガードには `"onFailure": "block"`（hooks「Block the
+action when a hook fails」・v2.1.295〜）を付けてあり、hook が起動できない・タイムアウトした等のときは `.bat` の
+Read 自体を止める（対応する最低版は v2.1.295 で、それ未満は対象外。「動作環境」参照）。いずれにせよ
+**ハードなガードは permission 側が担い、hook は利便性を担う**）。
+`.bat` をシェルやスクリプト経由で作成・編集するのは禁止（hook が守れない）。例外は CP932 + CRLF で書くキット同梱の
+2 つだけ: `bat_cp932_guard.py new`（新規作成）と、`win-file-encoding` skill の `convert_encoding.py --to-win`
+（UTF-8 で保存されてしまった `.bat` の修復・一括変換。実行後は作業コピーが古くなるので原本を Read し直す）。
+`Edit` / `Write` の拒否メッセージが勧める iconv・`Set-Content -Encoding`・「消してから Write」には `.bat` では従わない。
 手順の詳細は `.claude/rules/win-file-encoding.md`。**Python が必要**（CPython 3.x）。
 
 ### Sub-agents
@@ -286,14 +341,21 @@ MCP サーバーの起動には Node.js（v18 以上）が必要。GitHub MCP �
 
 ## 動作環境
 
-- [Claude Code](https://claude.ai/code) CLI ―― **v2.1.176 以上**。hook の `if` 条件（Read/Edit/Write のパス指定）が
-  正しくマッチするようになったのがこの版で、それ以前では **hook が一度も起動しない**（v2.1.85〜2.1.175）か、
-  条件を無視して毎回起動する（〜v2.1.84）。`permissions.deny` は版に関係なく効くため原本は壊れない
+- [Claude Code](https://claude.ai/code) CLI ―― **v2.1.295 以上**。`.bat` の Read ガードの `"onFailure": "block"`
+  （hook が起動できない・タイムアウトした等のとき Read を止める）の導入版であり、これを最低版とする
+  （v2.1.295 未満は対象外）。hook の `if` 条件（Read/Edit/Write のパス指定）は v2.1.176 以上で正しくマッチするが、
+  これは v2.1.295 に包含される（v2.1.176 未満では **hook が一度も起動しない**〈v2.1.85〜2.1.175〉か、
+  条件を無視して毎回起動する〈〜v2.1.84〉）。`permissions.deny` は版に関係なく効くため原本は壊れない。
+  **推奨は v2.1.299 以上**: Edit が非 UTF-8（CP932 の `.bat` を含む）への変更を拒否し（v2.1.296）、changelog 2.1.299
+  によれば Write も Shift-JIS 等を黙って UTF-8 化しなくなる（docs 未反映。v2.1.302 の実測では、日本語を含む CP932
+  ファイルへの Write は拒否された。ASCII だけのファイルは通る）。
 - Node.js v18 以上（MCP サーバー用）
 - **Python 3.10 以上**（`python` として PATH にあること）―― `.bat` を扱う hook と `win-file-encoding` skill 用。
-  無くても壊れないが、`.bat` は読めなくなる（`permissions.deny` により編集は常に拒否されるので、原本が壊れることはない）。
-  macOS / Linux で `python3` しか無い場合は hook が毎回起動に失敗する（`.bat` は Windows 専用資産なので実害は無いが、
-  気になる場合は `python` を PATH に通すか hook を無効化する）
+  無くても壊れないが、`.bat` は読めなくなる（Read ガードの `onFailure: "block"` で `.bat` の Read が
+  止まる。`permissions.deny` により編集は常に拒否されるので、原本が壊れることはない）。
+  macOS / Linux で `python3` しか無い場合は hook が毎回起動に失敗する ―― `.bat` の Read は止まり、
+  PostToolUse の `.ps1` 検査は素通りする（`.bat` は Windows 専用資産なので実害は無いが、気になる場合は
+  `python` を PATH に通すか hook を無効化する）
 - Git
 
 ---
@@ -303,7 +365,10 @@ MCP サーバーの起動には Node.js（v18 以上）が必要。GitHub MCP �
 以下はデフォルト無効。必要に応じて有効化する。
 
 ### Sandbox モード（コード実行の隔離）
-`.claude/settings.json` の `sandbox: true` で有効化。詳細: https://code.claude.com/docs/en/security
+`.claude/settings.json` の `"sandbox": { "enabled": true }` で有効化（セッション内の `/sandbox` でも切り替えられる）。
+**ネイティブ Windows では動作しない**（コマンドは隔離されずに実行される。Windows で使うなら WSL2 内で Claude Code を
+動かす）。対象はシェルコマンド（Bash / PowerShell / Monitor）だけで、ファイルツール・MCP・hooks は隔離の外。
+詳細: https://code.claude.com/docs/en/sandboxing
 
 ### MCP サーバー接続
 
@@ -320,11 +385,13 @@ MCP サーバーの起動には Node.js（v18 以上）が必要。GitHub MCP �
 
 ### Agent Teams（実験的）
 環境変数 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` で有効化。現在実験段階のため本番利用は非推奨。
+チームを組まずに自分で動かしているセッション間で知見を渡すだけなら、cross-session messaging（v2.1.224〜、
+ネイティブ Windows は v2.1.234〜）で足りる（agent-teams「check whether a lighter option does the job」）。
 詳細: https://code.claude.com/docs/en/agent-teams
 
 ### Plugin 化
 複数プロジェクトで設定を共有する別手段として、`.claude/` の一部を Plugin として切り出す方法もある。
-詳細: https://code.claude.com/docs/en/plugins
+詳細: https://code.claude.com/docs/en/plugins/overview
 
 ---
 

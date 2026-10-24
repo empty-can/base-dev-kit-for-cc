@@ -10,11 +10,39 @@
 #     ├─ setup-environment.ps1  → custom.env をロード＋チーム/組織統制 env を後勝ち固定
 #     └─ option-settings.ps1    → 利用者可変の起動オプション（$Opts）
 #   ＋ 本ファイル内の $TeamOpts → チーム統制の起動オプション（分類C）
+#   組立順は claude <$Opts> <$TeamOpts> [--] <起動時引数>。各ハッシュは書いた順（[ordered]）で並べる
+#   （bash 版はキーの辞書順）。
 #
-# ⚠ ここで設定する env が届くのは foreground 起動の claude だけ。background / agent-view
-#    セッションは OS env・ディレクトリ設定から構成を読むため、そちらにも効かせたい値は
-#    OS 環境変数または settings.json で設定すること。
-#    起動オプションは一部が background へ引き継がれる（全滅ではない）。
+# ⚠ プロンプトを起動時引数で渡すなら、フラグはすべてプロンプトより前に置くこと。値を複数取るフラグ
+#    （--add-dir / --mcp-config / --tools 等）や値を省略できるフラグ（--debug / --resume 等）が組み立てた
+#    オプションの最後に来ると、直後のプロンプトを値として取り込む（v2.1.302 で実測）。ランチャーは起動時引数が
+#    全部 - で始まらない（＝プロンプトだけ）ときに限り -- を補う。"<prompt>" -p のような混在は補わない。
+#    PowerShell では裸の -- はこのスクリプトに届く前に消える。自分で渡すなら '--' と引用する。
+# ⚠ ここで設定する env が確実に届くのは、このランチャーが起動した foreground の claude だけ。
+#    background セッション（/bg・← で送ったもの、claude --bg、agent view から dispatch したもの）は
+#    background service（supervisor）配下の別プロセスとして起動し直され、構成を「そのディレクトリの
+#    settings（env ブロックを含む）＋引き継がれた構成フラグ」から読む。起動元のシェルから届く env は
+#    公式に列挙されたものだけ（PATH / CLAUDE_CODE_USE_BEDROCK・CLAUDE_CODE_USE_VERTEX /
+#    ANTHROPIC_DEFAULT_*_MODEL / CLAUDE_CODE_EXTRA_BODY。ゲートウェイ変数は条件付き）。
+#    それ以外の env（custom.env・setup-environment の値の大半）は dispatch 元ではなく supervisor の env から
+#    受け継がれる（2026-10-20 Windows で実測）。supervisor は全端末で共有され、それを立ち上げたプロセスの env を継承する
+#    ため、届くかは起動順次第で確実ではない ―― このランチャーから起動した claude が supervisor を立ち上げると、
+#    以後は別の端末から dispatch した background セッションにも届き、dispatch 元に同名の値があっても supervisor
+#    側の値が使われる。素のシェル等が先に立ち上げていると、このランチャー経由の claude --bg でも届かない
+#    （例: CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD が欠け、--add-dir だけが引き継がれる）。
+#    その env は supervisor が止まるまで（claude daemon stop --any 等）使われ、auto-update による自己再起動でも変わらない。
+#    background にも効かせたい値は OS の環境変数（永続的なユーザー環境変数。Windows はユーザー環境変数、
+#    macOS / Linux はログインシェルの profile）で設定すること。supervisor は最初に起動したシェルの env を
+#    継承するので、どの端末から起動されても届く（既に動いている service には、それが起動した時点の env が使われる）。
+#    公式 docs は ~/.claude/settings.json の env を勧めるが、キットは利用者に settings 系ファイルの
+#    env を使わせない（誤って commit / push する、Claude から読める場所に値が残る、を避けるため）。組織で固定する値だけは managed settings の env（管理者の経路）に置く。
+#    起動オプションは構成フラグ（--settings / --setting-sources / --add-dir / --plugin-dir / --mcp-config /
+#    --strict-mcp-config / --fallback-model / --allow-dangerously-skip-permissions）だけが background へ引き継がれる。
+#    参照: https://code.claude.com/docs/en/agent-view#settings-and-provider
+# ⚠ サブコマンド（agents / remote-control など）はこのランチャー経由で起動しないこと。組み立てた起動
+#    オプションが verb の「前」に付くため、remote-control は --settings 等が前にあると起動を拒否し、
+#    agents は --add-dir / --mcp-config が前にあると `claude agents --json` が unknown option で失敗する
+#    （claude --bg "<prompt>" のようなフラグ形式の background 起動は問題ない）。
 # =============================================================================
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -53,10 +81,15 @@ claude コマンドが見つかりません（未インストール、または 
 # 値を取らないフラグは値を $true にする。
 #
 # 統制の強さ: これは「既定値をチームで揃える」ための仕組みであって、強制力はない。
-#   - 値上書き型のフラグは $TeamOpts が後段に付くためチーム値が後勝ちになる
+#   - 値を 1 つだけ取るフラグは $TeamOpts が後段に付くためチーム値が後勝ちになる
 #   - ただし起動時引数（@args）はさらに後ろに付くので、利用者が明示指定すれば上書きできる
 #   - --add-dir のような反復可能フラグは上書きされず両方の値が渡る（累積する）
-# 強制したい統制は settings.json / managed settings 側で行うこと。
+#   - 例外: --append-system-prompt とその -file 版は上書きではなく両方が使われる（v2.1.283 以降）。
+#     --append-subagent-system-prompt とその -file 版は併用できない（$Opts と $TeamOpts に分けて書くとエラー）
+# 強制したい統制は settings.json / managed settings 側で行うこと。ただし permissions.defaultMode の
+#   auto / bypassPermissions はプロジェクトの .claude/settings.json / settings.local.json では無視される
+#   （効かせるなら ~/.claude/settings.json または managed settings）。--permission-mode フラグは
+#   settings の defaultMode より優先される。
 $TeamOpts = [ordered]@{
     # '--setting-sources' = 'project,user'
 }
@@ -91,9 +124,32 @@ foreach ($map in @($Opts, $TeamOpts)) {
     }
 }
 
+# 値を複数取る／値を省略できるフラグが $cliArgs の最後だと、直後のプロンプトを値として取り込む（冒頭の注意）。
+# 起動時引数が全部非フラグ（＝プロンプトだけ）のときに限り -- で区切る。フラグを含む場合（混在を含む）は
+# 素の claude と同じく利用者の並べ方に任せる。組み立てたオプションが無いときは素の claude と同じ引数列にする。
+# -- は配列の要素として渡す。コマンド行に直接 -- と書くと、claude が .ps1（npm のシム等）に解決されたとき
+# PowerShell のパラメータバインダに消される（配列要素の '--' は pwsh 7 / 5.1 とも残る。実測）。
+if ($cliArgs.Count -gt 0 -and $args.Count -gt 0) {
+    $onlyPositional = $true
+    foreach ($userArg in $args) {
+        if ("$userArg".StartsWith('-')) {
+            $onlyPositional = $false
+            break
+        }
+    }
+    if ($onlyPositional) {
+        $cliArgs.Add('--')
+    }
+}
+
 # ---- 5) 起動（追加引数はそのまま claude へ委譲）------------------------------
 $argsArray = $cliArgs.ToArray()
+# ⚠ 起動直前に $LASTEXITCODE を 0 へ初期化する。claude が .ps1 ラッパーに解決されると $LASTEXITCODE が設定されず、
+#    呼び出し元の対話セッションに残っていた古い値（直前に失敗した git 等）をそのまま返してしまうため。
+$global:LASTEXITCODE = 0
 & claude @argsArray @args
 
-# claude の終了コードをそのまま返す（ヘッドレス実行・CI で失敗を検知できるようにする）
-exit $LASTEXITCODE
+# claude の終了コードをそのまま返す（ヘッドレス実行・CI で失敗を検知できるようにする）。
+# ⚠ 上の初期化により、ラッパー経由で $LASTEXITCODE が設定されなくても 0 になる（古い値は返さない）。
+#    Set-StrictMode 下の未定義変数参照で落ちないよう、存在を確かめてから返す（Test-Path は念のため残す）。
+if (Test-Path Variable:LASTEXITCODE) { exit $LASTEXITCODE } else { exit 0 }

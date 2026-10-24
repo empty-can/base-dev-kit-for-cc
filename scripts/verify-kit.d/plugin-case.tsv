@@ -1,0 +1,8 @@
+# publish-plugin の大文字小文字違い検査（期待<TAB>偽 marketplace の plugins/ に置く既存エントリ<TAB>--name）。
+#   clash = 既存エントリと大文字小文字だけが違う: 取り出し・ミラーより前に exit 2 で中止し、既存エントリは無傷
+#   pass  = 完全一致（通常の更新）: 検査を通過して取り出し（git archive）へ進む。git はスタブなので取り出しで止まり、
+#           既存エントリは無傷（ミラーには到達しない）
+# 偽 marketplace は一時ディレクトリに作り、.git は空のディレクトリ（git はスタブなので中身を読まない）。
+clash	foo	Foo
+clash	My-Plugin	my-plugin
+pass	foo	foo

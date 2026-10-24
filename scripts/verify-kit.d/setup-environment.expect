@@ -1,0 +1,23 @@
+# setup-environment 検査の期待値: custom.env.fixture を bash 版でロードしたときに設定される環境変数（SET<TAB>名前=値）。
+# 分類A（機微）・不正名・ランチャーの内部変数名の行は設定されず、CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD はチーム統制値 1 が後勝ちする。
+# PowerShell 版は Windows が空値の環境変数を保持できないため、値が空の行だけは「空値の警告＋未設定」でよい（許容差）。
+SET	CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
+SET	VERIFY_KIT_APPLICATION_CREDENTIALS=verify-kit-dummy-key.json
+SET	VERIFY_KIT_AT_PATH_URL=https://example.invalid/@user
+SET	VERIFY_KIT_AT_QUERY_URL=https://example.invalid?x=a@b
+SET	VERIFY_KIT_BYPASS=1
+SET	VERIFY_KIT_EMPTY=
+SET	VERIFY_KIT_EQ=a=b=c
+SET	VERIFY_KIT_FIRST=first-line
+SET	VERIFY_KIT_INDENTED=indented
+SET	VERIFY_KIT_JP=日本語の値
+SET	VERIFY_KIT_MAILTO=mailto:user@example.invalid
+SET	VERIFY_KIT_MAX_TOKENS=32000
+SET	VERIFY_KIT_NOAT_URL=http:example.invalid
+SET	VERIFY_KIT_PASSWORD_FILE=verify-kit-dummy-password.txt
+SET	VERIFY_KIT_PLAIN=last-wins
+SET	VERIFY_KIT_PROXY_URL=http://proxy.example.invalid:8080
+SET	VERIFY_KIT_SOCKS5=socks5:verify-kit@example.invalid
+SET	VERIFY_KIT_SPACED=spaced value
+SET	VERIFY_KIT_XHTTP=xhttp:verify-kit@example.invalid
+SET	_VERIFY_KIT_UNDERSCORE=ok

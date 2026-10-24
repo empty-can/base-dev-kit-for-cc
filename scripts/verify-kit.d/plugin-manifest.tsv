@@ -1,0 +1,28 @@
+# publish-plugin の 2-a（plugin.json の name と marketplace 側の名前の照合）ケース。
+#   列: bash の期待<TAB>pwsh の期待<TAB>python（bash 版の PATH に置くか）<TAB>BOM（plugin.json の先頭に付けるか）<TAB>--name<TAB>plugin.json の中身（1 行）
+#   pass       = 照合を通過して後段の validate（claude はスタブ）へ進み、確認プロンプト（stdin は空）で止まる
+#   mismatch   = name が違う: 取り出しの直後・validate より前に exit 1 で中止（大文字小文字の違い、ordinal 比較でだけ
+#                区別できるゼロ幅文字も違いとみなす）
+#   unreadable = name を読めない（JSON として不正・最上位がオブジェクトでない・name が無いか文字列でない）: 同じ位置で exit 1。
+#                NaN / Infinity は文書のどこにあっても JSON として不正、孤立サロゲート（\ud800）は name の値にあるときだけ
+#                読めない扱い（両版の分類を揃えた。python の json は既定ではどちらも受理し、System.Text.Json は前者を解析で、
+#                後者を name を文字列として取り出す段で拒否する。ほかのキーの値にある孤立サロゲートはどちらも拒否しない）
+#   nopython   = （bash のみ）python が無く照合できない: 同じ位置で exit 1
+#   -          = その系統では実行しない（pwsh 版は python を使わない）
+# 実行は一時ディレクトリの中だけで行う: 開発リポは publish-plugin のコピーと plugin/.claude-plugin/plugin.json を
+# 1 コミットした一時リポジトリ（--ref HEAD）、marketplace は remote の無い一時リポジトリで、plugins/<--name>/ に
+# 目印のファイルを置く。どのケースでもそれが無傷で、commit も index への追加も起きないこと。
+pass	pass	yes	no	my-plugin	{"name": "my-plugin", "version": "0.0.1"}
+pass	pass	yes	yes	my-plugin	{"name": "my-plugin"}
+mismatch	mismatch	yes	no	pre-compact	{"name": "statusline"}
+mismatch	mismatch	yes	no	My-Plugin	{"name": "my-plugin"}
+mismatch	mismatch	yes	no	my-plugin	{"name": "my-plugin\u200b"}
+unreadable	unreadable	yes	no	my-plugin	{"name": "my-plugin"
+unreadable	unreadable	yes	no	my-plugin	{"name": 1}
+unreadable	unreadable	yes	no	my-plugin	{"Name": "my-plugin"}
+unreadable	unreadable	yes	no	my-plugin	[{"name": "my-plugin"}]
+unreadable	unreadable	yes	no	my-plugin	{"name": "my-plugin", "version": NaN}
+unreadable	unreadable	yes	no	my-plugin	{"name": "my-plugin", "x": -Infinity}
+unreadable	unreadable	yes	no	my-plugin	{"name": "my-plugin\ud800"}
+pass	pass	yes	no	my-plugin	{"name": "my-plugin", "x": "\ud800"}
+nopython	-	no	no	my-plugin	{"name": "my-plugin"}
