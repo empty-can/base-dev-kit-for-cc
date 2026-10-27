@@ -1,0 +1,13 @@
+{
+  "env": { "XDG_VK\n": "x" },
+  "permissions": {
+    "deny": ["Write(**/*.bat)", "Edit(**/*.bat)", "Write", "write(x/**)", "NotebookEdit(docs/**)", 3],
+    "ask": ["Glob(資料/**)", "Glob()", "Read(src/**)"],
+    "allow": ["MultiEdit(src/**)", "Bash(git status:*)", "Write(*)", "Write(a\nb)", null]
+  },
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Write", "hooks": [{ "type": "command", "if": "Write(**/*.ps1)", "command": "verify-kit-dummy" }] }
+    ]
+  }
+}

@@ -12,7 +12,7 @@
 # オプション（分類C）は start_claude_code 側の TEAM_OPTS に定義されている。
 #
 # 網羅方針: 対話起動で使う Claude Code の起動オプションをほぼ全量掲載し、公式デフォルト値はコメントで
-#   明記する（公式 docs v2.1.302 時点）。意図的に載せていないもの:
+#   明記する（公式 docs v2.1.310 時点）。意図的に載せていないもの:
 #     - --system-prompt / --system-prompt-file … 既定のシステムプロンプトを丸ごと置き換える。
 #       キットの前提（CLAUDE.md / rules のロード）が崩れるため、ここでは扱わない。
 #     - --allowedTools / --disallowedTools … 権限統制に直結するため settings.json 側で管理する。
@@ -21,7 +21,7 @@
 #       いずれもキットの前提が崩れるため、ここでは扱わない。
 #     - --desktop / --environment / --ref … 端末セッションを始めずに Desktop を開く、またはクラウドセッションを
 #       作って終了する。他の起動オプションと併用できない（ランチャーの用途外）。
-#     - --post / --no-post（claude ultrareview）、--discard-unpushed / --force-remove-worktree（claude rm）…
+#     - --post / --no-post / --trust-workspace（claude ultrareview）、--discard-unpushed / --force-remove-worktree（claude rm）…
 #       サブコマンド専用のオプション。
 #   詳細は公式 docs の CLI reference を参照。
 #
@@ -58,12 +58,18 @@ declare -A OPTS=(
   #   ./start_claude_code.sh --add-dir <パスA> --add-dir <パスB>
   # 同じ制約は --plugin-dir / --mcp-config 等の反復可能フラグにも当てはまる。
   #   UNC（\\server\share）などのネットワークパスは拒否される（v2.1.257 以降）。Windows ではドライブ文字に割り当てて指定する。
+  #   ⚠ 起動時に渡したネットワークパスはそのディレクトリを外して起動し、対話起動ではその警告がデバッグログにしか出ない
+  #   （v2.1.305 以降。下の「デバッグ」節の --debug-file を有効にすると読める）。ここに書いた値が \\ か // で始まると、
+  #   ランチャーが起動前に stderr へ警告する（起動は止めない。起動時引数の --add-dir は検査しない）。
+  #   追加したディレクトリの .claude/skills/ も読み込まれる。既存の skill と同名のものは /<フォルダ名>:<skill 名> で
+  #   呼ぶ（v2.1.309 以降。それ以前は呼べなかった）
   # [--add-dir]="<参照したいリポジトリのパス>"
   # 追加で読む settings（ファイルパス または インライン JSON 文字列。同じキーはこのセッションだけ
   #   settings.json の値を上書きする。ファイルは 2 MiB 以下の通常ファイル）
   # [--settings]="./.claude/settings.extra.json"
   # 読み込む設定ソースの限定（user / project / local のカンマ区切り。例: project,user）。
   #   ⚠ project を外すと、キットの .claude/settings.json（permissions.deny・hooks。.bat 保護を含む）が読まれない。
+  #   --add-dir で足したディレクトリの skill・コマンド・サブエージェントも読まれなくなる。
   #   この値は、このセッションから起動するチームメイト・/bg・claude agents のセッションにも引き継がれる
   # [--setting-sources]="project,user"
 
@@ -76,9 +82,11 @@ declare -A OPTS=(
   # ===== 権限 =====
   # 権限モード（default〔= manual〕/ acceptEdits / plan / auto / dontAsk）
   #   公式デフォルト（未指定時）: 対話起動は auto（v2.1.283 以降。ネイティブ Windows は v2.1.233 未満だと Manual）。
-  #   auto が使えない場合（モデル非対応・設定で無効化など）は Manual で起動する。-p 実行は default（changelog 2.1.302）。
+  #   auto が使えない場合（モデル非対応・設定で無効化など）は Manual で起動する。-p 実行は default（v2.1.302 以降。
+  #   それ以前はサードパーティプロバイダやテレメトリ無効の環境で auto になりえた）。-p の Manual では、確認が要る操作は
+  #   allow ルール・hook・--permission-prompt-tool で承認しない限り拒否される。
   #   "default" を指定すると auto をやめて従来の Manual（操作ごとに確認）で起動する。
-  #   dontAsk は確認が要る操作をすべて自動で拒否する（CI 向け）。
+  #   dontAsk は確認が要る操作をすべて自動で拒否する（CI 向け。インストールした mod は一部を承認しうる）。
   #   ⚠ ここで固定すると --continue / --resume で再開したときに、終了時のモード（plan 等）が復元されずこの値になる。
   # ※ bypassPermissions は権限確認を全て飛ばすため、下の「非推奨・破壊的」節に隔離した
   # [--permission-mode]="default"
@@ -101,7 +109,7 @@ declare -A OPTS=(
   # URL からプラグインの .zip を取得し、このセッションだけ読み込む（空白区切りで複数 URL 可）
   # [--plugin-url]="https://example.com/plugin.zip"
   # 使えるビルトインツールの限定（"" で全部無効、"default" で既定セット、または "Bash,Edit,Read" のような列挙）。
-  #   MCP ツールには効かない
+  #   MCP ツールには効かない。ただし列挙に ToolSearch を含めないと、MCP ツールは遅延読み込みされず最初から全部読み込まれる
   # [--tools]="Read,Grep,Edit"
   # このセッションの skill / スラッシュコマンドをすべて無効にする（キットの skill も使えなくなる・値不要フラグ）
   # [--disable-slash-commands]="true"
@@ -124,11 +132,18 @@ declare -A OPTS=(
   # ===== worktree / エージェントチーム / API =====
   # 隔離した git worktree（<repo>/.claude/worktrees/<名前>）で起動する。値は worktree 名・"#<PR 番号>"・
   #   GitHub PR URL・GitLab MR URL（v2.1.233 以降）。"true"（値なし）なら名前を自動生成。既存の名前なら開き直す
+  #   （既定では、未コミットの変更が無く作成時のブランチのままで、独自のコミットが無い〔または PR がマージ済みで
+  #   remote ブランチが消えている〕ときは既定ブランチの最新から開き直す）。
+  #   ⚠ 終了時、変更も新しいコミットも無い worktree は、名前（--name / /rename）を付けていないセッションなら確認なしで
+  #   ブランチごと削除される（作業が残っている・別ブランチに切り替えてあるときは確認が出る）。v2.1.304 未満は別ブランチや
+  #   detached HEAD のときも確認なしで消し、コミットを失うことがあった
   # [--worktree]="feature-auth"
   # worktree 用の tmux セッションを作る（--worktree が必要。iTerm2 ではネイティブペイン・値不要フラグ）
   # [--tmux]="true"
   # エージェントチームのチームメイトの表示方式（in-process〔既定〕/ auto / tmux / iterm2）。実験的機能:
   #   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 が無いとチーム自体が作られない。tmux / iterm2 は分割ペイン表示
+  #   分割ペインのチームメイトは起動時引数の --tools / --disallowedTools を引き継ぐ（v2.1.309 以降）が、--allowedTools は
+  #   引き継がない
   # [--teammate-mode]="in-process"
   # API リクエストに付けるベータヘッダ（API キー利用者のみ。複数あるときは起動時引数で空白区切り）
   # [--betas]="interleaved-thinking"
@@ -141,6 +156,12 @@ declare -A OPTS=(
   # デバッグ出力（値不要フラグ）。カテゴリで絞るときは「=」形をキーに書く（値として分けると絞り込みが効かない）
   #   例: [--debug=mcp,startup]="true"  /  除外: [--debug=!mcp]="true"
   # [--debug]="true"
+  # デバッグログを指定したファイルへ書く（デバッグモードも有効になる。環境変数 CLAUDE_CODE_DEBUG_LOGS_DIR より優先）。
+  #   v2.1.305 以降、対話起動での Claude Code の起動時警告（上の --add-dir のネットワークパスを外した警告を含む。
+  #   一部の権限ルールの警告だけはバナーの下の行に出る）は画面に出ず、デバッグログにしか出ない。読むにはこれを付けて
+  #   起動し、このファイルを開く（--debug だけなら ~/.claude/debug/<セッション ID>.txt に書かれる）。
+  #   作業ツリーの中を指定すると誤ってコミットしうるので、リポジトリの外のパスにする
+  # [--debug-file]="<デバッグログのファイルパス>"
 
   # ===== 思考 / コンテキスト =====
   # 推論の努力度（low / medium / high / xhigh / max、または ultracode）。使える段階はモデルによる。
@@ -150,7 +171,9 @@ declare -A OPTS=(
   # [--effort]="high"
   # 自動圧縮のウィンドウ（このセッションだけ。保存済みの設定は変えない）。auto（モデルの既定）か
   #   トークン数: 200000 / 500k / 1M / 100〜1000（千単位）。範囲は 100K〜1M（v2.1.221 以降）。
-  #   ⚠ 環境変数 CLAUDE_CODE_AUTO_COMPACT_WINDOW が設定されていると、そちらが優先される
+  #   ⚠ 環境変数 CLAUDE_CODE_AUTO_COMPACT_WINDOW が設定されていると、そちらが優先される（使えない値のときだけ無視され、
+  #   このフラグが効く）。環境変数は書き方が違い、接尾辞なしの数値はトークン数そのもの（200 は 200 トークン扱いで
+  #   下限の 100K に丸められる）。環境変数の k / M 接尾辞は v2.1.304 以降
   # [--autocompact]="500k"
 
   # ===== 非対話 / print モード（ヘッドレス実行向け・通常の対話起動では不要）=====
@@ -166,7 +189,8 @@ declare -A OPTS=(
   # [--max-budget-usd]="5"
   # エージェントのターン数の上限（--print 時のみ。既定は無制限。上限に達するとエラー終了）
   # [--max-turns]="50"
-  # 権限確認を委譲する MCP ツール（--print 時のみ。対話起動では効かない）
+  # 権限確認を委譲する MCP ツール（--print 時のみ。対話起動では効かない）。mcp__<サーバー>__<ツール> の完全名で、
+  #   その実行で読み込む MCP サーバー（--mcp-config 等）のツールを指定する
   # [--permission-prompt-tool]="mcp__approval__prompt"
   # 権限確認に誰が答えるか（--print 時のみ。host〔既定〕/ none。none は確認が要る操作を自動で拒否する・v2.1.259 以降）
   # [--permission-prompts]="none"

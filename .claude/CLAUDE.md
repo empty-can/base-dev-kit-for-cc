@@ -46,8 +46,11 @@ base-dev-kit-for-cc が配布する**チーム共通の Claude Code 指示**。`
 **注意**: Sub-agent は既定で自分の Sub-agent を起動できる（v2.1.172〜。現在の既定はメイン会話から 3 層まで。
 `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` で変更でき、`1` でネスト無効）。ただし対話セッションでは入れ子の
 中間出力はメイン会話に返らず、最上位 Sub-agent の要約だけが返るため、役割分担・段階的処理を設計して
-協調させるときは `/orchestrate`（メインセッション実行）を経由する。読み取り専用に留めたい Sub-agent
-（`code-reviewer` 等）は `tools` に `Agent` を含めない。
+協調させるときは `/orchestrate`（メインセッション実行）を経由する。メイン会話から起動した Sub-agent は既定で
+background で動き、fork モード（既定で有効）の間、対話セッションの Claude はその完了を待てない ―― 結果は後の
+ターンに完了通知で届くので、前段の結果を使う処理は通知を受け取ってから次へ進む（待たせる設定は
+`.claude/skills/orchestrate/SKILL.md`）。読み取り専用に留めたい Sub-agent（`code-reviewer` 等）は `tools` に
+`Agent` を含めない。
 
 ## Windows 向けファイルの文字コード
 
@@ -63,7 +66,8 @@ base-dev-kit-for-cc が配布する**チーム共通の Claude Code 指示**。`
 - **`.bat` をシェルやスクリプト経由で作成/編集してはならない** ―― Bash のリダイレクト・heredoc・`sed -i`、
   PowerShell の `Set-Content` / `Add-Content` / `Out-File` / `>`、Python 等のスクリプトのいずれも不可（hook が
   守れず、UTF-8 の壊れた `.bat` が生まれる。cmd.exe は 1 行目から誤動作する）。Windows では PowerShell ツールが
-  有効なら主シェルになる。Bash のリダイレクト先や `tee` / `sed` は `permissions.deny` の `Edit(...)` でも止まるが、
+  有効なら主シェルになる。Bash のリダイレクト先や `tee` / `sed` は `permissions.deny` の `Edit(...)` でも止まるが
+  （サブシェルを含む一部のコマンドのリダイレクトは v2.1.309 未満では止まらなかった）、
   PowerShell やスクリプトからの書き込みには機構による保証が無い。**例外は 2 つだけ**: `bat_cp932_guard.py new`
   （新規作成）と、`win-file-encoding` skill の `convert_encoding.py --to-win`（UTF-8 で保存されてしまった
   `.bat` の修復。実行後は原本を Read し直す）。`Edit` / `Write` の拒否メッセージが勧める iconv・

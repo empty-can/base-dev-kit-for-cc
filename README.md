@@ -72,14 +72,28 @@ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 \
 
 > **注意**: `output-styles/`・hooks 単体は `--add-dir` では結合されない（これらを共有したい場合は方法 A の
 > コピー展開を使う）。`commands/` は結合される（ライブリロードなし。同名なら作業リポ側が優先）。
+> skills は、作業リポ・個人（`~/.claude/skills/`）・enterprise の skill か先に追加したディレクトリの skill と
+> 同名なら、そちらが `/<名前>` を取り、`<Share>` 側は **`/<追加したフォルダ名>:<名前>`** で呼ぶ（例:
+> `--add-dir /path/to/base-dev-kit-for-cc` なら `/base-dev-kit-for-cc:commit-and-pr`。v2.1.309〜で、それ未満では
+> `<Share>` 側を呼べなかった。skills「Run a same-named skill from an added directory」）。
 > skills / commands / subagents は `project` 設定ソースとしてロードされるため、`--setting-sources` から
 > `project` を外すと結合されない（permissions「Additional directories grant file access, not configuration」）。
 > `settings.local.json` は個人用・共有不可。ローカル全リポジトリに効かせたい個人設定は `~/.claude/settings.json` に置く。
 >
+> **⚠ `<Share>` をネットワークパス（UNC）で渡さない**。`\\server\share` のようなネットワークパスを起動時に `--add-dir` で
+> 渡すと、Claude Code はそのディレクトリを外して起動し（v2.1.257〜）、v2.1.305 以降の対話起動では警告もデバッグログに
+> しか出ない（`--debug-file <path>` で読める）ため、**キット無しで黙って起動する**（errors「Working directory is a network
+> path」）。Windows ではドライブ文字に割り当ててから渡す（例: `net use Z: \\server\share` の後に `--add-dir Z:\`。ドライブ
+> 文字と `\\wsl$` のパスはネットワークパスとして扱われない）。ランチャー（`start_claude_code.*`）は、option-settings に
+> 書いた `--add-dir` と、ランチャー本体のチーム統制（`TEAM_OPTS` / `$TeamOpts`）に書いた `--add-dir` が `\\` / `//` で
+> 始まると起動前に stderr へ警告する（起動は止めない。警告文の先頭に値の出どころが出る。判定は綴りだけなので `\\wsl$`
+> でも出る）が、上の例のように `claude` へ直接渡す場合と、ランチャーの起動時引数で渡す場合は検査しない。
+>
 > **⚠ 方法 A と方法 B では効く settings キーが違う**。`--settings` は user settings に置けるキーなら何でも効く
 > （settings「It can set any key your user settings file can set」）ため、方法 A（`.claude/` を project として配置）
 > では無視されるキー ―― `check-assets` 3. が WARN するもの（`defaultMode` の `auto` / `bypassPermissions`、
-> `autoMode`、`skipDangerousModePermissionPrompt` 等）―― が方法 B では有効になり、**配布方式で挙動が割れる**。
+> `autoMode`、`skipDangerousModePermissionPrompt`、sandbox の境界を外す `sandbox.allowNestedUserNamespaces`、
+> v2.1.305 で project から効かなくなった `axScreenReader` 等）―― が方法 B では有効になり、**配布方式で挙動が割れる**。
 > 共有 `settings.json` にはこれらを入れず、各自に効かせたいなら `~/.claude/settings.json` に置く。
 >
 > **⚠ hook は方法 B では動作しない**。本キットの hooks（`.claude/hooks/*.py`）は
@@ -146,6 +160,12 @@ docs/                          # ← 配布されない（内部設計ドキュ�
 > `start_claude_code.*` / ルート `.gitattributes` / `scripts/` / `docs/` は**配布されない**。
 > ランチャーは「部品（`.claude/launcher/`＝配布される）」と「本体（ルート＝配布されない）」に
 > 分かれている点に注意する。
+
+> **rules の大きさ**: path-scoped rules（`.claude/rules/` 配下の `*.md`。サブディレクトリを含む）は 1 ファイルあたりの
+> 上限を超えると先頭しか読まれない（v2.1.309〜。200K コンテキストで 40,000 文字、1M コンテキストで 150,000〜200,000 文字。
+> memory「Claude ignores the end of my subdirectory CLAUDE.md」）。`coding-standards.md` を書き足す・rule を足すときは
+> 上限に収め、大きくなるなら複数の rule に分ける（上限は 1 ファイルごとに数える）。`check-assets` 2-g は rules と
+> `.claude/CLAUDE.md` を 32,000 文字超で FAIL（publish を止める）、200 行超で WARN にする（「公開前チェック・テスト」）。
 
 ## 起動ランチャー
 
@@ -216,6 +236,17 @@ PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.
   黙って消える**（payload では FAIL / 作業ツリーでは WARN）
 - **`.claude/CLAUDE.md` の不在** ―― **FAIL**。同じ理由で、これを持たない ref を publish すると配布先の
   共通 CLAUDE.md が消える。
+- **rules / CLAUDE.md の大きさ**（2-g）―― `.claude/rules/` 配下の `*.md`（サブディレクトリを含む。`.` で始まる
+  ディレクトリの中は除く）と `.claude/CLAUDE.md` に限って、**32,000 文字超は FAIL**（publish-share は公開を中止する。
+  on demand で読まれるファイルは 200K コンテキストで 40,000 文字を超えた分が読まれない〔v2.1.309〜〕ので、その 8 割）、
+  **200 行超は WARN**（止めない。docs が CLAUDE.md に勧める「200 行未満」を rules にも当てる）。両方に当たるものは
+  FAIL だけを出す。文字数はコードポイントで数える（BOM は数えない）。追跡基準で数えるのは追跡されたファイルだけ。
+  読み取りに失敗したファイル（ロック・権限・I/O エラー）は件数に入れず、ファイルごとに **WARN〔未検査〕**（止めない）
+- **`settings.json` の設定キー**（3.）―― project（方法 A）で効かないキー（U = user / local / managed / `--settings`
+  でのみ有効〔上の「方法 A と方法 B では効く settings キーが違う」〕、M = managed 専用、E = `env` のうち project / local
+  から設定できない変数）と、照合されない権限ルール（パス付きの `Write` / `NotebookEdit` / `MultiEdit` / `Glob`。
+  ファイルの権限は `Edit(...)` / `Read(...)` ルールでしか照合されない）は **WARN**。不正な JSON と、同じオブジェクト内の
+  重複キー（大文字小文字だけの違いを含む。下記）は **FAIL**（bash 版は python で検査し、無ければ WARN〔未検査〕）
 
 **名前は二段階で照合する**（セッション成果物 2-c / 2-c' と、`settings.json` の `env` のうち project / local から
 設定できない変数名 ＝ 3. の E 区分）。まず完全一致（大文字小文字を区別）で比べ、一致しなければ ASCII（A〜Z）だけを
@@ -300,7 +331,11 @@ PowerShell では `scripts\publish-share.ps1 -Ref <ref>`。
 （hook は Python が無い環境では既定で素通りする。`.bat` の Read ガードには `"onFailure": "block"`（hooks「Block the
 action when a hook fails」・v2.1.295〜）を付けてあり、hook が起動できない・タイムアウトした等のときは `.bat` の
 Read 自体を止める（対応する最低版は v2.1.295 で、それ未満は対象外。「動作環境」参照）。いずれにせよ
-**ハードなガードは permission 側が担い、hook は利便性を担う**）。
+**ハードなガードは permission 側が担い、hook は利便性を担う**）。ただし `permissions.deny` も、自分で入れた
+mod（`tool.check` を扱うもの）には上書きされうる ―― マシンに managed settings が無く、セッションが Team /
+Enterprise の `/login` で動いていない（API キーや長期の `CLAUDE_CODE_OAUTH_TOKEN` で動く場合は、ログイン情報が
+保存されていても該当する）なら、mod は deny ルールが拒否する呼び出しも承認できる（permissions「Precedence among
+rules, hooks, and mods」）。
 `.bat` をシェルやスクリプト経由で作成・編集するのは禁止（hook が守れない）。例外は CP932 + CRLF で書くキット同梱の
 2 つだけ: `bat_cp932_guard.py new`（新規作成）と、`win-file-encoding` skill の `convert_encoding.py --to-win`
 （UTF-8 で保存されてしまった `.bat` の修復・一括変換。実行後は作業コピーが古くなるので原本を Read し直す）。
@@ -345,10 +380,14 @@ MCP サーバーの起動には Node.js（v18 以上）が必要。GitHub MCP �
   （hook が起動できない・タイムアウトした等のとき Read を止める）の導入版であり、これを最低版とする
   （v2.1.295 未満は対象外）。hook の `if` 条件（Read/Edit/Write のパス指定）は v2.1.176 以上で正しくマッチするが、
   これは v2.1.295 に包含される（v2.1.176 未満では **hook が一度も起動しない**〈v2.1.85〜2.1.175〉か、
-  条件を無視して毎回起動する〈〜v2.1.84〉）。`permissions.deny` は版に関係なく効くため原本は壊れない。
-  **推奨は v2.1.299 以上**: Edit が非 UTF-8（CP932 の `.bat` を含む）への変更を拒否し（v2.1.296）、changelog 2.1.299
+  条件を無視して毎回起動する〈〜v2.1.84〉）。`permissions.deny` は版に関係なく `Edit` / `Write` ツールに効くため原本は壊れない。
+  **推奨は v2.1.309 以上**: Edit が非 UTF-8（CP932 の `.bat` を含む）への変更を拒否し（v2.1.296）、changelog 2.1.299
   によれば Write も Shift-JIS 等を黙って UTF-8 化しなくなる（docs 未反映。v2.1.302 の実測では、日本語を含む CP932
-  ファイルへの Write は拒否された。ASCII だけのファイルは通る）。
+  ファイルへの Write は拒否された。ASCII だけのファイルは通る）。v2.1.309 では、サブシェルを含む一部のコマンドで
+  Bash のリダイレクト先に `Edit(...)` の deny が効かなかった不具合が直り（`.bat` 保護の穴。changelog 2.1.309）、方法 B で
+  同名の skill を `/<追加したフォルダ名>:<名前>` で呼べるようになり、「構成」の rules の大きさの注記が前提にする
+  1 ファイルあたりの上限が入った。v2.1.304 では `claude --worktree` が終了時に worktree とブランチを無断で消す
+  （コミットを失いうる）不具合が直った。
 - Node.js v18 以上（MCP サーバー用）
 - **Python 3.10 以上**（`python` として PATH にあること）―― `.bat` を扱う hook と `win-file-encoding` skill 用。
   無くても壊れないが、`.bat` は読めなくなる（Read ガードの `onFailure: "block"` で `.bat` の Read が

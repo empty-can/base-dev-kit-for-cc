@@ -460,6 +460,72 @@ function Probe-Launcher {
   }
 }
 
+# ---- ランチャーの出力の振り分け（スタブ。警告は stderr、stdout は claude の出力だけ）-----------------------
+# launcher-streams.txt の行頭タグ $tag の値を返す（verify-kit.sh の vk_streams_tag と同じ）
+function Get-StreamsTag([string]$tag) {
+  @(Read-Lines (Join-Path $VkFix 'launcher-streams.txt') | Where-Object { $_.StartsWith("$tag`t", [StringComparison]::Ordinal) } |
+    ForEach-Object { $_.Substring($tag.Length + 1) })
+}
+# 結果は ASSERT / RC / RAN と、stdout が空か（OUTEMPTY）、stdout と stderr の各行（OUT / ERR。CR を落とし \ を / に揃え、
+# 一時ツリーを <T> に置き換え、空行は除く）。verify-kit.sh の probe_launcher_streams と同じ形。ランチャーは -File で起動する
+# （利用者の使い方と同じ）。stderr はコンソールのコード ページで書かれるが、期待値の断片は ASCII だけなので UTF-8 で読んでよい
+function Probe-LauncherStreams {
+  Sec 'launcher-streams'
+  if ($script:LauncherGuard) { Put 'ASSERT' $script:LauncherGuard; return }
+  $ldir = Join-Full $script:PT 'launcher'
+  $t = Join-Full $ldir 'tree-streams'
+  New-Tree $t 'none'
+  # team 行（キー TAB 値）を、一時ツリーへ複製したランチャーの $TeamOpts の定義の行（$TeamOpts = [ordered]@{）の直後に
+  # 差し込む（値は単一引用符で囲む。opt 行と同じ書き方）。実物のランチャーは書き換えない。定義の行がちょうど 1 行でなければ
+  # 差し込めないので、実行せずに ASSERT ng を出す（黙って差し込まずに走らせると、$TeamOpts を見ていないのに PASS しうる）。
+  # 改行は定義の行のもの（CRLF）に合わせ、BOM 付きで書き戻す（5.1 が日本語を読めるように）。verify-kit.sh の probe_launcher_streams と同じ
+  $team = @(Get-StreamsTag 'team')
+  if ($team.Count -gt 0) {
+    $lp = Join-Full $t 'start_claude_code.ps1'
+    $src = [System.IO.File]::ReadAllText($lp, $Utf8NoBom)
+    $ms = [regex]::Matches($src, '(?m)^\$TeamOpts = \[ordered\]@\{\r?$')
+    if ($ms.Count -ne 1) {
+      Put 'ASSERT' "ng start_claude_code.ps1 の `$TeamOpts の定義の行（`$TeamOpts = [ordered]@{）が $($ms.Count) 行（1 行でないので team 行を差し込めない）"
+      return
+    }
+    $m = $ms[0]
+    $nl = if ($m.Value.EndsWith("`r")) { "`r`n" } else { "`n" }
+    $ins = New-Object System.Text.StringBuilder
+    foreach ($line in $team) {
+      $i = $line.IndexOf("`t")
+      $k = if ($i -lt 0) { $line } else { $line.Substring(0, $i) }; $v = if ($i -lt 0) { '' } else { $line.Substring($i + 1) }
+      [void]$ins.Append("    '$k' = '" + $v.Replace("'", "''") + "'" + $nl)
+    }
+    $pos = $m.Index + $m.Length + 1   # 定義の行の LF の直後
+    $src = $src.Substring(0, $pos) + $ins.ToString() + $src.Substring($pos)
+    [System.IO.File]::WriteAllText($lp, $src, $Utf8Bom)
+  }
+  $envText = (@(Get-StreamsTag 'env') | ForEach-Object { "$_`n" }) -join ''
+  [System.IO.File]::WriteAllText((Join-Full $t '.claude/custom.env'), $envText, $Utf8NoBom)
+  [System.IO.File]::WriteAllText((Join-Full $t '.claude/launcher/custom.env'), "# verify-kit: misplaced`n", $Utf8NoBom)
+  [System.IO.File]::WriteAllText((Join-Full $t '.claude/launcher/option-settings.ps1'), "# verify-kit: misplaced`n", $Utf8NoBom)
+  # opt 行（キー TAB 値）から .claude\option-settings.ps1 を作る（値は単一引用符で囲む。New-Tree の opts と同じ書き方）
+  $sb = New-Object System.Text.StringBuilder
+  [void]$sb.Append("`$Opts = [ordered]@{`r`n")
+  foreach ($line in @(Get-StreamsTag 'opt')) {
+    $i = $line.IndexOf("`t")
+    $k = if ($i -lt 0) { $line } else { $line.Substring(0, $i) }; $v = if ($i -lt 0) { '' } else { $line.Substring($i + 1) }
+    [void]$sb.Append("    '$k' = '" + $v.Replace("'", "''") + "'`r`n")
+  }
+  [void]$sb.Append("}`r`n")
+  [System.IO.File]::WriteAllText((Join-Full $t '.claude/option-settings.ps1'), $sb.ToString(), $Utf8Bom)
+  $sd = Join-Full $ldir 'run-streams'
+  $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Full $t 'start_claude_code.ps1')) + @(Get-StreamsTag 'in')
+  $script:StreamsRes = $null
+  Invoke-Stubbed $sd @('claude') { param($a) $script:StreamsRes = Invoke-Proc $script:HostExe $a 120000; $script:StreamsRes.Rc } $argv
+  Put-Args $sd
+  $r = $script:StreamsRes
+  if ($null -eq $r) { return }
+  Put 'OUTEMPTY' $(if ($r.Out.Length -eq 0) { 'yes' } else { 'no' })
+  foreach ($l in ($r.Out -split "`n")) { $n = Norm $l @($t, '<T>'); if (One $n '') { Put 'OUT' $n } }
+  foreach ($l in ($r.Err -split "`n")) { $n = Norm $l @($t, '<T>'); if (One $n '') { Put 'ERR' $n } }
+}
+
 # 呼び出し元に古い $LASTEXITCODE（7）が残っている状態で、$LASTEXITCODE を設定しない claude（.ps1 ラッパー。
 # 明示的な exit を持たない）経由で起動しても、ランチャーが 0 を返すこと（PowerShell 系統のみ。bash 版は $? を使うので対象外）
 function Probe-LauncherStaleRc {
@@ -523,7 +589,7 @@ function Invoke-CheckAssets([string]$share, [string]$label, [bool]$payload) {
 }
 
 # fixture のケース（check-assets.expect の 1 列目。probe と比較役が同じ順で使う。verify-kit.sh の CA_CASES と同じ）
-$CaCases = @('ume', 'clean', 'broken', 'bom', 'worktree', 'pcase', 'pexact', 'gcase', 'gexact', 'hidden', 'dupkey', 'pmulti', 'wtcase')
+$CaCases = @('ume', 'clean', 'broken', 'bom', 'worktree', 'pcase', 'pexact', 'gcase', 'gexact', 'hidden', 'dupkey', 'pmulti', 'wtcase', 'wrule', 'rwarn', 'rfail', 'rlimit')
 # リンク（Windows はジャンクション、それ以外は symlink）を作るケース。作れない系統はそのケースを SKIP し、比較役の
 # Drop-Skipping は項目単位で系統を除くので、ほかのケースを巻き添えにしないよう別の項目（Item-CaLinks）で判定する（verify-kit.sh と同じ）。
 $CaLinkCases = @('junction')
@@ -564,7 +630,7 @@ function Probe-CheckAssets {
       New-Item -ItemType Directory -Force -Path (Join-Full $cd 'Worktrees/evals/results') | Out-Null
     } elseif (Oeq $c 'pcase') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-envcase.json') -Destination $dst
-    } elseif (Oin (@('pexact', 'gcase', 'gexact', 'junction', 'hidden', 'pmulti')) $c) {
+    } elseif (Oin (@('pexact', 'gcase', 'gexact', 'junction', 'hidden', 'pmulti', 'rwarn', 'rfail', 'rlimit')) $c) {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-clean.json') -Destination $dst
     } else {
       Copy-Item -LiteralPath (Join-Path $VkFix "settings-$c.json") -Destination $dst
@@ -613,6 +679,36 @@ function Probe-CheckAssets {
       foreach ($d in @('p', 'p-x', 'p0', 'pZ', 'p_', 'pa')) { New-Item -ItemType Directory -Force -Path (Join-Full $cd "$d/evals/results") | Out-Null }
       New-Item -ItemType Directory -Force -Path (Join-Full $cd 'a') | Out-Null
       foreach ($m in @('a/y.md', 'a0.md')) { [System.IO.File]::WriteAllText((Join-Full $cd $m), "C:\Users\verify-kit\multi`n", $Utf8NoBom) }
+    } elseif (Oeq $c 'rwarn') {
+      # rules / CLAUDE.md の大きさ（2-g）で 200 行を超えるが 32,000 文字以内 → WARN（終了コード 0）。verify-kit.sh と同じバイト列。
+      # .claude/CLAUDE.md は（c＋LF）× 201 = 201 行、rules/over-lines.md は（r＋LF）× 200 ＋ LF の無い tail = 201 行（最後の行も数える）、
+      # rules/sub/deep.md は（d＋LF）× 201 = 201 行（rules のサブディレクトリも数える）
+      New-Item -ItemType Directory -Force -Path (Join-Full $cd 'rules/sub') | Out-Null
+      [System.IO.File]::WriteAllText((Join-Full $cd 'CLAUDE.md'), ((@('c') * 201) -join "`n") + "`n", $Utf8NoBom)
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/over-lines.md'), ((@('r') * 200) -join "`n") + "`ntail", $Utf8NoBom)
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/sub/deep.md'), ((@('d') * 201) -join "`n") + "`n", $Utf8NoBom)
+    } elseif (Oeq $c 'rfail') {
+      # 2-g で 32,000 文字を超える → FAIL（終了コード 1）。verify-kit.sh と同じバイト列。rules/both.md は（あ 159 個＋LF）× 201 =
+      # 201 行・32,160 文字で両方に当たる（FAIL の 1 行だけで、WARN を出さない）、rules/over-chars.md は x ＋（あ 319 個＋LF）× 100 =
+      # 100 行・32,001 文字（95,801 バイト。文字はコードポイントで数える）
+      New-Item -ItemType Directory -Force -Path (Join-Full $cd 'rules') | Out-Null
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/both.md'), ((@(([string][char]0x3042) * 159) * 201) -join "`n") + "`n", $Utf8NoBom)
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/over-chars.md'), 'x' + ((@(([string][char]0x3042) * 319) * 100) -join "`n") + "`n", $Utf8NoBom)
+    } elseif (Oeq $c 'rlimit') {
+      # 2-g でしきい値ちょうど・以下 → PASS（verify-kit.sh と同じバイト列）。数え方か対象の範囲を 1 つでも誤ると WARN / FAIL になり、
+      # PASS の行が消えるか件数が変わる: edge.md は（x 159 個＋LF）× 200 = 200 行・32,000 文字（> で比べる。>= なら WARN / FAIL）、
+      # bom.md は UTF-8 BOM ＋（y 159 個＋LF）× 200 = 200 行・32,000 文字（BOM を数えると 32,001）、sp.md は U+1F600 × 16,001 ＋ LF =
+      # 1 行・16,002 文字（UTF-16 の code unit では 32,003、バイトでは 64,005）、rules/a/b/ok.md は 1 行（2 段下のサブディレクトリも
+      # 数える）。対象外（どれも 300 行）: rules/.h/deep.md・rules/a/.h/deep.md（. で始まるディレクトリの中）・rules/notes.txt（.md で
+      # ない）・skills/big/SKILL.md・agents/big.md・long-outside.md。数えるのは上の 4 つと .claude/CLAUDE.md（1 行）の 5 ファイル
+      New-Item -ItemType Directory -Force -Path (Join-Full $cd 'rules/a/b'), (Join-Full $cd 'rules/.h'), (Join-Full $cd 'rules/a/.h'), (Join-Full $cd 'skills/big'), (Join-Full $cd 'agents') | Out-Null
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/edge.md'), ((@('x' * 159) * 200) -join "`n") + "`n", $Utf8NoBom)
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/bom.md'), ((@('y' * 159) * 200) -join "`n") + "`n", $Utf8Bom)
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/sp.md'), ([char]::ConvertFromUtf32(0x1F600) * 16001) + "`n", $Utf8NoBom)
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/a/b/ok.md'), "ok`n", $Utf8NoBom)
+      foreach ($pair in @(@('rules/.h/deep.md', 'd'), @('rules/a/.h/deep.md', 'd'), @('rules/notes.txt', 'n'), @('skills/big/SKILL.md', 'k'), @('agents/big.md', 'a'), @('long-outside.md', 'o'))) {
+        [System.IO.File]::WriteAllText((Join-Full $cd $pair[0]), ((@($pair[1]) * 300) -join "`n") + "`n", $Utf8NoBom)
+      }
     }
     foreach ($a in $art) {
       $f = Join-Full $s $a
@@ -1147,6 +1243,7 @@ function Invoke-ProbeMain {
     Probe-SetupEnv
     Probe-Launcher
     Probe-LauncherStaleRc
+    Probe-LauncherStreams
     Probe-Version
     Probe-CheckAssets
     Probe-CleanEnv
@@ -1446,6 +1543,42 @@ function Item-LauncherStaleRc {
   Verdict 'PASS' $t "$(Labels $avail) とも、呼び出し元に `$LASTEXITCODE=7 が残り claude スタブが設定しなくても exit 0"
 }
 
+# ランチャーの警告が stderr に出て、stdout には claude（スタブ。何も書かない）の出力しか出ないこと（W42-C-02 の回帰防止）。
+# option-settings の --add-dir が UNC の形なら警告が 1 行だけ出ること（W42-F-05）と、TEAM_OPTS / $TeamOpts の --add-dir でも
+# 同じく 1 行出ること（J-3。probe が一時ツリーのランチャーに team 行を差し込む）も同じツリーで見る。
+# 期待は launcher-streams.txt の stderr 行（各行に順に含まれるべき断片。行数も一致）。verify-kit.sh の item_launcher_streams と同じ
+function Item-LauncherStreams {
+  $t = 'ランチャー stdout / stderr の振り分け（スタブ）'
+  $avail = @(Usable $SysAll)
+  if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
+  $c = Crashed-In $avail
+  if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  $bad = Test-FixKeys 'launcher-streams.txt' @('env', 'opt', 'team', 'in', 'stderr') '定義済みの行頭タグ（env / opt / team / in / stderr）' 2
+  if ($bad) { Verdict 'FAIL' $t $bad; return }
+  $fr = @(Get-StreamsTag 'stderr')
+  if ($fr.Count -eq 0) { Verdict 'FAIL' $t 'launcher-streams.txt に stderr 行が無い'; return }
+  foreach ($s in $avail) {
+    $lines = Get-Sec $s 'launcher-streams'
+    $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
+    if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($a) { $a } else { '結果が無い' })"; return }
+    if (Onin (@(Tag-Vals $lines 'RAN')) 'yes') { Verdict 'FAIL' $t "$($SysLabel[$s]): スタブが起動していない"; return }
+    $rc = @(Tag-Vals $lines 'RC') | Select-Object -First 1
+    if (One $rc '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): ランチャーの終了コードが 0 でない（RC=$(if ($rc) { $rc } else { '?' })）"; return }
+    if (Onin (@(Tag-Vals $lines 'OUTEMPTY')) 'yes') {
+      $o = @(Tag-Vals $lines 'OUT') | Select-Object -First 1
+      Verdict 'FAIL' $t "$($SysLabel[$s]): stdout に claude（スタブ）以外の出力がある（1 行目: $(if ($o) { $o } else { '<空行のみ>' })）"; return
+    }
+    $er = @(Tag-Vals $lines 'ERR')
+    if ($er.Count -ne $fr.Count) { Verdict 'FAIL' $t "$($SysLabel[$s]): stderr の行数が期待（$($fr.Count) 行）と違う（$($er.Count) 行）"; return }
+    for ($i = 0; $i -lt $fr.Count; $i++) {
+      if ($er[$i].IndexOf($fr[$i], [StringComparison]::Ordinal) -lt 0) {
+        Verdict 'FAIL' $t "$($SysLabel[$s]): stderr の $($i + 1) 行目に「$($fr[$i])」が無い（$($er[$i])）"; return
+      }
+    }
+  }
+  Verdict 'PASS' $t "$(Labels $avail) とも stdout は空（claude スタブは何も書かない）・警告 $($fr.Count) 行（誤配置の custom.env・分類A のキー・誤配置の option-settings・option-settings と TEAM_OPTS の --add-dir が UNC）はすべて stderr・exit 0$(Missing-Note $SysAll)"
+}
+
 function Item-Optset {
   $t = 'option-settings テンプレ（全項目を有効化してロード）'
   $avail = @(Usable $SysAll)
@@ -1636,17 +1769,23 @@ function Test-CaCases([string]$t, [string]$desc, [string[]]$cases) {
       $f = $e.Split("`t")
       if (One ($f[0]) $cs) { continue }
       if (Onin (@(Tag-Vals $lines 'RC')) ($f[1])) { Verdict 'FAIL' $t "${cs}: 終了コードが期待（$($f[1])）と違う"; return }
-      # タグ - はタグの無い行（ファイル一覧）も対象にする（verify-kit.sh と同じ）
-      if (@($o | Where-Object { ((Oeq ($f[2]) '-') -or $_.Contains("[$($f[2])]")) -and $_.Contains($f[3]) }).Count -eq 0) {
-        Verdict 'FAIL' $t "${cs}: [$($f[2])] $($f[3]) の行が無い"; return
+      # タグ - はタグの無い行（ファイル一覧）も対象にする。先頭の ! は否定で、そのタグの行に断片が 1 行も無いことを求める
+      # （WARN と FAIL を二重に出さない等。verify-kit.sh の ca_cases_check と同じ）
+      $neg = $f[2].StartsWith('!', [StringComparison]::Ordinal)
+      $tg = if ($neg) { $f[2].Substring(1) } else { $f[2] }
+      $hit = @($o | Where-Object { ((Oeq $tg '-') -or $_.Contains("[$tg]")) -and $_.Contains($f[3]) }).Count
+      if ($neg) {
+        if ($hit -ne 0) { Verdict 'FAIL' $t "${cs}: [$tg] $($f[3]) の行がある（出てはならない）"; return }
+      } elseif ($hit -eq 0) {
+        Verdict 'FAIL' $t "${cs}: [$tg] $($f[3]) の行が無い"; return
       }
     }
   }
   Verdict 'PASS' $t "$($cases.Count) ケース × $(Labels $avail) で同一判定・期待どおり（$desc）$(Missing-Note $SysAll)$(Skip-Note)"
 }
 function Item-CaFixture {
-  Test-CaCases 'check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順）' `
-    "U/M/E と絶対パス混在は WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順" `
+  Test-CaCases 'check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ）' `
+    "U/M/E と絶対パス混在とパス付きの Write / NotebookEdit / MultiEdit / Glob ルールは WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順・rules / CLAUDE.md は 200 行超で WARN・32,000 文字（コードポイント。BOM は数えない）超で FAIL（両方なら FAIL だけ）、ちょうどは PASS で、rules はサブディレクトリも数え（. で始まるディレクトリの中は除く）、SKILL.md・agents は数えない" `
     $CaCases
 }
 function Item-CaLinks {
@@ -1981,6 +2120,7 @@ try {
   Item-Version
   Item-Launcher
   Item-LauncherStaleRc
+  Item-LauncherStreams
   Item-Optset
   Item-SetupEnv
   Item-InternalKeys

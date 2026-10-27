@@ -1,0 +1,33 @@
+# ランチャーの出力の振り分け（項目「ランチャー stdout / stderr の振り分け（スタブ）」）。区切りは TAB。
+#   ランチャー（start_claude_code）と setup-environment の警告は stderr に書き、stdout は claude の出力だけにする約束
+#   （claude -p の結果を読むスクリプトに混ざらないように）。PowerShell は別のプログラムから起動されると warning ストリームを
+#   stdout に書くため、PS 版は警告を stderr へ回している（W42-C-02）。この回帰を検出する。
+#   あわせて、option-settings の --add-dir がネットワークパス（\\ / // 始まり）の形なら起動前に 1 行警告すること（W42-F-05）と、
+#   TEAM_OPTS / $TeamOpts の --add-dir でも同じく 1 行警告すること（J-3。警告は option-settings → TEAM_OPTS の順）。
+#   一時ツリーは vk_mktree … none / New-Tree … 'none' で作り、probe が警告を出す 5 つを置く:
+#     .claude/custom.env（下の env 行。分類A のキーを含む）、誤配置の .claude/launcher/custom.env、
+#     誤配置の .claude/launcher/option-settings.sh（bash 系統）/ option-settings.ps1（PowerShell 系統）、
+#     .claude/option-settings.sh / .ps1（下の opt 行。UNC の --add-dir）、
+#     一時ツリーに複製したランチャーの TEAM_OPTS / $TeamOpts（下の team 行。定義の行の直後に差し込む。実物は書き換えない）
+#   PowerShell 系統はランチャーを -File で起動する（利用者の使い方と同じ）。
+#   env<TAB>行      … .claude/custom.env の 1 行
+#   opt<TAB>キー<TAB>値 … .claude/option-settings の 1 項目（値はそのまま単一引用符で囲んで書く。\ は潰れない）
+#   team<TAB>キー<TAB>値 … ランチャーの TEAM_OPTS / $TeamOpts の 1 項目（書き方は opt 行と同じ。差し込み先の定義の行
+#                     〔declare -A TEAM_OPTS=( / $TeamOpts = [ordered]@{〕がちょうど 1 行でなければ ASSERT ng で FAIL）。
+#                     opt 行と別のホスト名にして、どちらの値の警告かを断片で区別する
+#   in<TAB>引数     … ランチャーへの起動時引数（1 行 1 引数）
+#   stderr<TAB>断片 … stderr の各行（空行を除く）に順に含まれるべき断片。stderr の行数もこの行の数と一致すること。
+#                     ASCII だけで書く（PowerShell 系統の stderr はコンソールのコード ページ（CP932 等）で書かれ、UTF-8 として
+#                     読むと日本語が化ける。ASCII と行の区切りは化けない）。警告の前置き（⚠ / 警告:）は系統で違うので含めない。
+#                     stderr は \ を / に揃えてから比べる（UNC の \\vk-unc-host\share は //vk-unc-host/share になる）。
+#   stdout は空であること（スタブ claude は stdout に何も書かない。ランチャーの警告が stdout に混ざれば FAIL）。終了コードは 0。
+env	ANTHROPIC_API_KEY=verify-kit-dummy
+env	VERIFY_KIT_STREAMS=1
+opt	--add-dir	\\vk-unc-host\share
+team	--add-dir	\\vk-unc-team\share
+in	verify-kit prompt
+stderr	/.claude/launcher/custom.env
+stderr	ANTHROPIC_API_KEY
+stderr	/.claude/launcher/option-settings.
+stderr	--add-dir //vk-unc-host/share
+stderr	--add-dir //vk-unc-team/share

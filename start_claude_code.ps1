@@ -13,6 +13,12 @@
 #   組立順は claude <$Opts> <$TeamOpts> [--] <起動時引数>。各ハッシュは書いた順（[ordered]）で並べる
 #   （bash 版はキーの辞書順）。
 #
+# 出力の約束: ランチャー（本ファイルと setup-environment）自身の警告・エラーはすべて stderr に書く。stdout は claude の
+#   出力だけにする（claude -p の結果を読むスクリプトに混ざらないように。bash 版も同じ）。
+# ⚠ これは利用者が端末から起動するランチャーで、CLAUDE_CODE_PROCESS_WRAPPER / processWrapper に登録するもの
+#    ではない。登録しても契約を満たさない（Claude Code の引数に起動オプションを足す、起動前に警告を出しうる。
+#    PS 版は exec しない）うえ、Windows ではその設定自体が無視される。必要なら別の薄いスクリプトを作る
+#    （契約: https://code.claude.com/docs/en/corporate-launcher#the-launcher-contract）。
 # ⚠ プロンプトを起動時引数で渡すなら、フラグはすべてプロンプトより前に置くこと。値を複数取るフラグ
 #    （--add-dir / --mcp-config / --tools 等）や値を省略できるフラグ（--debug / --resume 等）が組み立てた
 #    オプションの最後に来ると、直後のプロンプトを値として取り込む（v2.1.302 で実測）。ランチャーは起動時引数が
@@ -74,7 +80,19 @@ claude コマンドが見つかりません（未インストール、または 
 }
 
 # ---- 1) 環境変数セットアップ（custom.env + 統制 env 後勝ち）------------------
-. $SetupEnv
+# setup-environment の警告（Write-Warning）は stderr へ回す。PowerShell は別のプログラムから起動されると
+# warning / information ストリームを stdout に書く（pwsh 7・Windows PowerShell 5.1 とも 2026-10-24 に実測）ため、
+# そのままでは claude -p の出力を読むスクリプトに警告が混ざる。stdout は claude の出力だけにする（bash 版は最初から
+# >&2。corporate-launcher の「起動前に標準出力へ書かない」と同じ理由）。dot-source はパイプラインの中でもこの
+# スコープで動き、setup-environment の例外は従来どおりここで止まる。setup-environment.ps1 側は Write-Warning のまま
+# にする（verify-kit が直接 dot-source して warning ストリームで警告を受けている）。
+. $SetupEnv 3>&1 6>&1 | ForEach-Object {
+    if ($_ -is [System.Management.Automation.WarningRecord]) {
+        [Console]::Error.WriteLine("警告: $($_.Message)")
+    } else {
+        [Console]::Error.WriteLine("$_")
+    }
+}
 
 # ---- 2) チーム統制の起動オプション（分類C）--------------------------------
 # チームで揃えたい起動オプションはここに定義する（利用者は触らない）。
@@ -101,13 +119,36 @@ $OptsFile = Join-Path $RootDir '.claude\option-settings.ps1'
 # 利用者が誤って launcher\ 側（テンプレートの隣）へ option-settings.ps1 を置いた場合、
 # そのままでは無警告で無視され、起動オプションが一切効かない理由に到達できない。
 # custom.env と同じガードを張る（片方だけ守るのは、探すべき場所を一つ増やすだけ）。
+# 警告は 1) と同じ理由で Write-Warning ではなく stderr へ書く（bash 版の printf >&2 と対称）。
 $MisplacedOpts = Join-Path $RootDir '.claude\launcher\option-settings.ps1'
 if (Test-Path $MisplacedOpts) {
-    Write-Warning "$MisplacedOpts は読み込まれません。option-settings.ps1 は一つ上の .claude\ 直下に置いてください。"
+    [Console]::Error.WriteLine("警告: $MisplacedOpts は読み込まれません。option-settings.ps1 は一つ上の .claude\ 直下に置いてください。")
 }
 
 if (Test-Path $OptsFile) {
     . $OptsFile   # $Opts を定義（未作成なら空のまま）
+}
+
+# option-settings（$Opts）と $TeamOpts の --add-dir がネットワークパス（UNC）の形なら起動前に警告する（止めない）。
+# Claude Code は起動時に渡されたネットワークパスを外して起動し（v2.1.257 以降）、v2.1.305 以降の対話起動ではその警告が
+# デバッグログにしか出ない。<Share> を UNC で書くとキット無しで黙って起動するので、画面に出せるランチャーが知らせる。
+# チームが <Share> を固定するのは $TeamOpts なので、そこも同じ判定で見る（2026-10-27 の判断 J-3。それまでは option-settings
+# だけ）。警告文の先頭で値の出どころ（option-settings か $TeamOpts か）を示し、順は $Opts → $TeamOpts（bash 版と同じ）。
+# 判定は綴りだけ（\\ か // で始まるか。解決するとネットワークへ触れてしまう）。起動時引数の --add-dir は見ない（利用者が
+# 並べた引数は守らない。設計 §5-3 の責任分界）。'--add-dir=<パス>' のような = 形のキーも見ない（キーが '--add-dir' そのものの
+# 値だけ。設計 §5-4）。bash 版と同じ文言（出どころの表記も同じ。単一引用符なので $TeamOpts は展開されない。前置きは 1) と
+# 同じ「警告: 」）。
+$uncSources = [ordered]@{
+    'option-settings' = $Opts
+    'start_claude_code のチーム統制（TEAM_OPTS / $TeamOpts）' = $TeamOpts
+}
+foreach ($uncFrom in $uncSources.Keys) {
+    $uncMap = $uncSources[$uncFrom]
+    if (-not $uncMap.Contains('--add-dir')) { continue }
+    $addDir = [string]$uncMap['--add-dir']
+    if ($addDir.StartsWith('\\', [StringComparison]::Ordinal) -or $addDir.StartsWith('//', [StringComparison]::Ordinal)) {
+        [Console]::Error.WriteLine("警告: $uncFrom の --add-dir $addDir はネットワークパスの形です。ネットワークパスは v2.1.257 以降拒否され、v2.1.305 以降は警告がデバッグログにしか出ないため、Claude Code はこのディレクトリを黙って外して起動します。ドライブ文字に割り当てて指定してください。")
+    }
 }
 
 # ---- 4) claude コマンドを組み立て ------------------------------------------

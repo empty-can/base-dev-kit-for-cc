@@ -6,8 +6,11 @@
 #                          後段の grep -q が先に終わると前段が SIGPIPE で落ちる量）・late-nul-abspath.md（先頭 8000
 #                          バイトの直後に NUL。2-e のバイナリ判定の窓の外なのでテキストとして検査される）、clean には
 #                          abspath-allowed.md（公式パスだけ）と binary-abspath.bin（先頭に NUL ＋ 絶対パス。バイナリとして
-#                          2-e の対象外）を置く。ume の env は完全一致（CLAUDE_CONFIG_DIR / OTEL_… / ComSpec）と
-#                          大文字小文字だけが違うもの（systemroot。正本の表記は SystemRoot）を混ぜる
+#                          2-e の対象外）を置く。ume の env は完全一致（CLAUDE_CONFIG_DIR / OTEL_… / ComSpec /
+#                          CLAUDE_AX_…（前方一致）/ 起動環境専用の CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT・
+#                          CLAUDE_CODE_WARN_DISK_FREE_GIB）と、大文字小文字だけが違うもの（systemroot。正本の表記は SystemRoot）と、
+#                          一致してはならないもの（CLAUDE_AXE_…。CLAUDE_AX_ の前方一致に掛からない）を混ぜる。U には v2.1.305 で
+#                          User or managed になった axScreenReader と新設の sandbox.allowNestedUserNamespaces を含める
 #   bom      … settings-clean.json の先頭に UTF-8 BOM を付けたもの
 #   worktree … settings-clean.json ＋ .claude/worktrees/wt/.claude/evals/results/（worktree 内の eval 結果。数えない）
 #   以下は名前の二段階照合（完全一致 → 従来の判定／大文字小文字だけが違う → 成果物は payload で FAIL・git で WARN、env キーは WARN）。
@@ -28,24 +31,51 @@
 #              .claude/a/y.md・.claude/a0.md（絶対パス。2-e の一覧は序数順で a/y.md が先）。並びは系統間の出力の一致で検査する
 #   wtcase   … settings-clean.json ＋ .claude/Worktrees/evals/results/。2-c' は A〜Z を畳んで worktrees とみなして降りず（PASS）、
 #              2-c が大文字小文字だけが違う成果物クラスとして FAIL にする
+#   wrule    … settings-wrule.json（照合されない権限ルール。deny / ask / allow にパス付きの Write / NotebookEdit / Glob / MultiEdit と、
+#              対象外のもの＝ツール名だけの Write・Edit(…)・Read(…)・Bash(…)・小文字の write(…)・空の Glob()・文字列でない要素
+#              （3 / null）・hooks の if 条件の "Write(…)" を混ぜる。日本語のパスと、改行を含むルール（"Write(a\nb)"。一覧では
+#              改行を <LF> と書き、1 行に収める。\n と書くと Windows のパスの \n と見分けられず、probe が \ を / に揃えるので
+#              断片でも区別できない）を含む）。一覧は deny → ask → allow の順・各配列の中は文書順で、対象外が間に
+#              挟まらないこと（断片は 1 行の連続した部分文字列として照合する）。env には末尾が改行のキー（"XDG_VK\n"。python の
+#              re.match と .NET の $ は末尾の改行の直前にも一致するので E に入る）を 1 つ置く: E の一覧でも改行を <LF> と書き、
+#              1 行に収める（生のまま出すと bash 版は後の行がずれて照合されない権限ルールが PASS に化け、PS 版は WARN が 2 行に割れる）
+#   以下は rules / CLAUDE.md の大きさ（2-g。対象は .claude/rules/ 配下の *.md〔サブディレクトリを含む。. で始まるディレクトリの中は
+#   除く〕と .claude/CLAUDE.md。200 行超は WARN、32,000 文字超は
+#   FAIL で、両方に当たるものは FAIL の 1 行だけ。ちょうどは PASS。文字はコードポイントで数え、BOM は数えない）。どのケースも
+#   .claude/CLAUDE.md（probe が置く 1 行のもの。rwarn だけは 201 行に置き換える）を 1 ファイルとして数える（clean は 1 ファイル）。
+#   rwarn    … settings-clean.json ＋ 201 行の .claude/CLAUDE.md と .claude/rules/over-lines.md（（r＋LF）× 200 ＋ LF の無い tail =
+#              201 行・404 文字。最後の行も数える）と .claude/rules/sub/deep.md（201 行。サブディレクトリも数える）。
+#              200 行超だが 32,000 文字以内なので WARN（終了コード 0）
+#   rfail    … settings-clean.json ＋ .claude/rules/both.md（（あ 159 個＋LF）× 201 = 201 行・32,160 文字。両方に当たり、FAIL だけで
+#              WARN は出さない ―― 下の !WARN で確かめる）と .claude/rules/over-chars.md（x ＋（あ 319 個＋LF）× 100 = 100 行・
+#              32,001 文字）。FAIL なので終了コード 1
+#   rlimit   … settings-clean.json ＋ .claude/rules/ の edge.md（200 行・32,000 文字ちょうど）・bom.md（UTF-8 BOM ＋ 200 行・32,000 文字）・
+#              sp.md（U+1F600 × 16,001 ＋ LF = 16,002 文字。UTF-16 の code unit では 32,003）・a/b/ok.md（1 行。2 段下も数える）と、
+#              対象外（どれも 300 行）の rules/.h/deep.md・rules/a/.h/deep.md（. で始まるディレクトリの中）・rules/notes.txt（.md で
+#              ない）・skills/big/SKILL.md・agents/big.md・long-outside.md。数え方か対象の範囲を 1 つでも誤ると WARN / FAIL が出るか
+#              件数が変わり、PASS の行（5 ファイル）と一致しない
+# 行頭タグの先頭の ! は否定で、そのタグの行にその断片が 1 行も無いことを求める（!WARN 等。二重に出さないことの検査に使う）。
 #   以下は別の項目（check-assets リンク）で判定する。リンクを作れない系統はこのケースだけを SKIP する。
 #   junction … settings-clean.json ＋ .claude/x（外の outside-x/ へのリンク。outside-x/evals/results/r.md に絶対パス）と
 #              .claude/y/evals/results（空の outside-y/ へのリンクそのもの）。Windows はジャンクション、それ以外は symlink。
 #              どちらも辿らず、…/results のディレクトリとしても数えない（bash の find -P と同じ）
 # ⚠ 重複キー（完全一致、または systemroot と SystemRoot のような大文字小文字だけの違い）を 1 つのオブジェクトに並べるのは
 #    dupkey だけにする。両版とも重複キーの FAIL で止まり、U/M/E の検査に進まない。
-ume	0	WARN	defaultMode:bypassPermissions autoMode skipAutoPermissionPrompt sandbox.filesystem.disabled
+ume	0	WARN	無視されるキー: defaultMode:bypassPermissions autoMode skipAutoPermissionPrompt axScreenReader sandbox.allowNestedUserNamespaces sandbox.filesystem.disabled（
 ume	0	WARN	prependPlugins strictKnownMarketplaces sandbox.network.allowManagedDomainsOnly
-ume	0	WARN	env で project / local からは設定できない変数: CLAUDE_CONFIG_DIR OTEL_EXPORTER_OTLP_METRICS_HEADERS ComSpec（シェル
+ume	0	WARN	env で project / local からは設定できない変数: CLAUDE_CONFIG_DIR OTEL_EXPORTER_OTLP_METRICS_HEADERS ComSpec CLAUDE_AX_SCREEN_READER CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT CLAUDE_CODE_WARN_DISK_FREE_GIB（シェル（OS の環境変数）か、組織で固定するなら managed settings で設定する
 ume	0	WARN	大文字小文字だけが違う変数: systemroot（Windows でのみ同一視される
 ume	0	PASS	settings.json は valid JSON
+ume	0	PASS	照合されない権限ルールなし（settings.json）
 ume	0	WARN	配布物に環境固有の絶対パスらしき記述がある
 ume	0	-	.claude/abspath-mixed.md
 ume	0	-	.claude/big-abspath.md
 ume	0	-	.claude/late-nul-abspath.md
 ume	0	-	.claude/win-file-encoding-abspath.md
 clean	0	PASS	project で効かないキーなし（settings.json）
+clean	0	PASS	照合されない権限ルールなし（settings.json）
 clean	0	PASS	配布物に環境固有の絶対パスなし
+clean	0	PASS	rules / CLAUDE.md の大きさ（200 行・32,000 文字以内）: 1 ファイル
 broken	1	FAIL	settings.json が不正な JSON
 bom	1	FAIL	settings.json の先頭に UTF-8 BOM がある
 worktree	1	FAIL	.claude/worktrees が配布ペイロードに含まれている
@@ -82,5 +112,14 @@ pmulti	1	-	.claude/a/y.md
 pmulti	1	-	.claude/a0.md
 wtcase	1	FAIL	大文字小文字だけが違う成果物クラスらしきパスが配布ペイロードに含まれている: .claude/Worktrees（.claude/worktrees と同一視される OS がある。公開前に名前を直すか除外すること）
 wtcase	1	PASS	plugin eval の結果（*/evals/results/）なし
+wrule	0	WARN	env で project / local からは設定できない変数: XDG_VK<LF>（
+wrule	0	WARN	照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob）: deny:Write(**/*.bat) deny:NotebookEdit(docs/**) ask:Glob(資料/**) allow:MultiEdit(src/**) allow:Write(*) allow:Write(a<LF>b)（ファイルの権限は Edit(path) / Read(path) ルールだけで照合され
+rwarn	0	WARN	rules / CLAUDE.md の大きさ: .claude/CLAUDE.md は 201 行（200 行超）。docs の目安は 1 ファイル 200 行未満（超えるとコンテキストを消費し遵守率が下がる）。分割を検討する
+rwarn	0	WARN	rules / CLAUDE.md の大きさ: .claude/rules/over-lines.md は 201 行（200 行超）。
+rwarn	0	WARN	rules / CLAUDE.md の大きさ: .claude/rules/sub/deep.md は 201 行（200 行超）。
+rfail	1	FAIL	rules / CLAUDE.md の大きさ: .claude/rules/both.md は 32160 文字（32,000 文字超）。
+rfail	1	!WARN	.claude/rules/both.md
+rfail	1	FAIL	rules / CLAUDE.md の大きさ: .claude/rules/over-chars.md は 32001 文字（32,000 文字超）。on demand で読まれるファイルは 200K コンテキストで 40,000 文字を超えた分が読まれず（v2.1.309〜）、docs の目安（1 ファイル 200 行未満）も大きく超える。分割する（FAIL なので publish-share は公開を中止する）
+rlimit	0	PASS	rules / CLAUDE.md の大きさ（200 行・32,000 文字以内）: 5 ファイル
 junction	0	PASS	plugin eval の結果（*/evals/results/）なし
 junction	0	PASS	配布物に環境固有の絶対パスなし

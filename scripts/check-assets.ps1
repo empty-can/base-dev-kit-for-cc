@@ -418,6 +418,64 @@ $payloadFiles | Where-Object { $_ -like '*.ps1' -or $_ -like '*.ps1.template' } 
 }
 if (-not $noBom) { Pass "配布される .ps1 は全て BOM 付き" }
 
+# 2-g. 配布される rules と共通 CLAUDE.md の大きさ。対象は .claude\rules\ 配下の *.md（サブディレクトリを含む）と .claude\CLAUDE.md に固定する。
+#      判定・しきい値・根拠・対象は bash 版 2-g と同じ。1 ファイルにつき 1 行で、両方に当たるものは FAIL だけを出す。ちょうどは PASS:
+#        - 32,000 文字超 → FAIL（publish-share は FAIL で公開を中止する）。on demand で読まれるファイルの 1 ファイルの上限
+#          40,000 文字（200K コンテキスト。v2.1.309〜。超えた分は読まれない）の 8 割。本リポの文体では 600〜700 行に当たり、200 行の
+#          目安もほぼ確実に大きく超えているので FAIL にする（2026-10-27 の作業指示者の判断）。
+#        - 200 行超 → WARN（docs の CLAUDE.md の目安。rules 固有の目安は docs に無いので rules にも当てる）。
+#      ⚠ 対象を広げない（skills の SKILL.md・agents・その他の .md は見ない）。rules はサブディレクトリも深さによらず数える
+#         （Claude Code が再帰的に読む）が、. で始まるディレクトリの中には入らない（bash 版と同じ名前の規則。隠し属性は見ない。
+#         . で始まるファイル名そのものは数える）。判定は接頭辞・接尾辞の序数比較と、接頭辞から最後の \ までのディレクトリ部分に
+#         「\.」が無いこと（-like は使わない。bash 版の case と同じ範囲）。
+#      列挙は $payloadFiles（2-e / 2-f と同じ二層基準・序数順。git 層は追跡ファイルだけ、payload 層はリンクを辿らない実体だけ）。
+#      ⚠ 数え方は bash 版と同じバイト単位の規則にする（デコードしない）:
+#        文字数 = UTF-8 の継続バイト（0x80〜0xBF）以外のバイト数（正しい UTF-8 ではコードポイント数）。先頭の BOM は 1 文字分を
+#                 引いて数えない。改行（LF・CR）も 1 文字。
+#        行数   = LF のバイト数。最後の行が LF で終わらなければ 1 行足す（空のファイルは 0 行）。
+#        ReadAllText / Get-Content の文字列の .Length は使わない。UTF-16 の code unit 数なのでサロゲートペア（絵文字等）を 2 と
+#        数え、不正なバイトは U+FFFD に置き換わって bash 版と割れる。バイト列を ISO-8859-1（1 バイトを同じ値の U+0000〜U+00FF に
+#        写す。5.1 / 7 とも同じ写像）で文字列にしてから、継続バイトに当たる文字を除いた長さと LF の数を数える（バイトごとの
+#        foreach より速い）。-creplace は大文字小文字を区別する置換（-replace の大文字小文字の同一視を [\x80-\xBF] に効かせない）。
+# ⚠ しきい値を変えたら FAIL / WARN / PASS の文言（200 行・32,000 文字）と bash 版の _RULE_MAX_LINES / _RULE_MAX_CHARS も同時に直す。
+$ruleMaxLines = 200; $ruleMaxChars = 32000
+$latin1 = [System.Text.Encoding]::GetEncoding(28591)
+$ruleDir = '.claude\rules\'
+$ruleN = 0; $ruleHit = $false
+foreach ($rf in $payloadFiles) {
+  $isRule = $rf.StartsWith($ruleDir, [StringComparison]::Ordinal) -and $rf.EndsWith('.md', [StringComparison]::Ordinal)
+  if ($isRule) {
+    $ri = $rf.LastIndexOf([char]'\')
+    $rsub = if ($ri -ge $ruleDir.Length) { '\' + $rf.Substring($ruleDir.Length, $ri - $ruleDir.Length) } else { '' }
+    $isRule = -not $rsub.Contains('\.')   # . で始まるディレクトリの中（直下・それより深い所）は外す
+  }
+  if (-not ($isRule -or [string]::Equals($rf, '.claude\CLAUDE.md', [StringComparison]::Ordinal))) { continue }
+  $rp = Join-Path $Share $rf
+  if (-not (Test-Path -LiteralPath $rp -PathType Leaf)) { continue }   # 実体が無いものは従来どおり対象にしない（bash 版の -f と同じ）
+  # 読めないファイル（ロック・権限・I/O エラー）は件数に足さず、ファイルごとに「未検査」の WARN を 1 行出す（2026-10-27 の判断 J-4。
+  # 黙って飛ばすと、検査して PASS したのか未検査なのか区別できない）。FAIL にはしない（一時的なロックで publish を止めない）。
+  # 他のファイルが基準内なら下の PASS 行は読めたファイルの件数で別に出す。bash 版の -r の偽・tr の失敗 → warn と同じ文言
+  # （例外の文言は出さない。bash 版では取れないので両版で割れる）
+  try { $rb = [System.IO.File]::ReadAllBytes($rp) } catch {
+    Warn "rules / CLAUDE.md の大きさ: $rf は読み取りに失敗したため未検査（ロックや読み取り権限を確かめて再実行する）"
+    continue
+  }
+  $ruleN++
+  $rs = $latin1.GetString($rb)
+  $rChars = ($rs -creplace '[\x80-\xBF]', '').Length
+  if ($rb.Length -ge 3 -and $rb[0] -eq 0xEF -and $rb[1] -eq 0xBB -and $rb[2] -eq 0xBF) { $rChars-- }
+  $rLines = $rs.Length - $rs.Replace("`n", '').Length
+  if ($rb.Length -gt 0 -and $rb[$rb.Length - 1] -ne 10) { $rLines++ }
+  if ($rChars -gt $ruleMaxChars) {
+    Bad "rules / CLAUDE.md の大きさ: $rf は $rChars 文字（32,000 文字超）。on demand で読まれるファイルは 200K コンテキストで 40,000 文字を超えた分が読まれず（v2.1.309〜）、docs の目安（1 ファイル 200 行未満）も大きく超える。分割する（FAIL なので publish-share は公開を中止する）"
+    $ruleHit = $true
+  } elseif ($rLines -gt $ruleMaxLines) {
+    Warn "rules / CLAUDE.md の大きさ: $rf は $rLines 行（200 行超）。docs の目安は 1 ファイル 200 行未満（超えるとコンテキストを消費し遵守率が下がる）。分割を検討する"
+    $ruleHit = $true
+  }
+}
+if (-not $ruleHit) { Pass "rules / CLAUDE.md の大きさ（200 行・32,000 文字以内）: $ruleN ファイル" }
+
 # 3. settings.json の JSON 構文 ＋ project（.claude\settings.json）では効かないキーの検出
 #    区分・根拠は bash 版 3. と同じ（U / M / E）。表を更新したら bash 版の _U_KEYS / _M_KEYS / _ENV_RE も同時に更新する。
 #    E 区分のキー名は 2-c と同じ二段階で照合する（$envRe に完全一致 → A〜Z だけ畳んだ同士で一致。Get-EnvClass）。
@@ -425,9 +483,15 @@ if (-not $noBom) { Pass "配布される .ps1 は全て BOM 付き" }
 #    同じオブジェクト内のキーの重複（完全一致、または A〜Z だけ畳んで一致 = 大文字小文字だけの違い。env 以外の階層も同じ）は
 #    専用メッセージで FAIL にし、キーの検査には進まない（bash 版と同じ。理由も同じ）。判定の順は BOM → JSON 構文 → 重複キー →
 #    キーの検査。構文が先なので、壊れた JSON は重複があっても「不正な JSON」になる（Get-JsonDupKeys の注記）。
+#    どの settings ファイルからも読まれず起動環境からしか読まれない変数も E に含める（bash 版と同じ）。
+#    加えて、どこに置いても照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob。$wRuleRe）を別の WARN で
+#    報告する。区分・根拠・対象外（ツール名だけのルール・hooks の if 条件）は bash 版 3. と同じ。表を更新したら bash 版の
+#    _W_RULE_RE も同時に更新する。
+# axScreenReader は v2.1.305 から User or managed（--settings も可。それまでは Any file）。sandbox.allowNestedUserNamespaces は
+# v2.1.305 で新設（User or managed。--settings も可。true にするとサンドボックスの境界を外す）
 $uKeys =@('skipDangerousModePermissionPrompt', 'useAutoModeDuringPlan', 'autoMode', 'skipAutoPermissionPrompt',
-           'processWrapper', 'pluginConfigs', 'syncClaudeAiSkills', 'syncClaudeAiPlugins',
-           'sandbox.allowAppleEvents', 'sandbox.ripgrep', 'sandbox.filesystem.disabled',
+           'processWrapper', 'pluginConfigs', 'syncClaudeAiSkills', 'syncClaudeAiPlugins', 'axScreenReader',
+           'sandbox.allowAppleEvents', 'sandbox.allowNestedUserNamespaces', 'sandbox.ripgrep', 'sandbox.filesystem.disabled',
            'sandbox.network.strictAllowlist', 'sandbox.network.tlsTerminate',
            'sandbox.credentials.allowPlaintextInject', 'sandbox.credentials.awsPairs', 'sandbox.credentials.sigv4')
 # prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く（bash 版と同じ）
@@ -441,7 +505,17 @@ $mKeys = @('prependPlugins', 'appendPlugins',
            'sandbox.network.allowManagedDomainsOnly')
 # ⚠ 二段階目は $envRe 自体も A〜Z を畳んで照合する。畳めるのは \D \S \W \B 等の「大文字で意味が変わるエスケープ」を
 #    含まないから。追加するときもリテラルと . * ( ) | ? だけで書くこと（bash 版の _ENV_RE も同じ）。
-$envRe ='^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_TMPDIR|HOME|TMPDIR|TMP|TEMP|XDG_.*|SystemRoot|ComSpec|ProgramData|LOCALAPPDATA|PATHEXT|PSModulePath|ProgramFiles.*|CommonProgramFiles.*|ALLUSERSPROFILE|SystemDrive|CLAUDE_CODE_ENABLE_TELEMETRY|CLAUDE_CODE_ENHANCED_TELEMETRY_BETA|ENABLE_ENHANCED_TELEMETRY_BETA|OTEL_(LOGS|METRICS|TRACES)_EXPORTER|OTEL_LOG_.*|OTEL_EXPORTER_OTLP_(.*_)?(ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)|OTEL_EXPORTER_PROMETHEUS_(HOST|PORT)|ENABLE_BETA_TRACING_DETAILED|BETA_TRACING_ENDPOINT|CLAUDE_CODE_PROCESS_WRAPPER|CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)|CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR|CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS|CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS|CLAUDE_CODE_DISABLE_(ATTACHMENTS|FILE_MENTIONS)|CLAUDE_CODE_PROJECT_DIR_NAME|CLAUDE_CODE_RESTRICTED)$'
+# ⚠ CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS は v2.1.310 の docs から消えた（どのページにも無い。changelog に廃止の記載は無い）が、
+#    project の env に書いても効かない事実は変わらないので残す（外すと、効かない変数が黙って PASS になる）。
+# CLAUDE_AX_.* は v2.1.305 から project / local では無視（screen reader 等）。CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB は
+# どの settings ファイルからも読まれない（起動環境だけ。MOUNTED_DRIVE_RM_PROMPT と WARN_* は v2.1.304 以降の docs で追加）。
+# ホスティング環境・Claude Code 自身が設定する変数（CLAUDE_CODE_REMOTE / CLAUDE_CODE_ACCOUNT_UUID / CLAUDE_CODE_MESSAGING_* 等）は、
+# 利用者が settings に書く動機が無いので含めない。
+$envRe ='^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_TMPDIR|HOME|TMPDIR|TMP|TEMP|XDG_.*|SystemRoot|ComSpec|ProgramData|LOCALAPPDATA|PATHEXT|PSModulePath|ProgramFiles.*|CommonProgramFiles.*|ALLUSERSPROFILE|SystemDrive|CLAUDE_CODE_ENABLE_TELEMETRY|CLAUDE_CODE_ENHANCED_TELEMETRY_BETA|ENABLE_ENHANCED_TELEMETRY_BETA|OTEL_(LOGS|METRICS|TRACES)_EXPORTER|OTEL_LOG_.*|OTEL_EXPORTER_OTLP_(.*_)?(ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)|OTEL_EXPORTER_PROMETHEUS_(HOST|PORT)|ENABLE_BETA_TRACING_DETAILED|BETA_TRACING_ENDPOINT|CLAUDE_CODE_PROCESS_WRAPPER|CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)|CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR|CLAUDE_AX_.*|CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS|CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS|CLAUDE_CODE_DISABLE_(ATTACHMENTS|FILE_MENTIONS)|CLAUDE_CODE_PROJECT_DIR_NAME|CLAUDE_CODE_RESTRICTED|CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY|CLAUDE_CODE_DISABLE_(DANGEROUS_RM_TIMEOUT|SUBSTITUTION_RM_PROMPT|INLINE_SHELL_RM_PROMPT|MOUNTED_DRIVE_RM_PROMPT)|CLAUDE_CODE_WARN_(DISK|MEMORY)_FREE_GIB)$'
+# 照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob）。bash 版の _W_RULE_RE と同じ式で、全体一致は
+# \A(?: … )\z で包んで判定する（bash 版は re.fullmatch。.NET の $ は末尾の改行の直前にも一致するので使わない）。-cmatch で
+# 大文字小文字を区別する
+$wRuleRe = '(Write|NotebookEdit|MultiEdit|Glob)\([\s\S]+\)'
 # キーパス（a.b.c）が JSON に存在するか。bash 版の has() と同じ意味（大文字小文字を区別する）。
 # ⚠ [pscustomobject] は PSObject の別名でほぼ何にでも一致するため、完全修飾の型名で判定する。
 function Test-JsonPath($obj, [string]$path) {
@@ -561,15 +635,39 @@ if ($settingsBom) {
     if ($json.env -is [System.Management.Automation.PSCustomObject]) {
       foreach ($k in @($json.env.PSObject.Properties.Name)) {
         $c = Get-EnvClass $k
-        if ($c -ceq 'exact') { $eHits += $k } elseif ($c -ceq 'case') { $eCase += $k }
+        # 一覧に出すキーの中の CR / LF も <CR> / <LF> と書く（照合は生のキーで行う。bash 版と同じ）。.NET の $ は末尾の改行の直前にも
+        # 一致するので "XDG_A`n" のようなキーも E に入り、生のまま出すと WARN が 2 行に割れる（bash 版は後の行がずれる）。置き換えは
+        # 下の照合されない権限ルールと同じ
+        $kv = $k.Replace("`r", '<CR>').Replace("`n", '<LF>')
+        if ($c -ceq 'exact') { $eHits += $kv } elseif ($c -ceq 'case') { $eCase += $kv }
+      }
+    }
+    # 照合されない権限ルール。deny → ask → allow の順、各配列の中は文書順に「種別:ルール」で並べる（bash 版と同じ）。
+    # 配列でない値・文字列でない要素は見ない（bash 版の isinstance と同じ。@() で包むと文字列 1 個も配列扱いになるので -is で確かめる）。
+    # ルールの中の CR / LF は <CR> / <LF> と書く（bash 版と同じ。生のまま出すと WARN が 2 行に割れ、bash 版は 1 行目しか出せない。
+    # \r / \n と書くと Write(C:\new) のような Windows のパスと見分けられない）
+    $wHits = @()
+    if ($json.permissions -is [System.Management.Automation.PSCustomObject]) {
+      foreach ($kind in @('deny', 'ask', 'allow')) {
+        if (-not ($json.permissions.PSObject.Properties.Name -ccontains $kind)) { continue }
+        $rules = $json.permissions.$kind
+        if (-not ($rules -is [array])) { continue }
+        foreach ($r in $rules) {
+          if ($r -is [string] -and $r -cmatch ('\A(?:' + $wRuleRe + ')\z')) { $wHits += "${kind}:" + $r.Replace("`r", '<CR>').Replace("`n", '<LF>') }
+        }
       }
     }
     # 判定（E 区分は 完全一致 → 従来の WARN／大文字小文字だけ違う → 別文言の WARN）
     if ($uHits.Count -gt 0) { Warn ("方法 A（.claude\ を project として配置）では無視されるキー: " + ($uHits -join ' ') + "（方法 B / clean-test-env の --settings 結合では有効になり、配布方式で挙動が割れる。各自に効かせるなら ~/.claude/settings.json へ）") }
     if ($mHits.Count -gt 0) { Warn ("project でも --settings でも無視されるキー: " + ($mHits -join ' ') + "（managed 専用。prependPlugins / appendPlugins だけは条件付きで user も可。組織の managed settings で配る）") }
-    if ($eHits.Count -gt 0) { Warn ("env で project / local からは設定できない変数: " + ($eHits -join ' ') + "（シェル・~/.claude/settings.json・managed で設定する。テレメトリの off 値 none / 0 だけは例外。CLAUDE_CODE_PROJECT_DIR_NAME / CLAUDE_CODE_RESTRICTED は起動環境からしか読まれない）") }
+    if ($eHits.Count -gt 0) { Warn ("env で project / local からは設定できない変数: " + ($eHits -join ' ') + "（シェル（OS の環境変数）か、組織で固定するなら managed settings で設定する。テレメトリの off 値 none / 0 だけは例外。CLAUDE_CODE_PROJECT_DIR_NAME / CLAUDE_CODE_RESTRICTED / CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB はどの settings ファイルからも読まれず、起動環境からしか読まれない）") }
     if ($eCase.Count -gt 0) { Warn ("env で project / local からは設定できない変数と大文字小文字だけが違う変数: " + ($eCase -join ' ') + "（Windows でのみ同一視される。環境変数名の大文字小文字を区別しないのは Windows だけで、Windows では設定できない変数と同じ扱いになりうる。意図したものか確認すること）") }
     if (($uHits.Count + $mHits.Count + $eHits.Count + $eCase.Count) -eq 0) { Pass "project で効かないキーなし（settings.json）" }
+    if ($wHits.Count -gt 0) {
+      Warn ("照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob）: " + ($wHits -join ' ') + "（ファイルの権限は Edit(path) / Read(path) ルールだけで照合され、これらはどこに置いても効かない。Write / NotebookEdit / MultiEdit は Edit(…)、Glob は Read(…) に書き換える。ツール名だけのルールは対象外）")
+    } else {
+      Pass "照合されない権限ルールなし（settings.json）"
+    }
   }
 } else {
   Warn "settings.json が無い（settings を共有しない構成なら問題なし）"
