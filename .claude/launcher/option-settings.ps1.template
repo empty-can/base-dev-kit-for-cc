@@ -2,49 +2,21 @@
 # option-settings.ps1.template  ―  claude 起動時オプションの雛型（分類D・PowerShell 版）
 # =============================================================================
 # 使い方:
-#   1) このファイルを .claude/ 直下に「option-settings.ps1」としてコピーする。
-#      （option-settings.ps1 は .gitignore 済み＝個人実体）
-#   2) 使いたいオプションの行頭 "#" を外して値を設定する。不要な行はコメントのまま。
-#      値を取らないフラグ（--verbose 等）は値を $true にする。
-#   3) start_claude_code.ps1 がこの $Opts を読み、claude コマンドを組み立てて起動する。
-#
-# ここはユーザが自由に変えてよい起動オプション（分類D）。チームで統制したい
-# オプション（分類C）は start_claude_code.ps1 側の $TeamOpts に定義されている。
-#
-# 網羅方針: 対話起動で使う Claude Code の起動オプションをほぼ全量掲載し、公式デフォルト値はコメントで
-#   明記する（公式 docs v2.1.310 時点）。意図的に載せていないもの:
-#     - --system-prompt / --system-prompt-file … 既定のシステムプロンプトを丸ごと置き換える。
-#       キットの前提（CLAUDE.md / rules のロード）が崩れるため、ここでは扱わない。
-#     - --allowedTools / --disallowedTools … 権限統制に直結するため settings.json 側で管理する。
-#     - --restricted … user・project・local の settings を読まずに起動する（キットの permissions.deny も hooks も効かない）。
-#     - --bare / --safe-mode … settings は読むが hooks・CLAUDE.md・skills を読まない（.bat 保護の hook が効かない）。
-#       いずれもキットの前提が崩れるため、ここでは扱わない。
-#     - --desktop / --environment / --ref … 端末セッションを始めずに Desktop を開く、またはクラウドセッションを
-#       作って終了する。他の起動オプションと併用できない（ランチャーの用途外）。
-#     - --post / --no-post / --trust-workspace（claude ultrareview）、--discard-unpushed / --force-remove-worktree（claude rm）…
-#       サブコマンド専用のオプション。
-#   詳細は公式 docs の CLI reference を参照。
-#
-# 反復可能フラグ（--add-dir / --plugin-dir / --mcp-config 等）は順序付きハッシュの性質上
-# 1 値しか書けない。複数渡す場合は起動時引数を使う（各項目のコメント参照）。
-#   例外・代替: --plugin-dir はプラグインを並べたフォルダを 1 つ渡せば中の各プラグインを読む（v2.1.265 以降）。
-#   --plugin-url は空白区切りの複数 URL を 1 値で渡せる。複数の plugin ディレクトリは環境変数
-#   CLAUDE_CODE_PLUGIN_DIRS（custom.env。Windows は ; 区切り・絶対パス必須・v2.1.280 以降）でも渡せる。
-#
-# プロンプトを起動時引数で渡すなら、フラグはすべてプロンプトより前に置く。値を複数取るフラグ（--add-dir /
-#   --mcp-config / --tools 等）や値を省略できるフラグ（--debug / --resume 等）は直後のプロンプトを値として取り込む。
-#   ランチャーは起動時引数が全部 - で始まらない（＝プロンプトだけ）ときに限り、ここの $Opts との間に -- を補う。
-#   PS 版はこの $Opts を書いた順に並べる（bash 版はキーの辞書順）。
+#   1) .claude/ 直下へ「option-settings.ps1」としてコピーする（.gitignore 済みの個人実体）。
+#      launcher/ に置いたものは読み込まれない（ランチャーが警告する）。
+#   2) 使う行の先頭の "# " を外して値を設定する。値を取らないフラグ（--verbose 等）は $true にする。
+#   3) start_claude_code.ps1 がこの $Opts を読み、claude の起動オプションを組み立てる。
+# 書式:
+#   - 同じキーは 1 回しか書けない。複数の値を渡すフラグ（--add-dir 等）の 2 個目以降は起動時引数で渡す。
+#   - UTF-8（BOM 付き）・CRLF のまま保存する（BOM が無いと Windows PowerShell 5.1 が日本語を読み違える）。
+# 背景・既定値の決まり方・載せていないオプション・注意の詳細は、テンプレートと同じフォルダ（launcher/）の README.md（以下 README）。
 # =============================================================================
 
 $Opts = [ordered]@{
     # ===== モデル =====
     # 使用モデル。エイリアス（opus / sonnet / haiku / fable / best / opusplan。1M コンテキストは opus[1m] / sonnet[1m]）か
     #   フルモデル名（例: claude-opus-5-5 / claude-sonnet-5-5 / claude-haiku-5-5 / claude-fable-5-1）。
-    #   公式デフォルト（起動時の対話選択は無い）: ANTHROPIC_MODEL → settings の model（/model の保存先）→
-    #   組織の既定モデル → ANTHROPIC_DEFAULT_MODEL → アカウント種別の既定（Pro/Max/Team/Enterprise/API・
-    #   Bedrock・Agent Platform は Opus 5.5、Foundry は Sonnet 4.5）の順に決まる。
-    #   エイリアスの指す先は版とプロバイダで変わる（Bedrock 等では sonnet / haiku が旧版）。版を固定するならフルモデル名。
+    #   未指定時は ANTHROPIC_MODEL・settings の model・組織の既定などの順で決まる（README §2-4）。版を固定するならフルモデル名
     # '--model' = 'opus'
     # 過負荷・利用不可時のフォールバック先。カンマ区切りで順に試す（最大 3 モデル。切り替えはそのターンだけ）
     # '--fallback-model' = 'sonnet,haiku'
@@ -53,24 +25,14 @@ $Opts = [ordered]@{
     # '--advisor' = 'fable'
 
     # ===== 設定ソース・作業ディレクトリ =====
-    # 追加の作業ディレクトリ。ここに書けるのは 1 値だけ（順序付きハッシュはキーを重複できず、
-    # フラグの繰り返し指定を表現できない）。複数ディレクトリを渡したい場合は起動時引数で:
-    #   .\start_claude_code.ps1 --add-dir <パスA> --add-dir <パスB>
-    # 同じ制約は --plugin-dir / --mcp-config 等の反復可能フラグにも当てはまる。
-    #   UNC（\\server\share）などのネットワークパスは拒否される（v2.1.257 以降）。Windows ではドライブ文字に割り当てて指定する。
-    #   ⚠ 起動時に渡したネットワークパスはそのディレクトリを外して起動し、対話起動ではその警告がデバッグログにしか出ない
-    #   （v2.1.305 以降。下の「デバッグ」節の --debug-file を有効にすると読める）。ここに書いた値が \\ か // で始まると、
-    #   ランチャーが起動前に stderr へ警告する（起動は止めない。起動時引数の --add-dir は検査しない）。
-    #   追加したディレクトリの .claude/skills/ も読み込まれる。既存の skill と同名のものは /<フォルダ名>:<skill 名> で
-    #   呼ぶ（v2.1.309 以降。それ以前は呼べなかった）
+    # 追加の作業ディレクトリ（1 値だけ。2 個目以降は起動時引数で渡す）。UNC などのネットワークパスは不可（v2.1.257 以降）。
+    #   Windows ではドライブ文字に割り当てて指定する（README §2-4）
     # '--add-dir' = '<参照したいリポジトリのパス>'
     # 追加で読む settings（ファイルパス または インライン JSON 文字列。同じキーはこのセッションだけ
     #   settings.json の値を上書きする。ファイルは 2 MiB 以下の通常ファイル）
     # '--settings' = './.claude/settings.extra.json'
     # 読み込む設定ソースの限定（user / project / local のカンマ区切り。例: project,user）。
-    #   ⚠ project を外すと、キットの .claude/settings.json（permissions.deny・hooks。.bat 保護を含む）が読まれない。
-    #   --add-dir で足したディレクトリの skill・コマンド・サブエージェントも読まれなくなる。
-    #   この値は、このセッションから起動するチームメイト・/bg・claude agents のセッションにも引き継がれる
+    #   ⚠ project を外すとキットの保護（permissions.deny・hooks）が効かない（README §2-4）
     # '--setting-sources' = 'project,user'
 
     # ===== MCP =====
@@ -80,39 +42,30 @@ $Opts = [ordered]@{
     # '--strict-mcp-config' = $true
 
     # ===== 権限 =====
-    # 権限モード（default〔= manual〕/ acceptEdits / plan / auto / dontAsk）
-    #   公式デフォルト（未指定時）: 対話起動は auto（v2.1.283 以降。ネイティブ Windows は v2.1.233 未満だと Manual）。
-    #   auto が使えない場合（モデル非対応・設定で無効化など）は Manual で起動する。-p 実行は default（v2.1.302 以降。
-    #   それ以前はサードパーティプロバイダやテレメトリ無効の環境で auto になりえた）。-p の Manual では、確認が要る操作は
-    #   allow ルール・hook・--permission-prompt-tool で承認しない限り拒否される。
-    #   'default' を指定すると auto をやめて従来の Manual（操作ごとに確認）で起動する。
-    #   dontAsk は確認が要る操作をすべて自動で拒否する（CI 向け。インストールした mod は一部を承認しうる）。
-    #   ⚠ ここで固定すると --continue / --resume で再開したときに、終了時のモード（plan 等）が復元されずこの値になる。
-    # ※ bypassPermissions は権限確認を全て飛ばすため、下の「非推奨・破壊的」節に隔離した
+    # 権限モード（default〔= manual〕/ acceptEdits / plan / auto / dontAsk〔確認が要る操作をすべて拒否〕）。
+    #   未指定時は対話起動で auto（使えなければ Manual）、-p は default（README §2-4）。'default' で Manual に固定する。
+    #   ⚠ 固定すると再開時に終了時のモードが復元されない（README §2-4）。bypassPermissions は書かない（下の「非推奨・破壊的」節）
     # '--permission-mode' = 'default'
 
     # ===== エージェント / プラグイン / システムプロンプト =====
-    # 追加サブエージェント定義（インライン JSON）。ファイルパスを渡せるのは --print 併用時だけ（v2.1.281 以降）。
-    #   対話起動でファイルパスを渡すと起動時にエラーで終了する
-    #   ※ Windows PowerShell 5.1 は、ネイティブ exe（claude.exe）へ渡す引数の中の " をすべて落とす（実測）。
-    #     JSON が壊れて {reviewer:{description:Reviews code,...}} になるため、この値は 5.1 では使えない。pwsh 7 で起動すること
-    #     （7.3 以降は " が保たれる）。5.1 で値を \" にエスケープしても、値に空白があると引数が空白で分割されて直らない
+    # 追加サブエージェント定義（インライン JSON）。ファイルパスは --print 併用時だけ（v2.1.281 以降。対話起動ではエラー）
+    #   ※ Windows PowerShell 5.1 では使えない（" が落ちて JSON が壊れる）。pwsh 7 で起動する（README §2-5）
     # '--agents' = '{"reviewer":{"description":"Reviews code","prompt":"You are a code reviewer"}}'
     # 単一エージェントの指定
     # '--agent' = 'my-agent'
     # システムプロンプトへ追記（ファイル指定）
     # '--append-system-prompt-file' = './prompt-append.txt'
-    # システムプロンプトへ追記（文字列指定）。v2.1.283 以降はファイル指定と併用でき、ファイルの内容が先に入る
+    # システムプロンプトへ追記（文字列指定）。ファイル指定と併用すると、ファイルの内容が先に入る（併用は v2.1.283 以降）
     # '--append-system-prompt' = '追加の指示'
-    # ⚠ 追記の内容は会話の最初のリクエストで記録され、--continue / --resume 後も圧縮されるまで記録版が使われる
-    #   （書き換えても再開した会話には効かない）。毎回作り直させるなら off（既定は on）
+    # 追記したシステムプロンプトを最初のリクエストで記録し、--continue / --resume 後も圧縮まで使い続けるか（on〔既定〕/ off）。
+    #   off にすると毎回作り直す（書き換えを再開した会話にも効かせたいとき）
     # '--system-prompt-snapshot' = 'off'
     # ローカルのプラグイン（ディレクトリ / .zip、またはプラグインを並べたフォルダ）をこのセッションだけ読み込む
     # '--plugin-dir' = './my-plugins'
     # URL からプラグインの .zip を取得し、このセッションだけ読み込む（空白区切りで複数 URL 可）
     # '--plugin-url' = 'https://example.com/plugin.zip'
     # 使えるビルトインツールの限定（"" で全部無効、"default" で既定セット、または "Bash,Edit,Read" のような列挙）。
-    #   MCP ツールには効かない。ただし列挙に ToolSearch を含めないと、MCP ツールは遅延読み込みされず最初から全部読み込まれる
+    #   MCP ツールには効かない。列挙に ToolSearch を含めないと、MCP ツールは最初から全部読み込まれる（README §2-4）
     # '--tools' = 'Read,Grep,Edit'
     # このセッションの skill / スラッシュコマンドをすべて無効にする（キットの skill も使えなくなる・値なしフラグ）
     # '--disable-slash-commands' = $true
@@ -134,19 +87,13 @@ $Opts = [ordered]@{
 
     # ===== worktree / エージェントチーム / API =====
     # 隔離した git worktree（<repo>/.claude/worktrees/<名前>）で起動する。値は worktree 名・'#<PR 番号>'・
-    #   GitHub PR URL・GitLab MR URL（v2.1.233 以降）。$true（値なし）なら名前を自動生成。既存の名前なら開き直す
-    #   （既定では、未コミットの変更が無く作成時のブランチのままで、独自のコミットが無い〔または PR がマージ済みで
-    #   remote ブランチが消えている〕ときは既定ブランチの最新から開き直す）。
-    #   ⚠ 終了時、変更も新しいコミットも無い worktree は、名前（--name / /rename）を付けていないセッションなら確認なしで
-    #   ブランチごと削除される（作業が残っている・別ブランチに切り替えてあるときは確認が出る）。v2.1.304 未満は別ブランチや
-    #   detached HEAD のときも確認なしで消し、コミットを失うことがあった
+    #   GitHub PR URL・GitLab MR URL（v2.1.233 以降）。$true（値なし）なら名前を自動生成。既存の名前なら開き直す。
+    #   ⚠ 変更も新しいコミットも無い worktree は、名前の無いセッションだと終了時に確認なしでブランチごと削除される（README §2-4）
     # '--worktree' = 'feature-auth'
     # worktree 用の tmux セッションを作る（--worktree が必要。iTerm2 ではネイティブペイン・値なしフラグ）
     # '--tmux' = $true
-    # エージェントチームのチームメイトの表示方式（in-process〔既定〕/ auto / tmux / iterm2）。実験的機能:
-    #   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 が無いとチーム自体が作られない。tmux / iterm2 は分割ペイン表示
-    #   分割ペインのチームメイトは起動時引数の --tools / --disallowedTools を引き継ぐ（v2.1.309 以降）が、--allowedTools は
-    #   引き継がない
+    # エージェントチームのチームメイトの表示方式（in-process〔既定〕/ auto / tmux / iterm2。tmux / iterm2 は分割ペイン）。
+    #   実験的機能: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 が無いとチーム自体が作られない（README §2-4）
     # '--teammate-mode' = 'in-process'
     # API リクエストに付けるベータヘッダ（API キー利用者のみ。複数あるときは起動時引数で空白区切り）
     # '--betas' = 'interleaved-thinking'
@@ -160,23 +107,16 @@ $Opts = [ordered]@{
     #   例: '--debug=mcp,startup' = $true  /  除外: '--debug=!mcp' = $true
     # '--debug' = $true
     # デバッグログを指定したファイルへ書く（デバッグモードも有効になる。環境変数 CLAUDE_CODE_DEBUG_LOGS_DIR より優先）。
-    #   v2.1.305 以降、対話起動での Claude Code の起動時警告（上の --add-dir のネットワークパスを外した警告を含む。
-    #   一部の権限ルールの警告だけはバナーの下の行に出る）は画面に出ず、デバッグログにしか出ない。読むにはこれを付けて
-    #   起動し、このファイルを開く（--debug だけなら ~/.claude/debug/<セッション ID>.txt に書かれる）。
-    #   作業ツリーの中を指定すると誤ってコミットしうるので、リポジトリの外のパスにする
+    #   起動時の警告を読むのに使う（README §2-4）。⚠ 誤コミットを防ぐため、リポジトリの外のパスにする
     # '--debug-file' = '<デバッグログのファイルパス>'
 
     # ===== 思考 / コンテキスト =====
-    # 推論の努力度（low / medium / high / xhigh / max、または ultracode）。使える段階はモデルによる。
-    #   公式デフォルト: モデルの既定（Opus 5.5 / Sonnet 5.5 / Haiku 5.5 は medium、Opus 4.7 は xhigh、他は high）。
-    #   ultracode は xhigh にしたうえで動的ワークフロー（ultracode）を有効にする。指定はこのセッションだけ。
-    #   ⚠ 環境変数 CLAUDE_CODE_EFFORT_LEVEL が設定されていると、そちらが優先されこのフラグは効かない
+    # 推論の努力度（low / medium / high / xhigh / max、または ultracode＝xhigh＋動的ワークフロー）。使える段階はモデルによる。
+    #   既定: Opus 5.5 / Sonnet 5.5 / Haiku 5.5 は medium、Opus 4.7 は xhigh、他は high。指定はこのセッションだけ。
+    #   ⚠ 環境変数 CLAUDE_CODE_EFFORT_LEVEL があるとそちらが優先され、このフラグは効かない（README §4）
     # '--effort' = 'high'
-    # 自動圧縮のウィンドウ（このセッションだけ。保存済みの設定は変えない）。auto（モデルの既定）か
-    #   トークン数: 200000 / 500k / 1M / 100〜1000（千単位）。範囲は 100K〜1M（v2.1.221 以降）。
-    #   ⚠ 環境変数 CLAUDE_CODE_AUTO_COMPACT_WINDOW が設定されていると、そちらが優先される（使えない値のときだけ無視され、
-    #   このフラグが効く）。環境変数は書き方が違い、接尾辞なしの数値はトークン数そのもの（200 は 200 トークン扱いで
-    #   下限の 100K に丸められる）。環境変数の k / M 接尾辞は v2.1.304 以降
+    # 自動圧縮のウィンドウ（このセッションだけ）。auto（モデルの既定）かトークン数: 200000 / 500k / 1M / 100〜1000（千単位）。
+    #   範囲は 100K〜1M（v2.1.221 以降）。⚠ 環境変数 CLAUDE_CODE_AUTO_COMPACT_WINDOW があるとそちらが優先（README §3-4）
     # '--autocompact' = '500k'
 
     # ===== 非対話 / print モード（ヘッドレス実行向け・通常の対話起動では不要）=====
@@ -201,11 +141,10 @@ $Opts = [ordered]@{
     # '--append-subagent-system-prompt-file' = './subagent-rules.txt'
 
     # ===== ⚠⚠ 非推奨・破壊的（内容を理解した上でのみ有効化）⚠⚠ =====
-    # 権限確認をすべてスキップする。誤操作・情報漏えいのリスクを理解した上で。
-    #   （--permission-mode bypassPermissions と同等。同じ効果を上の「権限」節の --permission-mode に書くと
-    #   キーが重複し、bash は後に書いた値が黙って採用され、PowerShell は構文エラーで起動しないため、ここに書かない）
+    # 権限確認をすべてスキップする。誤操作・情報漏えいのリスクを理解した上で（値なしフラグ）。
+    #   --permission-mode bypassPermissions と同等。そちらには書かない（キーが重複する。README §2-4）
     # '--dangerously-skip-permissions' = $true
-    # bypassPermissions を Shift+Tab の切り替え候補に加える（起動時は別のモード）。これを付けた対話セッションでは
-    #   plan モードでも編集・コマンドが確認なしで実行されうるため、上のフラグと同じ扱いにすること（値なしフラグ）
+    # bypassPermissions を Shift+Tab の切り替え候補に加える（起動時は別のモード・値なしフラグ）。
+    #   ⚠ plan モードでも確認なしで実行されうる。上のフラグと同じ扱いにする（README §2-4）
     # '--allow-dangerously-skip-permissions' = $true
 }
