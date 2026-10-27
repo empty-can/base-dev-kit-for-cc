@@ -234,6 +234,9 @@ $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1'   # キット動作依�
 # （project / local の settings では無視される。v2.1.282 以降）。
 # $env:CLAUDE_CODE_ENABLE_TELEMETRY = '1'
 # $env:OTEL_EXPORTER_OTLP_ENDPOINT = 'https://otel.example.internal'
+# $env:OTEL_METRICS_EXPORTER = 'otlp'                        # 送る信号ごとに exporter を選ぶ（otlp / prometheus / console / none）
+# $env:OTEL_LOGS_EXPORTER = 'otlp'                           # events（logs）の exporter（otlp / console / none）
+# $env:OTEL_EXPORTER_OTLP_PROTOCOL = 'grpc'                  # 既定が無いので otlp には必須（grpc / http/protobuf / http/json）
 # 権限ルール・managed のルール・auto mode・hook・sandbox 等がツール呼び出しを拒否した / 確認を求めた記録は
 # claude_code.safety_event（v2.1.307 以降）として events 側に出る。events（logs）は OTEL_LOGS_EXPORTER を
 # 設定したときだけ送られる（SIEM で拒否を監視するならメトリクスだけでは足りない）。
