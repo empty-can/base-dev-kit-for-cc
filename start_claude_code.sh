@@ -18,6 +18,12 @@
 #   組立順は claude <OPTS> <TEAM_OPTS> [--] <起動時引数>。各連想配列はキーの辞書順（C ロケール）で並べる
 #   （PS 版は書いた順）。
 #
+# 出力の約束: ランチャー（本ファイルと setup-environment）自身の警告・エラーはすべて stderr に書く。stdout は claude の
+#   出力だけにする（claude -p の結果を読むスクリプトに混ざらないように。PS 版も同じ）。
+# ⚠ これは利用者が端末から起動するランチャーで、CLAUDE_CODE_PROCESS_WRAPPER / processWrapper に登録するもの
+#    ではない。登録しても契約を満たさない（Claude Code の引数に起動オプションを足す、起動前に警告を出しうる。
+#    PS 版は exec しない）うえ、Windows ではその設定自体が無視される。必要なら別の薄いスクリプトを作る
+#    （契約: https://code.claude.com/docs/en/corporate-launcher#the-launcher-contract）。
 # ⚠ プロンプトを起動時引数で渡すなら、フラグはすべてプロンプトより前に置くこと。値を複数取るフラグ
 #    （--add-dir / --mcp-config / --tools 等）や値を省略できるフラグ（--debug / --resume 等）が組み立てた
 #    オプションの最後に来ると、直後のプロンプトを値として取り込む（v2.1.302 で実測）。ランチャーは起動時引数が
@@ -116,6 +122,25 @@ if [ -f "${_OPTS_FILE}" ]; then
   # shellcheck source=/dev/null
   . "${_OPTS_FILE}"   # OPTS を定義（未作成なら空のまま）
 fi
+
+# option-settings（OPTS）と TEAM_OPTS の --add-dir がネットワークパス（UNC）の形なら起動前に警告する（止めない）。
+# Claude Code は起動時に渡されたネットワークパスを外して起動し（v2.1.257 以降）、v2.1.305 以降の対話起動ではその警告が
+# デバッグログにしか出ない。<Share> を UNC で書くとキット無しで黙って起動するので、画面に出せるランチャーが知らせる。
+# チームが <Share> を固定するのは TEAM_OPTS なので、そこも同じ判定で見る（2026-10-27 の判断 J-3。それまでは option-settings
+# だけ）。警告文の先頭で値の出どころ（option-settings か TEAM_OPTS か）を示し、順は OPTS → TEAM_OPTS（PS 版と同じ）。
+# 判定は綴りだけ（\\ か // で始まるか。解決するとネットワークへ触れてしまう）。起動時引数の --add-dir は見ない（利用者が
+# 並べた引数は守らない。設計 §5-3 の責任分界）。[--add-dir=<パス>] のような = 形のキーも見ない（キーが --add-dir そのものの
+# 値だけ。設計 §5-4）。本文は PS 版と同じ文言（出どころの表記も同じ）で、前置きだけ違う（bash 版は「⚠ 」、PS 版は
+# 「警告: 」。PS 版は CP932 で書く [Console]::Error に ⚠ を使わない）。
+_warn_unc_add_dir() { # $1=値の出どころ（警告文の先頭に出す） $2=--add-dir の値
+  case "$2" in
+    '\\'*|'//'*)
+      printf '⚠ %s の --add-dir %s はネットワークパスの形です。ネットワークパスは v2.1.257 以降拒否され、v2.1.305 以降は警告がデバッグログにしか出ないため、Claude Code はこのディレクトリを黙って外して起動します。ドライブ文字に割り当てて指定してください。\n' \
+        "$1" "$2" >&2 ;;
+  esac
+}
+_warn_unc_add_dir 'option-settings' "${OPTS[--add-dir]:-}"
+_warn_unc_add_dir 'start_claude_code のチーム統制（TEAM_OPTS / $TeamOpts）' "${TEAM_OPTS[--add-dir]:-}"
 
 # ---- 4) claude コマンドを組み立て ------------------------------------------
 # TEAM_OPTS を後に置くことで、同じフラグを OPTS にも書いた場合はチーム値が後勝ちする。

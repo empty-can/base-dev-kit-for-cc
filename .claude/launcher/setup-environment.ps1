@@ -26,6 +26,9 @@
 #    公式 docs は settings の env を勧めるが、キットは利用者に settings 系ファイルの env を使わせない（誤って commit / push する、Claude から読める場所に値が残る、を避けるため）。
 #    組織で固定する値だけは managed settings の env に置く。機微（分類A）も OS 環境変数。
 #    ※ supervisor ごとラップする公式手段（CLAUDE_CODE_PROCESS_WRAPPER / processWrapper）は Windows では無視される。
+#      macOS / Linux でも start_claude_code はその契約を満たさないので登録しない（base-dev-kit の launcher 設計 §5-1）。
+#    ※ 本ファイルの警告は Write-Warning で出し、start_claude_code.ps1 が stderr へ回す（PowerShell は別のプログラムから
+#      起動されると warning ストリームを stdout に書くため。stdout は claude の出力だけにする）。
 # =============================================================================
 
 # custom.env は .claude/ 直下（launcher の一つ上）。利用者が custom.env.template から作成。
@@ -203,6 +206,20 @@ $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1'   # キット動作依�
 # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = '<プロバイダ形式の Sonnet ID>'
 # $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = '<プロバイダ形式の Haiku ID>'
 # --- ゲートウェイ URL（★組織外秘なら分類A＝OS env にすること。非秘匿な場合のみ下記）---
+# LLM ゲートウェイ（Anthropic Messages 形式のエンドポイント。LiteLLM 等）を組織で運用している場合:
+# ⛔ ゲートウェイの認証（ANTHROPIC_AUTH_TOKEN〔Authorization: Bearer〕/ ANTHROPIC_API_KEY〔x-api-key〕）は分類A。ここにも
+#    custom.env にも、ほかのどの .env ファイルにも書かず、OS の環境変数で設定する（custom.env に書くと読み飛ばされる）。
+#    ANTHROPIC_CUSTOM_HEADERS は値次第: 認証情報（Authorization 等）や個人情報（利用者の ID・メールアドレス等）を載せるなら
+#    同じく分類A として OS の環境変数で設定する。載せないヘッダでも custom.env では名前で読み飛ばされるので、OS の環境変数に
+#    置く（custom.env.template の冒頭と同じ）。
+# ⚠ api.anthropic.com 以外を指すと Remote Control は使えない（v2.1.196 以降）。server-managed settings も取得されない（上の注記）。
+# $env:ANTHROPIC_BASE_URL = 'https://llm-gateway.example.internal'
+# この下では MCP の tool search が既定で on になる（v2.1.304 以降。それ未満は ENABLE_TOOL_SEARCH で有効にしない限り off）。ゲートウェイが defer_loading /
+# tool_reference を転送できずに 400 / 422 で拒否すると、tool search 無しで自動的に再試行される（v2.1.305 以降。利用者の
+# 操作は不要で、MCP ツールは最初から全部読み込まれる）。ただし後で再び試すので、拒否されるリクエストがときどき出る。
+# 転送できないと分かっているゲートウェイでは、次の行で最初から止める。
+# $env:ENABLE_TOOL_SEARCH = 'false'
+# プロバイダ形式のゲートウェイ（Bedrock / Claude Platform on AWS / Agent Platform / Foundry の形式で受けるもの）:
 # ゲートウェイが認証を付ける場合は、各プロバイダのクライアント認証を省く CLAUDE_CODE_SKIP_*_AUTH と対で使う。
 # $env:ANTHROPIC_BEDROCK_BASE_URL = 'https://gateway.example.internal'
 # $env:CLAUDE_CODE_SKIP_BEDROCK_AUTH = '1'
@@ -217,6 +234,9 @@ $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1'   # キット動作依�
 # （project / local の settings では無視される。v2.1.282 以降）。
 # $env:CLAUDE_CODE_ENABLE_TELEMETRY = '1'
 # $env:OTEL_EXPORTER_OTLP_ENDPOINT = 'https://otel.example.internal'
+# 権限ルール・managed のルール・auto mode・hook・sandbox 等がツール呼び出しを拒否した / 確認を求めた記録は
+# claude_code.safety_event（v2.1.307 以降）として events 側に出る。events（logs）は OTEL_LOGS_EXPORTER を
+# 設定したときだけ送られる（SIEM で拒否を監視するならメトリクスだけでは足りない）。
 # ⛔ OTEL_EXPORTER_OTLP_HEADERS（Authorization=Bearer … を載せる）は分類A。ここに書かない。
 # Anthropic への運用テレメトリ / エラー報告の停止（3P プロバイダでは既定で停止済み）。
 # ⚠ どちらも「空でない値なら何でも停止」で、0 や false でも停止する。戻すには行ごと消す。
