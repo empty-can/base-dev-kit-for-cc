@@ -385,6 +385,67 @@ while IFS= read -r -d '' _f; do
 done < <(payload_files)
 [[ $_ps1_nobom -eq 0 ]] && pass "配布される .ps1 は全て BOM 付き"
 
+# 2-g. 配布される rules と共通 CLAUDE.md の大きさ。対象は .claude/rules/ 配下の *.md（サブディレクトリを含む）と .claude/CLAUDE.md に固定する。
+#      判定は 2 段で、1 ファイルにつき 1 行（両方に当たるものは FAIL だけを出し、WARN と二重に出さない）。ちょうどは PASS:
+#        - 32,000 文字超 → FAIL（publish-share は FAIL で公開を中止する）。on demand で読まれるファイル（paths: 付きの rules 等）は
+#          1 ファイルの上限を超えた分が読まれない（v2.1.309〜。200K コンテキストで 40,000 文字、1M で 150,000〜200,000 文字。
+#          memory「Claude ignores the end of my subdirectory CLAUDE.md」）。32,000 は最も厳しい 40,000 の 8 割。本リポの文体（日本語で
+#          1 行 40〜60 文字）では 600〜700 行に当たり、下の 200 行の目安もほぼ確実に大きく超えているので、WARN でなく FAIL にする
+#          （2026-10-27 の作業指示者の判断）。
+#        - 200 行超 → WARN。docs の CLAUDE.md の目安（memory「target under 200 lines per CLAUDE.md file. Longer files consume more
+#          context and reduce adherence」）。rules 固有の目安は docs に無いので、rules にも同じ目安を当てる（起動時の長さの警告でも
+#          rules は 1 ファイルとして数えられる）。
+#      ⚠ 対象を広げない: skills の SKILL.md・agents・その他の .md は見ない（docs/・README はそもそも payload の外）。rules は
+#         サブディレクトリの .md も Claude Code が rules として読む（memory「All .md files are discovered recursively」）ので深さによらず
+#         数える（case の * は / にも一致するので、.claude/rules/*.md がそのまま再帰の範囲になる）。ただし . で始まるディレクトリ
+#         （.claude/rules/.x/… や .claude/rules/a/.x/…。作業用の退避・VCS のメタデータ等）の中には入らない（PS 版と同じ名前の規則。
+#         隠し属性は見ない）。. で始まるファイル名そのものは数える。
+#      列挙は payload_files（2-e / 2-f と同じ二層基準・序数順。git 層は追跡ファイルだけ、payload 層はリンクを辿らない実体だけ。
+#      .claude/CLAUDE.md は .claude/rules/… より前に来る）。
+#      ⚠ 数え方は PS 版と同じバイト単位の規則にする（どちらもデコードしない）:
+#        文字数 = UTF-8 の継続バイト（0x80〜0xBF）以外のバイト数。正しい UTF-8 ではコードポイント数（Linux の UTF-8 ロケールでの
+#                 wc -m）に一致する。先頭の UTF-8 BOM（EF BB BF）は 1 文字分を引いて数えない。改行（LF・CR）も 1 文字。
+#        行数   = LF のバイト数。最後の行が LF で終わらなければ 1 行足す（空のファイルは 0 行）。
+#        wc -m に頼らない（ロケールが UTF-8 でないとバイト数を返す。Git Bash では UTF-8 のロケールでも UTF-16 の code unit を数えて
+#        絵文字を 2 と数え、BOM も 1 文字と数える。実測）。python も使わない（無い環境でも検査する）。PS 版の文字列の .Length も
+#        UTF-16 の code unit 数なので使わない。
+# ⚠ しきい値を変えたら FAIL / WARN / PASS の文言（200 行・32,000 文字）と PS 版の $ruleMaxLines / $ruleMaxChars も同時に直す。
+_RULE_MAX_LINES=200; _RULE_MAX_CHARS=32000
+_rule_n=0; _rule_hit=0
+while IFS= read -r -d '' _f; do
+  case "$_f" in
+    .claude/CLAUDE.md) ;;
+    .claude/rules/.*/*|.claude/rules/*/.*/*) continue ;;   # . で始まるディレクトリの中（直下・それより深い所）
+    .claude/rules/*.md) ;;
+    *) continue ;;
+  esac
+  [[ -f "$SHARE/$_f" ]] || continue   # 実体が無いもの（列挙と作業ツリーのずれ）は従来どおり対象にしない（PS 版の Test-Path と同じ）
+  # 読めないファイル（-r が偽・開けない・途中で読めない。ロック・権限・I/O エラー）は件数に足さず、ファイルごとに「未検査」の
+  # WARN を 1 行出す（2026-10-27 の判断 J-4。黙って飛ばすと、検査して PASS したのか未検査なのか区別できない。settings の
+  # 「キー検査に失敗した（未検査）」と同じ扱い）。FAIL にはしない（一時的なロックで publish を止めない）。他のファイルが基準内なら
+  # 下の PASS 行は読めたファイルの件数で別に出す。PS 版の ReadAllBytes の try / catch → Warn と同じ文言（例外の文言は出さない。
+  # bash 版では取れないので両版で割れる）。pipefail なので tr の失敗が終了コードに出る。2>/dev/null は < より前に置く
+  if [[ ! -r "$SHARE/$_f" ]] \
+     || ! _rchars="$(LC_ALL=C tr -d '\200-\277' 2>/dev/null < "$SHARE/$_f" | wc -c)" \
+     || ! _rlines="$(LC_ALL=C tr -cd '\n' 2>/dev/null < "$SHARE/$_f" | wc -c)"; then
+    warn "rules / CLAUDE.md の大きさ: $_f は読み取りに失敗したため未検査（ロックや読み取り権限を確かめて再実行する）"
+    continue
+  fi
+  _rule_n=$((_rule_n + 1))
+  _rchars=$((_rchars)); _rlines=$((_rlines))
+  [[ "$(head -c 3 "$SHARE/$_f" | od -An -tx1 | tr -d ' \n')" == "efbbbf" ]] && _rchars=$((_rchars - 1))
+  _rlast="$(tail -c 1 "$SHARE/$_f" | LC_ALL=C tr -d '\n' | wc -c)"
+  [[ $((_rlast)) -gt 0 ]] && _rlines=$((_rlines + 1))
+  if [[ $_rchars -gt $_RULE_MAX_CHARS ]]; then
+    bad "rules / CLAUDE.md の大きさ: $_f は ${_rchars} 文字（32,000 文字超）。on demand で読まれるファイルは 200K コンテキストで 40,000 文字を超えた分が読まれず（v2.1.309〜）、docs の目安（1 ファイル 200 行未満）も大きく超える。分割する（FAIL なので publish-share は公開を中止する）"
+    _rule_hit=1
+  elif [[ $_rlines -gt $_RULE_MAX_LINES ]]; then
+    warn "rules / CLAUDE.md の大きさ: $_f は ${_rlines} 行（200 行超）。docs の目安は 1 ファイル 200 行未満（超えるとコンテキストを消費し遵守率が下がる）。分割を検討する"
+    _rule_hit=1
+  fi
+done < <(payload_files)
+[[ $_rule_hit -eq 0 ]] && pass "rules / CLAUDE.md の大きさ（200 行・32,000 文字以内）: ${_rule_n} ファイル"
+
 # 3. settings.json の JSON 構文 ＋ project（.claude/settings.json）では効かないキーの検出
 #    根拠: settings-reference の Scope 欄。`Any file` 以外のキーは共有 project ファイルからは適用されない。
 #    「直し方」が違うので区分を分けて報告する:
@@ -395,17 +456,26 @@ done < <(payload_files)
 #          キー名は 2-c と同じ二段階で照合する（_ENV_RE に完全一致 → A〜Z だけ畳んだ同士で一致）。判定は、
 #          完全一致 → 従来の WARN、大文字小文字だけ違う（systemroot 等）→ 「Windows でのみ同一視される」旨の別の WARN。
 #          環境変数名の大文字小文字を区別しないのは Windows だけなので、区別する OS では別の変数でありうる。
+#          どの settings ファイルからも読まれず起動環境からしか読まれない変数（CLAUDE_CODE_RESTRICTED 等）も E に含める
+#          （settings-reference「Variables Claude Code ignores in `env`」の各項目。v2.1.310 の docs で照合）。
+#    加えて、どこに置いても照合されない権限ルール（permissions.allow / deny / ask のうち、パス付きの Write / NotebookEdit /
+#    MultiEdit / Glob。ファイルの権限は Edit(path) / Read(path) ルールだけで照合される。permissions「`Write(path)`,
+#    `NotebookEdit(path)`, and `Glob(path)` rules never match」）を別の WARN で報告する。ツール名だけのルール（Write 等）は
+#    ツール単位で効くので対象外。hooks の if 条件（"Write(...)" 等）は権限ルールではないので見ない。Claude Code 自身も
+#    起動時に警告するが、v2.1.305 以降の対話セッションではバナー下の行とデバッグログにしか出ない（allow ルールは行も出ない）。
 #    ⚠ 判定はキーパス（a.b.c）で行い、PS 版と同じ表・同じ意味に揃えること（raw grep は
 #       sandbox.filesystem.disabled の "disabled" のような汎用名を区別できない）。
-#    ⚠ 表を更新したら PS 版の $uKeys / $mKeys / $envRe も同時に更新する。
+#    ⚠ 表を更新したら PS 版の $uKeys / $mKeys / $envRe / $wRuleRe も同時に更新する。
 #    同じオブジェクト内のキーの重複（完全一致、または A〜Z だけ畳んで一致 = 大文字小文字だけの違い。env 以外の階層も同じ）は
 #    専用メッセージで FAIL にし、キーの検査には進まない。どの値が効くかは読み手で変わり（python / PowerShell 7 / 5.1 は
 #    完全一致の重複を黙って後勝ちで受理し、PowerShell は大文字小文字だけの違いを拒否する。実測）、Windows の環境変数名は
 #    大文字小文字を区別しない。判定の順は BOM → JSON 構文 → 重複キー → キーの検査（PS 版と同じ）。構文が先なので、
 #    壊れた JSON は重複があっても「不正な JSON」になる（PS 版は ConvertFrom-Json が構文を通したかで同じ順にしている）。
+# axScreenReader は v2.1.305 から User or managed（--settings も可。それまでは Any file）。sandbox.allowNestedUserNamespaces は
+# v2.1.305 で新設（User or managed。--settings も可。true にするとサンドボックスの境界を外す）
 _U_KEYS=(skipDangerousModePermissionPrompt useAutoModeDuringPlan autoMode skipAutoPermissionPrompt
-         processWrapper pluginConfigs syncClaudeAiSkills syncClaudeAiPlugins
-         sandbox.allowAppleEvents sandbox.ripgrep sandbox.filesystem.disabled
+         processWrapper pluginConfigs syncClaudeAiSkills syncClaudeAiPlugins axScreenReader
+         sandbox.allowAppleEvents sandbox.allowNestedUserNamespaces sandbox.ripgrep sandbox.filesystem.disabled
          sandbox.network.strictAllowlist sandbox.network.tlsTerminate
          sandbox.credentials.allowPlaintextInject sandbox.credentials.awsPairs sandbox.credentials.sigv4)
 # prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く
@@ -419,7 +489,17 @@ _M_KEYS=(prependPlugins appendPlugins
          sandbox.network.allowManagedDomainsOnly)
 # ⚠ 二段階目は _ENV_RE 自体も A〜Z を畳んで照合する。畳めるのは \D \S \W \B 等の「大文字で意味が変わるエスケープ」を
 #    含まないから。追加するときもリテラルと . * ( ) | ? だけで書くこと（PS 版の $envRe も同じ）。
-_ENV_RE='^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_TMPDIR|HOME|TMPDIR|TMP|TEMP|XDG_.*|SystemRoot|ComSpec|ProgramData|LOCALAPPDATA|PATHEXT|PSModulePath|ProgramFiles.*|CommonProgramFiles.*|ALLUSERSPROFILE|SystemDrive|CLAUDE_CODE_ENABLE_TELEMETRY|CLAUDE_CODE_ENHANCED_TELEMETRY_BETA|ENABLE_ENHANCED_TELEMETRY_BETA|OTEL_(LOGS|METRICS|TRACES)_EXPORTER|OTEL_LOG_.*|OTEL_EXPORTER_OTLP_(.*_)?(ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)|OTEL_EXPORTER_PROMETHEUS_(HOST|PORT)|ENABLE_BETA_TRACING_DETAILED|BETA_TRACING_ENDPOINT|CLAUDE_CODE_PROCESS_WRAPPER|CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)|CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR|CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS|CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS|CLAUDE_CODE_DISABLE_(ATTACHMENTS|FILE_MENTIONS)|CLAUDE_CODE_PROJECT_DIR_NAME|CLAUDE_CODE_RESTRICTED)$'
+# ⚠ CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS は v2.1.310 の docs から消えた（どのページにも無い。changelog に廃止の記載は無い）が、
+#    project の env に書いても効かない事実は変わらないので残す（外すと、効かない変数が黙って PASS になる）。
+# CLAUDE_AX_.* は v2.1.305 から project / local では無視（screen reader 等）。CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB は
+# どの settings ファイルからも読まれない（起動環境だけ。MOUNTED_DRIVE_RM_PROMPT と WARN_* は v2.1.304 以降の docs で追加）。
+# ホスティング環境・Claude Code 自身が設定する変数（CLAUDE_CODE_REMOTE / CLAUDE_CODE_ACCOUNT_UUID / CLAUDE_CODE_MESSAGING_* 等）は、
+# 利用者が settings に書く動機が無いので含めない。
+_ENV_RE='^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_TMPDIR|HOME|TMPDIR|TMP|TEMP|XDG_.*|SystemRoot|ComSpec|ProgramData|LOCALAPPDATA|PATHEXT|PSModulePath|ProgramFiles.*|CommonProgramFiles.*|ALLUSERSPROFILE|SystemDrive|CLAUDE_CODE_ENABLE_TELEMETRY|CLAUDE_CODE_ENHANCED_TELEMETRY_BETA|ENABLE_ENHANCED_TELEMETRY_BETA|OTEL_(LOGS|METRICS|TRACES)_EXPORTER|OTEL_LOG_.*|OTEL_EXPORTER_OTLP_(.*_)?(ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)|OTEL_EXPORTER_PROMETHEUS_(HOST|PORT)|ENABLE_BETA_TRACING_DETAILED|BETA_TRACING_ENDPOINT|CLAUDE_CODE_PROCESS_WRAPPER|CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)|CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR|CLAUDE_AX_.*|CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS|CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS|CLAUDE_CODE_DISABLE_(ATTACHMENTS|FILE_MENTIONS)|CLAUDE_CODE_PROJECT_DIR_NAME|CLAUDE_CODE_RESTRICTED|CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY|CLAUDE_CODE_DISABLE_(DANGEROUS_RM_TIMEOUT|SUBSTITUTION_RM_PROMPT|INLINE_SHELL_RM_PROMPT|MOUNTED_DRIVE_RM_PROMPT)|CLAUDE_CODE_WARN_(DISK|MEMORY)_FREE_GIB)$'
+# 照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob）。( ) の中が 1 文字以上あるものだけ（ツール名だけ・
+# 空の ( ) は対象外）。. の代わりに [\s\S] を使う（python の . は既定で改行に一致せず、PS 版の .NET も同じだが、両版で同じ意味に
+# するため明示する）。大文字小文字を区別する（ツール名は区別される）。PS 版の $wRuleRe と同じ式
+_W_RULE_RE='(Write|NotebookEdit|MultiEdit|Glob)\([\s\S]+\)'
 SETTINGS="$SHARE/.claude/settings.json"
 # ⚠ 先頭の UTF-8 BOM は専用メッセージで FAIL にする（JSON 構文・キーの検査には進まない）。Claude Code が BOM 付きの
 #    settings.json を読める保証が無い（RFC 8259 §8.1 は BOM を付けないよう求め、無視するかはパーサ次第）。かつては
@@ -469,7 +549,7 @@ PYEOF
     elif [[ $_jrc -eq 0 ]]; then
       pass "settings.json は valid JSON"
       # ⚠ python の失敗を PASS に化けさせない（出力が空でも成功扱いにすると fail-open になる。実測）
-      if _res="$("$PY" - "$SETTINGS" "${_U_KEYS[*]}" "${_M_KEYS[*]}" "$_ENV_RE" 2>/dev/null <<'PYEOF'
+      if _res="$("$PY" - "$SETTINGS" "${_U_KEYS[*]}" "${_M_KEYS[*]}" "$_ENV_RE" "$_W_RULE_RE" 2>/dev/null <<'PYEOF'
 import json, re, sys
 d = json.load(open(sys.argv[1], encoding='utf-8'))
 if not isinstance(d, dict):
@@ -500,21 +580,38 @@ def env_class(k):
         return 'case'
     return 'none'
 cls = {k: env_class(k) for k in env}
-e = [k for k in env if cls[k] == 'exact']
-ec = [k for k in env if cls[k] == 'case']
-print(' '.join(u)); print(' '.join(m)); print(' '.join(e)); print(' '.join(ec))
+# 一覧に出すキーの中の CR / LF も <CR> / <LF> と書く（照合は生のキーで行う。PS 版と同じ）。re.match の $ は末尾の改行の直前にも
+# 一致するので "XDG_A\n" のようなキーも E に入り、生のまま出すと下の read で後の行がずれて、照合されない権限ルールが PASS に化ける
+# （PS 版は WARN が 2 行に割れる）。置き換えは下の w と同じ
+vis = lambda s: s.replace('\r', '<CR>').replace('\n', '<LF>')
+e = [vis(k) for k in env if cls[k] == 'exact']
+ec = [vis(k) for k in env if cls[k] == 'case']
+# 照合されない権限ルール。deny → ask → allow の順、各配列の中は文書順に「種別:ルール」で並べる（PS 版と同じ）。文字列以外は見ない。
+# ルールの中の CR / LF は <CR> / <LF> と書く（式の [\s\S] は改行にも一致する。生のまま出すと下の read が 1 行目しか受け取らず、
+# PS 版は WARN が 2 行に割れる。\r / \n と書くと Write(C:\new) のような Windows のパスと見分けられない）
+w = []
+for kind in ('deny', 'ask', 'allow'):
+    rules = perm.get(kind) if isinstance(perm.get(kind), list) else []
+    w += [kind + ':' + r.replace('\r', '<CR>').replace('\n', '<LF>') for r in rules if isinstance(r, str) and re.fullmatch(sys.argv[5], r)]
+# ルールのパスに非 ASCII があってもロケールの符号化（cp932 等）に左右されないよう UTF-8 のバイト列で書く（重複キーの出力と同じ）
+sys.stdout.buffer.write(('\n'.join(' '.join(x) for x in (u, m, e, ec, w)) + '\n').encode('utf-8', 'replace'))
 PYEOF
 )"; then
-        { IFS= read -r _u; IFS= read -r _m; IFS= read -r _e; IFS= read -r _ec; } <<< "$_res"
-        # ⚠ Windows の python はパイプへ CRLF で書くため、行末の CR を落とす（残すと WARN 文の途中に CR が混ざり、
-        #    空判定（-n）も「CR だけの行」を非空と誤る）。
-        _u="${_u%$'\r'}"; _m="${_m%$'\r'}"; _e="${_e%$'\r'}"; _ec="${_ec%$'\r'}"
+        { IFS= read -r _u; IFS= read -r _m; IFS= read -r _e; IFS= read -r _ec; IFS= read -r _w; } <<< "$_res"
+        # ⚠ 行末の CR を落とす（以前は print で書いており、Windows の python はパイプへ CRLF で書いた。残すと WARN 文の途中に
+        #    CR が混ざり、空判定（-n）も「CR だけの行」を非空と誤る。バイト列で書くようにした後も念のため落とす）。
+        _u="${_u%$'\r'}"; _m="${_m%$'\r'}"; _e="${_e%$'\r'}"; _ec="${_ec%$'\r'}"; _w="${_w%$'\r'}"
         # 判定（E 区分は 完全一致 → 従来の WARN／大文字小文字だけ違う → 別文言の WARN）
         [[ -n "$_u" ]] && warn "方法 A（.claude/ を project として配置）では無視されるキー: $_u（方法 B / clean-test-env の --settings 結合では有効になり、配布方式で挙動が割れる。各自に効かせるなら ~/.claude/settings.json へ）"
         [[ -n "$_m" ]] && warn "project でも --settings でも無視されるキー: $_m（managed 専用。prependPlugins / appendPlugins だけは条件付きで user も可。組織の managed settings で配る）"
-        [[ -n "$_e" ]] && warn "env で project / local からは設定できない変数: $_e（シェル・~/.claude/settings.json・managed で設定する。テレメトリの off 値 none / 0 だけは例外。CLAUDE_CODE_PROJECT_DIR_NAME / CLAUDE_CODE_RESTRICTED は起動環境からしか読まれない）"
+        [[ -n "$_e" ]] && warn "env で project / local からは設定できない変数: $_e（シェル（OS の環境変数）か、組織で固定するなら managed settings で設定する。テレメトリの off 値 none / 0 だけは例外。CLAUDE_CODE_PROJECT_DIR_NAME / CLAUDE_CODE_RESTRICTED / CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB はどの settings ファイルからも読まれず、起動環境からしか読まれない）"
         [[ -n "$_ec" ]] && warn "env で project / local からは設定できない変数と大文字小文字だけが違う変数: $_ec（Windows でのみ同一視される。環境変数名の大文字小文字を区別しないのは Windows だけで、Windows では設定できない変数と同じ扱いになりうる。意図したものか確認すること）"
         [[ -z "$_u$_m$_e$_ec" ]] && pass "project で効かないキーなし（settings.json）"
+        if [[ -n "$_w" ]]; then
+          warn "照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob）: $_w（ファイルの権限は Edit(path) / Read(path) ルールだけで照合され、これらはどこに置いても効かない。Write / NotebookEdit / MultiEdit は Edit(…)、Glob は Read(…) に書き換える。ツール名だけのルールは対象外）"
+        else
+          pass "照合されない権限ルールなし（settings.json）"
+        fi
       else
         warn "settings.json のキー検査に失敗した（未検査）"
       fi

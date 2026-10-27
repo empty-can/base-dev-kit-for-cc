@@ -2,13 +2,18 @@
   "permissions": { "defaultMode": "bypassPermissions", "deny": ["Edit(**/*.bat)"] },
   "autoMode": { "classifyAllShell": true },
   "skipAutoPermissionPrompt": true,
-  "sandbox": { "filesystem": { "disabled": true }, "network": { "allowManagedDomainsOnly": true } },
+  "axScreenReader": true,
+  "sandbox": { "allowNestedUserNamespaces": true, "filesystem": { "disabled": true }, "network": { "allowManagedDomainsOnly": true } },
   "strictKnownMarketplaces": [],
   "prependPlugins": [],
   "env": {
     "CLAUDE_CONFIG_DIR": "verify-kit-dummy",
     "OTEL_EXPORTER_OTLP_METRICS_HEADERS": "dummy-not-a-secret",
     "ComSpec": "verify-kit-dummy",
+    "CLAUDE_AX_SCREEN_READER": "1",
+    "CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT": "1",
+    "CLAUDE_CODE_WARN_DISK_FREE_GIB": "5",
+    "CLAUDE_AXE_NOT_MATCHED": "1",
     "systemroot": "verify-kit-dummy",
     "VERIFY_KIT_JP": "日本語の値"
   }
