@@ -87,7 +87,9 @@ head -c 3 <file> | od -An -tx1
 | **新規作成する** | `python .claude/hooks/bat_cp932_guard.py new <path>.bat` で空の `.bat` と作業コピーを作り、作業コピーを編集する（`Write` は拒否される） |
 | **中身を検索する** | `python .claude/hooks/bat_cp932_guard.py sync` で全作業コピーを更新してから、`Grep` の対象を `.claude/.bat-shadow/` にする（CP932 のままでは Grep は日本語にヒットしない） |
 
-- **原本への `Edit` / `Write` は `permissions.deny` で拒否される**。hook は Python が無い環境では起動に失敗し、
+- **原本への `Edit` / `Write` は `permissions.deny` で拒否される**（ただしマシンに managed settings が無く、Team /
+  Enterprise の `/login` で動いていないセッションでは、自分で入れた mod〔`tool.check`〕が deny を越えて承認しうる ――
+  permissions「Precedence among rules, hooks, and mods」）。hook は Python が無い環境では起動に失敗し、
   既定ではそのまま操作が素通りする。`.bat` の Read ガード（PreToolUse）には `"onFailure": "block"`（v2.1.295〜）を
   付けてあるので、起動失敗・タイムアウト・想定外の終了コードでは **Read 自体が止まる**（PostToolUse 側の書き戻し・
   `.ps1` 検査には付けていない。対応する最低版は v2.1.295 で、それ未満は対象外）。それでも
@@ -101,7 +103,10 @@ head -c 3 <file> | od -An -tx1
   CP932 の対応字へ自動正規化されるため、拒否されない。
 - **`.bat` を `sed -i`・リダイレクト・PowerShell の `Set-Content` / `Add-Content` / `Out-File` / `>`・スクリプト
   （Python 等）で書き換えない**（シェルやスクリプト経由の書き込みは hook が守れない。`permissions.deny` の
-  `Edit(...)` が止めるのも Bash のリダイレクト先と `sed` / `tee` 等までで、PowerShell やスクリプトには保証が無い）。
+  `Edit(...)` が止めるのも Bash のリダイレクト先と、Claude Code が認識するファイル操作コマンド（`sed` / `tee` 等）
+  までで、PowerShell やスクリプトには保証が無い。リダイレクト先の検査にも、サブシェルを含む一部のコマンドで
+  `Edit(...)` の deny が効かない不具合が v2.1.309 未満にはあった ―― changelog 2.1.309。`sed -i` は v2.1.309 から
+  編集プレビューではなく通常の Bash コマンドとして実行され、`/rewind` でも戻らない）。
   非 UTF-8 のファイルに対する `Edit` / `Write` の拒否メッセージは「文字コードを保つシェルコマンドで直す」を勧め、
   `Write` のもの（v2.1.302 で実測）はさらに iconv や PowerShell の `Set-Content -Encoding`、「消してから `Write`
   する」まで挙げるが、`.bat` には従わない。
