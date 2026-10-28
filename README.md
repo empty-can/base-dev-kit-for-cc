@@ -115,6 +115,7 @@ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 \
 ├── .gitignore                 # 配布先での除外（個人実体・セッション成果物）※payload に同乗
 ├── .gitattributes             # 配布先での改行固定（既定 LF ＋ *.ps1 / *.bat だけ CRLF）※payload に同乗
 ├── launcher/                  # 起動ランチャーの部品（本体は repo ルートの start_claude_code.*）
+│   ├── README.md                       # 利用者向けの説明（テンプレートの背景・既定値の決まり方・注意の詳細）
 │   ├── setup-environment.{sh,ps1}      # 環境変数のセットアップ（custom.env ロード＋統制 env を後勝ち固定）
 │   ├── custom.env.template             # 利用者可変 env の雛型（→ .claude/custom.env にコピー）
 │   └── option-settings.{sh,ps1}.template  # 利用者可変の起動オプション雛型（→ .claude/option-settings.* にコピー）
@@ -187,6 +188,8 @@ docs/                          # ← 配布されない（内部設計ドキュ�
 |---|---|---|
 | `.claude/custom.env` | `.claude/launcher/custom.env.template` | 環境変数（統制不要・非機微） |
 | `.claude/option-settings.{sh,ps1}` | `.claude/launcher/option-settings.{sh,ps1}.template` | 起動オプション |
+
+各テンプレートの背景・既定値の決まり方・注意の詳細は、テンプレートと一緒に配布される `.claude/launcher/README.md` にある。
 
 > **⚠ 置き場所に注意**: コピー先は **`.claude/` 直下**であって、テンプレートの隣（`.claude/launcher/`）ではない。
 > 誤配置すると読み込まれない（ランチャーが警告する）。
