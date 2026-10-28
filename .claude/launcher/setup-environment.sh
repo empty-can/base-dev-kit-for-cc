@@ -251,7 +251,7 @@ export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1   # キット動作依存�
 #    custom.env にも、ほかのどの .env ファイルにも書かず、OS の環境変数で設定する（custom.env に書くと読み飛ばされる）。
 #    ANTHROPIC_CUSTOM_HEADERS は値次第: 認証情報（Authorization 等）や個人情報（利用者の ID・メールアドレス等）を載せるなら
 #    同じく分類A として OS の環境変数で設定する。載せないヘッダでも custom.env では名前で読み飛ばされるので、OS の環境変数に
-#    置く（同じフォルダの README.md §3-2「機微情報（分類A）を書かない」と同じ）。
+#    置く（同じフォルダの README.md §2-2「機微情報（分類A）を書かない」と同じ）。
 # ⚠ api.anthropic.com 以外を指すと Remote Control は使えない（v2.1.196 以降）。server-managed settings も取得されない（上の注記）。
 # export ANTHROPIC_BASE_URL=https://llm-gateway.example.internal
 # この下では MCP の tool search が既定で on になる（v2.1.304 以降。それ未満は ENABLE_TOOL_SEARCH で有効にしない限り off）。ゲートウェイが defer_loading /

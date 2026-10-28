@@ -16,7 +16,7 @@ $Opts = [ordered]@{
     # ===== モデル =====
     # 使用モデル。エイリアス（opus / sonnet / haiku / fable / best / opusplan。1M コンテキストは opus[1m] / sonnet[1m]）か
     #   フルモデル名（例: claude-opus-5-5 / claude-sonnet-5-5 / claude-haiku-5-5 / claude-fable-5-1）。
-    #   未指定時は ANTHROPIC_MODEL・settings の model・組織の既定などの順で決まる（README §2-4）。版を固定するならフルモデル名
+    #   未指定時は ANTHROPIC_MODEL・settings の model・組織の既定などの順で決まる（README 付録 B）。版を固定するならフルモデル名
     # '--model' = 'opus'
     # 過負荷・利用不可時のフォールバック先。カンマ区切りで順に試す（最大 3 モデル。切り替えはそのターンだけ）
     # '--fallback-model' = 'sonnet,haiku'
@@ -26,13 +26,13 @@ $Opts = [ordered]@{
 
     # ===== 設定ソース・作業ディレクトリ =====
     # 追加の作業ディレクトリ（1 値だけ。2 個目以降は起動時引数で渡す）。UNC などのネットワークパスは不可（v2.1.257 以降）。
-    #   Windows ではドライブ文字に割り当てて指定する（README §2-4）
+    #   Windows ではドライブ文字に割り当てて指定する（README 付録 B）
     # '--add-dir' = '<参照したいリポジトリのパス>'
     # 追加で読む settings（ファイルパス または インライン JSON 文字列。同じキーはこのセッションだけ
     #   settings.json の値を上書きする。ファイルは 2 MiB 以下の通常ファイル）
     # '--settings' = './.claude/settings.extra.json'
     # 読み込む設定ソースの限定（user / project / local のカンマ区切り。例: project,user）。
-    #   ⚠ project を外すとキットの保護（permissions.deny・hooks）が効かない（README §2-4）
+    #   ⚠ project を外すとキットの保護（permissions.deny・hooks）が効かない（README 付録 B）
     # '--setting-sources' = 'project,user'
 
     # ===== MCP =====
@@ -43,13 +43,13 @@ $Opts = [ordered]@{
 
     # ===== 権限 =====
     # 権限モード（default〔= manual〕/ acceptEdits / plan / auto / dontAsk〔確認が要る操作をすべて拒否〕）。
-    #   未指定時は対話起動で auto（使えなければ Manual）、-p は default（README §2-4）。'default' で Manual に固定する。
-    #   ⚠ 固定すると再開時に終了時のモードが復元されない（README §2-4）。bypassPermissions は書かない（下の「非推奨・破壊的」節）
+    #   未指定時は対話起動で auto（使えなければ Manual）、-p は default（README 付録 B）。'default' で Manual に固定する。
+    #   ⚠ 固定すると再開時に終了時のモードが復元されない（README 付録 B）。bypassPermissions は書かない（下の「非推奨・破壊的」節）
     # '--permission-mode' = 'default'
 
     # ===== エージェント / プラグイン / システムプロンプト =====
     # 追加サブエージェント定義（インライン JSON）。ファイルパスは --print 併用時だけ（v2.1.281 以降。対話起動ではエラー）
-    #   ※ Windows PowerShell 5.1 では使えない（" が落ちて JSON が壊れる）。pwsh 7 で起動する（README §2-5）
+    #   ※ Windows PowerShell 5.1 では使えない（" が落ちて JSON が壊れる）。pwsh 7 で起動する（README 付録 C）
     # '--agents' = '{"reviewer":{"description":"Reviews code","prompt":"You are a code reviewer"}}'
     # 単一エージェントの指定
     # '--agent' = 'my-agent'
@@ -65,7 +65,7 @@ $Opts = [ordered]@{
     # URL からプラグインの .zip を取得し、このセッションだけ読み込む（空白区切りで複数 URL 可）
     # '--plugin-url' = 'https://example.com/plugin.zip'
     # 使えるビルトインツールの限定（"" で全部無効、"default" で既定セット、または "Bash,Edit,Read" のような列挙）。
-    #   MCP ツールには効かない。列挙に ToolSearch を含めないと、MCP ツールは最初から全部読み込まれる（README §2-4）
+    #   MCP ツールには効かない。列挙に ToolSearch を含めないと、MCP ツールは最初から全部読み込まれる（README 付録 B）
     # '--tools' = 'Read,Grep,Edit'
     # このセッションの skill / スラッシュコマンドをすべて無効にする（キットの skill も使えなくなる・値なしフラグ）
     # '--disable-slash-commands' = $true
@@ -88,12 +88,12 @@ $Opts = [ordered]@{
     # ===== worktree / エージェントチーム / API =====
     # 隔離した git worktree（<repo>/.claude/worktrees/<名前>）で起動する。値は worktree 名・'#<PR 番号>'・
     #   GitHub PR URL・GitLab MR URL（v2.1.233 以降）。$true（値なし）なら名前を自動生成。既存の名前なら開き直す。
-    #   ⚠ 変更も新しいコミットも無い worktree は、名前の無いセッションだと終了時に確認なしでブランチごと削除される（README §2-4）
+    #   ⚠ 変更も新しいコミットも無い worktree は、名前の無いセッションだと終了時に確認なしでブランチごと削除される（README 付録 B）
     # '--worktree' = 'feature-auth'
     # worktree 用の tmux セッションを作る（--worktree が必要。iTerm2 ではネイティブペイン・値なしフラグ）
     # '--tmux' = $true
     # エージェントチームのチームメイトの表示方式（in-process〔既定〕/ auto / tmux / iterm2。tmux / iterm2 は分割ペイン）。
-    #   実験的機能: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 が無いとチーム自体が作られない（README §2-4）
+    #   実験的機能: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 が無いとチーム自体が作られない（README 付録 B）
     # '--teammate-mode' = 'in-process'
     # API リクエストに付けるベータヘッダ（API キー利用者のみ。複数あるときは起動時引数で空白区切り）
     # '--betas' = 'interleaved-thinking'
@@ -107,7 +107,7 @@ $Opts = [ordered]@{
     #   例: '--debug=mcp,startup' = $true  /  除外: '--debug=!mcp' = $true
     # '--debug' = $true
     # デバッグログを指定したファイルへ書く（デバッグモードも有効になる。環境変数 CLAUDE_CODE_DEBUG_LOGS_DIR より優先）。
-    #   起動時の警告を読むのに使う（README §2-4）。⚠ 誤コミットを防ぐため、リポジトリの外のパスにする
+    #   起動時の警告を読むのに使う（README 付録 B）。⚠ 誤コミットを防ぐため、リポジトリの外のパスにする
     # '--debug-file' = '<デバッグログのファイルパス>'
 
     # ===== 思考 / コンテキスト =====
@@ -116,7 +116,7 @@ $Opts = [ordered]@{
     #   ⚠ 環境変数 CLAUDE_CODE_EFFORT_LEVEL があるとそちらが優先され、このフラグは効かない（README §4）
     # '--effort' = 'high'
     # 自動圧縮のウィンドウ（このセッションだけ）。auto（モデルの既定）かトークン数: 200000 / 500k / 1M / 100〜1000（千単位）。
-    #   範囲は 100K〜1M（v2.1.221 以降）。⚠ 環境変数 CLAUDE_CODE_AUTO_COMPACT_WINDOW があるとそちらが優先（README §3-4）
+    #   範囲は 100K〜1M（v2.1.221 以降）。⚠ 環境変数 CLAUDE_CODE_AUTO_COMPACT_WINDOW があるとそちらが優先（README §2-4）
     # '--autocompact' = '500k'
 
     # ===== 非対話 / print モード（ヘッドレス実行向け・通常の対話起動では不要）=====
@@ -142,9 +142,9 @@ $Opts = [ordered]@{
 
     # ===== ⚠⚠ 非推奨・破壊的（内容を理解した上でのみ有効化）⚠⚠ =====
     # 権限確認をすべてスキップする。誤操作・情報漏えいのリスクを理解した上で（値なしフラグ）。
-    #   --permission-mode bypassPermissions と同等。そちらには書かない（キーが重複する。README §2-4）
+    #   --permission-mode bypassPermissions と同等。そちらには書かない（キーが重複する。README 付録 B）
     # '--dangerously-skip-permissions' = $true
     # bypassPermissions を Shift+Tab の切り替え候補に加える（起動時は別のモード・値なしフラグ）。
-    #   ⚠ plan モードでも確認なしで実行されうる。上のフラグと同じ扱いにする（README §2-4）
+    #   ⚠ plan モードでも確認なしで実行されうる。上のフラグと同じ扱いにする（README 付録 B）
     # '--allow-dangerously-skip-permissions' = $true
 }
