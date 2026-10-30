@@ -27,6 +27,8 @@
 | C | チーム単位で統制する値 | 環境変数は `setup-environment`、起動オプションは `start_claude_code` の `TEAM_OPTS` / `$TeamOpts` |
 | D | 統制不要・利用者が都度変える・非機微の値 | `custom.env` と `option-settings`（このフォルダのテンプレートから作る） |
 
+**⚠ bash 版は PowerShell 版に追随していない**: `start_claude_code.sh`・`setup-environment.sh`・`option-settings.sh.template` は、2026-10-30 から PowerShell 版（`start_claude_code.ps1`・`setup-environment.ps1`・`option-settings.ps1.template`）に追随していない（最後に同期した版: `c241150`）。bash 版を使う場合は、PowerShell 版との差分に注意する。追随は、bash 利用者へ展開できる状態になった時点でまとめて行う。
+
 ## 2. custom.env（環境変数）
 
 ### 2-1. 書式の細則と理由

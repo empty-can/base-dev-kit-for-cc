@@ -182,6 +182,8 @@ docs/                          # ← 配布されない（内部設計ドキュ�
 フラグや値を省略できるフラグは、直後のプロンプトを値として取り込む。ランチャーは追加引数が全部プロンプト〔`-` で
 始まらない〕のときだけ `--` を補ってこれを防ぐ。PowerShell で自分で区切るなら `'--'` と引用する）。
 
+> **⚠ bash 版ランチャーは同時メンテを凍結中**（2026-10-30 開始。最後に同期した版: `c241150`）: `start_claude_code.sh`・`.claude/launcher/setup-environment.sh`・`.claude/launcher/option-settings.sh.template` の 3 本は PowerShell 版に追随させていない（機能の変更は `.ps1` 側だけに入れる。verify-kit が両版の一致を要求するデータ的な追随は続ける）。`scripts/*.sh` は対象外で、従来どおり両版を同時に保守する。終了条件は、展開の意思決定者（作業指示者）が bash 利用者（職場のチームメンバー）へ展開できる状態になったと判断したこと、の 1 つだけ。`.sh` 側に要る作業は凍結バックログ `docs/launcher/sh-freeze-backlog.md` に、verify-kit で期待される両版の非対称は凍結 fixture `scripts/verify-kit.d/frozen.txt` に記録し、再開時は機能単位で `.sh` に移植して両方から 1 件ずつ消す。凍結中の運用はルート `CLAUDE.md` の「開発時の約束」にある。
+
 利用者が値を設定するファイルは**テンプレートからコピーして作る**（いずれも `.gitignore` 済みの個人実体）:
 
 | 作るもの | テンプレート | 用途 |

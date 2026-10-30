@@ -45,6 +45,20 @@ Claude Code の**共有 `.claude/` キット（`<Share>`）そのもの**。こ�
   変えるときは `.claude/.gitattributes` を直す。ルート側の指定は `.claude/` には効かない。
 - **bash 版と PowerShell 版は必ず両方直す**。片方だけ直した実績が複数回ある（fail-closed を PS 版にだけ実装、
   警告を bash 版にだけ実装）。修正したら**両版を実際に走らせて結果が一致すること**を確認する。
+- **例外: ランチャー資産の `.sh` 3 本は同時メンテを凍結中**（2026-10-30 開始。最後に同期した状態は `c241150`）。
+  対象は `start_claude_code.sh`・`.claude/launcher/setup-environment.sh`・`.claude/launcher/option-settings.sh.template`
+  の 3 本だけで、**それ以外の `.sh`（`scripts/*.sh`）は従来どおり両方直す**。終了条件は「作業指示者が bash 利用者
+  （職場のチームメンバー）へ展開できる状態になったと判断した」の 1 つだけ。凍結中は次を守る:
+  - 週次追随で `.sh` 固有の項目は SH-DEFER の札を付け、`.sh` を直さずに凍結バックログ
+    `docs/launcher/sh-freeze-backlog.md` へ送る
+  - `.ps1` の検証は pwsh 7 と Windows PowerShell 5.1 の 2 系統比較を省かない
+  - verify-kit が両版の集合一致を要求するデータ的な追随（setup-environment の内部変数名の列挙など）は、
+    凍結中も `.sh` に反映する
+  - custom.env の書式を広げる変更（両版のローダが受け付ける行の形を増やす変更）は避ける。要るなら
+    「PowerShell 版のみ」と明記し、テンプレの例は両版の共通部分集合で書く
+  - `.ps1` だけを変えて verify-kit の系統が食い違うときは、凍結 fixture `scripts/verify-kit.d/frozen.txt` に行を足し
+    （FROZEN として集計される）、バックログにも対応する行を足す。再開はバックログの項目を機能単位で `.sh` に
+    移植し、verify-kit を通して frozen.txt の該当行を 1 つずつ消す。両方が空になったら凍結終了
 - **修正した後の状態で再検証する**。「修正それ自体が新たな欠陥を生む」ことが繰り返し起きている。
   過去に取った検証結果を、前提を変えた後も使い回さない。
 - **Git Bash の `grep` / `awk` で CR を数えない**。間違い方が 2 通りあり、どちらも“それらしい値”を返す ――
