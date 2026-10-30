@@ -212,7 +212,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 
 全オプションの説明は公式 docs の CLI reference（https://code.claude.com/docs/en/cli-reference）を参照。
 
-ランチャーは option-settings と `TEAM_OPTS`（PowerShell 版は `$TeamOpts`）のキーを検査せず、書かれたキーをすべてそのまま `claude` へ渡す。そのため、テンプレートに載せていないオプション（上の表のものを含む）も書けば効き、キットの前提が崩れるものでもランチャーは警告しない。キーの綴りを誤ると `claude` 自身がエラーにする。チームとして禁じたいオプションがあるなら、managed settings で固定する（ランチャーの統制には強制力が無い。§3-1）。
+ランチャーは option-settings と `TEAM_OPTS`（PowerShell 版は `$TeamOpts`）のキーの綴りを照合するだけで、書かれたキーはすべてそのまま `claude` へ渡す。そのため、テンプレートに載せていないオプション（上の表のものを含む）も書けば効く。ただし、キットの前提が黙って崩れるもの（`--restricted`・`--bare`・`--safe-mode`・`--system-prompt`・`--system-prompt-file` と、値に `project` を含まない `--setting-sources`）だけは、PowerShell 版のランチャーが起動前に stderr へ 1 件 1 行で警告する（値の出どころ〔option-settings かチーム統制か〕を示す。起動は止めず、キーも捨てない。起動時引数は検査しない）。bash 版はこの警告に追随していない（§1）。キーの綴りを誤ると `claude` 自身がエラーにする。チームとして禁じたいオプションがあるなら、managed settings で固定する（ランチャーの統制には強制力が無い。§3-1）。
 
 ## 付録 B. option-settings の項目ごとの補足
 
@@ -233,6 +233,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 - `project` を外すと、キットの `.claude/settings.json`（permissions.deny・hooks。.bat 保護を含む）が読まれない。
 - `--add-dir` で足したディレクトリの skill・コマンド・サブエージェントも読まれなくなる。
 - この値は、このセッションから起動するチームメイト・`/bg`・`claude agents` のセッションにも引き継がれる。
+- option-settings（とチーム統制の `$TeamOpts`）の `--setting-sources` の値に `project` が無いと、PowerShell 版のランチャーが起動前に stderr へ警告する（起動は止めない。付録 A）。未設定なら全ソースが読まれるので警告しない。
 
 ### --permission-mode の既定
 

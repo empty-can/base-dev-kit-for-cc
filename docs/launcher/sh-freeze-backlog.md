@@ -42,4 +42,4 @@
 
 | ID | 記入日 | 出所 | `.ps1` 側で何が変わったか | `.sh` 側に要る作業 | 影響する verify-kit 項目・fixture | 状態 |
 |---|---|---|---|---|---|---|
-| （まだ無い） | | | | | | |
+| SH-DEFER-01 | 2026-10-30 | スクリプト追加改善のフェーズ 2（計画書 `2026-10-30_script-improvements_00_plan.md` §3、報告書 `2026-10-30_script-improvements_03_omitted-options.md`。コミットは件名が `feat(launcher)` で始まるもの。SHA はコミット前に決まらないので書いていない） | `start_claude_code.ps1` が option-settings（`$Opts`）と `$TeamOpts` を出どころごとに検査し、区分 1 のキー（`--restricted`・`--bare`・`--safe-mode`・`--system-prompt`・`--system-prompt-file`）と `project` を含まない `--setting-sources` を、UNC 検査の後に出どころ付きで stderr へ 1 件 1 行警告するようにした（起動は止めず、キーも捨てない）。 | `OPTS` と `TEAM_OPTS` を同じ固定表・同じ順（出どころ順 → 表の順 → `--setting-sources`）で検査して同じ文言（前置きは `⚠ `）を `>&2` に出し、fixture の stderr 8 行で PASS に戻す（PS 版のキー照合は `[ordered]` の `Contains` で大文字小文字を区別しないので、その扱いも揃える）。 | `launcher-streams`・`launcher-streams.txt` | open |

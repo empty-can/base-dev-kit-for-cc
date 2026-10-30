@@ -40,3 +40,4 @@
 #     internal-keys      setup-environment 内部変数名の集合（sh / ps1 / docs）（fail-closed のガード。凍結中もデータとして追随を続ける）
 #     left               リポジトリ .claude/ に試験用ファイルを作っていない
 #   例: launcher-streams<TAB>bash<TAB>2026-10-30<TAB>1b6e9fb<TAB>PowerShell 版だけに警告を追加（.sh は凍結中）
+launcher-streams	bash	2026-10-30	9559016	PowerShell 版だけに載せていないオプション（区分 1）の警告を追加（.sh は凍結中。SH-DEFER-01）
