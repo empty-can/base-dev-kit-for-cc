@@ -9,7 +9,23 @@
     構成: 各版は「自系統で実スクリプトを走らせ、正規化した結果をファイルへ書く probe」を持つ。
           比較役（-Probe なしで起動した側）は全系統の probe を子プロセスで呼び、結果を突き合わせる。
           入力と期待値は verify-kit.d\（UTF-8・LF・BOM なし）を両版で共有する。
-  FAIL が 1 件以上で終了コード 1、なければ 0（CI 利用可）。
+  FAIL が 1 件以上で終了コード 1、なければ 0（CI 利用可。FROZEN は数えない）。
+  集計: PASS（検査する全系統が一致し期待どおり）/ FAIL / SKIP / FROZEN（凍結した系統を除いた残りが一致し期待どおり）。
+
+  凍結モード（verify-kit.d\frozen.txt。verify-kit.sh と同じ仕様）: ある系統の追随を一時中断（凍結）している間、
+  期待される非対称を fixture で宣言し、その系統を一致判定から外す。1 行 1 件・TAB 区切り（# で始まる行と空行は無視）:
+    項目キー<TAB>凍結する系統（bash / pwsh / ps51。複数は , 区切り）<TAB>開始日（YYYY-MM-DD）<TAB>開始SHA<TAB>理由
+  載った項目は残りの系統で判定し、一致して期待どおりなら PASS ではなく「[FROZEN] 項目: 説明（凍結: 系統〔開始日 SHA〕理由）」
+  と出す。残りが食い違えば従来どおり FAIL。凍結した系統の probe も実行し続ける。fixture が無い・データ行が 0 なら従来どおり。
+  fixture に誤り（存在しない項目キー・系統名、列の不足、開始日・開始SHA の不正、空の理由、凍結できない項目、その項目が
+  検査しない系統、（項目, 系統）の重複、項目の全系統の凍結）が 1 行でもあれば、項目「凍結 fixture frozen.txt」が FAIL し、
+  凍結は一切適用しない（誤記で黙って緩まない）。
+  項目キー（出力の順）: frozen syntax-bash syntax-pwsh syntax-ps51 format version launcher launcher-stalerc launcher-streams
+    optset setupenv internal-keys ca-root ca-fixture ca-links cleanenv cleanenv-badmode cleanenv-badshare pubname pubcase
+    pubmanifest pubargs left
+  凍結できない項目: frozen（fixture の検証）・syntax-*（系統ごとの構文検査）・format・left（比較でない）・internal-keys
+    （sh / ps1 / docs の名前の集合の突き合わせ。凍結中もデータとして追随を続ける）。凍結できる項目が検査する系統は
+    frozen.txt の冒頭に一覧がある（launcher-stalerc は pwsh / ps51、pub* は bash / pwsh、ほかは 3 系統）。
 
   要件: pwsh 7（Windows PowerShell 5.1 は任意）・git 2.32 以上・python 3（python3 / python）・bash 4.4 以上（Git Bash 等）。
     - git 2.32 以上: 一時リポジトリに対して実物の git を使う検査は、GIT_CONFIG_GLOBAL（2.32 で追加）に空のファイルを渡して
@@ -1269,14 +1285,33 @@ if ($Probe) {
 # 比較役（全系統の probe を呼んで突き合わせる）。判定の内容・文言は verify-kit.sh と揃えること。
 # =============================================================================
 $VkVerbose = $PSBoundParameters.ContainsKey('Verbose')
-$script:NPass = 0; $script:NFail = 0; $script:NSkip = 0
+$script:NPass = 0; $script:NFail = 0; $script:NSkip = 0; $script:NFrozen = 0
 $SysAll = @('bash', 'pwsh', 'ps51')
 $SysLabel = @{ bash = 'bash'; pwsh = 'pwsh 7'; ps51 = '5.1' }
 $SysName = @{ bash = 'bash'; pwsh = 'pwsh'; ps51 = 'Windows PowerShell' }
 $SysState = @{}; $SysWhy = @{}; $SysVer = @{}; $Results = @{}
 
-function Verdict([string]$v, [string]$t, [string]$why) {
-  switch ($v) { 'PASS' { $script:NPass++ } 'FAIL' { $script:NFail++ } 'SKIP' { $script:NSkip++ } }
+# 項目キー（呼び出し順）と、凍結できる項目が検査する系統（verify-kit.sh の VK_ITEM_KEYS / VK_FRZ_PART と同じ。frozen.txt の
+# 冒頭の一覧とも揃える）。$FrzPart に無い項目は凍結できない。鍵は Oin（序数比較）で照合してから引く（ハッシュ表は大文字小文字を区別しない）
+$ItemKeys = @('frozen', 'syntax-bash', 'syntax-pwsh', 'syntax-ps51', 'format', 'version', 'launcher', 'launcher-stalerc', 'launcher-streams',
+              'optset', 'setupenv', 'internal-keys', 'ca-root', 'ca-fixture', 'ca-links', 'cleanenv', 'cleanenv-badmode', 'cleanenv-badshare',
+              'pubname', 'pubcase', 'pubmanifest', 'pubargs', 'left')
+$FrzPart = @{
+  'version' = @('bash', 'pwsh', 'ps51'); 'launcher' = @('bash', 'pwsh', 'ps51'); 'launcher-stalerc' = @('pwsh', 'ps51')
+  'launcher-streams' = @('bash', 'pwsh', 'ps51'); 'optset' = @('bash', 'pwsh', 'ps51'); 'setupenv' = @('bash', 'pwsh', 'ps51')
+  'ca-root' = @('bash', 'pwsh', 'ps51'); 'ca-fixture' = @('bash', 'pwsh', 'ps51'); 'ca-links' = @('bash', 'pwsh', 'ps51')
+  'cleanenv' = @('bash', 'pwsh', 'ps51'); 'cleanenv-badmode' = @('bash', 'pwsh', 'ps51'); 'cleanenv-badshare' = @('bash', 'pwsh', 'ps51')
+  'pubname' = @('bash', 'pwsh'); 'pubcase' = @('bash', 'pwsh'); 'pubmanifest' = @('bash', 'pwsh'); 'pubargs' = @('bash', 'pwsh')
+}
+# 検証を通った frozen.txt の内容（項目キー → 凍結する系統 / FROZEN の行に添える説明）。Item-Frozen が埋める
+$script:FrzSys = @{}; $script:FrzNote = @{}
+# 実行中の項目で凍結した系統の説明（Drop-Frozen が入れ、Verdict が使って空に戻す）
+$script:CurFrozen = ''
+
+function Verdict([string]$v, [string]$t, [string]$why) { # 凍結した系統を除いた項目（CurFrozen あり）の PASS は FROZEN として出す
+  if ((Oeq $v 'PASS') -and $script:CurFrozen) { $v = 'FROZEN'; $why += "（凍結: $($script:CurFrozen)）" }
+  $script:CurFrozen = ''
+  switch ($v) { 'PASS' { $script:NPass++ } 'FAIL' { $script:NFail++ } 'SKIP' { $script:NSkip++ } 'FROZEN' { $script:NFrozen++ } }
   Write-Host ("  [{0}] {1}: {2}" -f $v, $t, $why)
 }
 # FAIL の詳細（-Verbose のときだけ差分を出す）。差分の対象は Set-Diff で先に登録しておく
@@ -1421,6 +1456,78 @@ function Invoke-Probes([string]$tmp) {
   }
 }
 
+# ---- 凍結モード（verify-kit.d\frozen.txt。verify-kit.sh の item_frozen / drop_frozen と同じ判定・文言）----------------
+# frozen.txt を検証し、誤りが無ければ FrzSys / FrzNote を埋める。誤りが 1 行でもあれば何も入れず（凍結を一切適用しない）FAIL。
+# 誤りは行ごとに最初の 1 件を集め、すべて 1 行に並べる。列は TAB で正確に分ける（空の列も 1 列に数える）
+function Item-Frozen {
+  $t = '凍結 fixture frozen.txt'
+  $f = Join-Path $VkFix 'frozen.txt'
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { Verdict 'PASS' $t 'ファイルが無い（凍結なし）'; return }
+  $lines = @(Read-Lines $f)
+  $pairs = @{}; $tsys = @{}; $tnote = @{}; $nrow = 0
+  $errs = New-Object 'System.Collections.Generic.List[string]'
+  $list = New-Object 'System.Collections.Generic.List[string]'
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    $ln = $i + 1; $line = $lines[$i]
+    if ((Oeq $line '') -or $line.StartsWith('#', [StringComparison]::Ordinal)) { continue }
+    $nrow++; $err = ''
+    # 先頭の 4 列を切り出し、残りを理由にする（verify-kit.sh は 4 個目の TAB までを切り出す）
+    $col = $line.Split([char[]]"`t", 5)
+    if ($col.Count -lt 5) {
+      $err = '列が足りない（5 列必要: 項目キー<TAB>系統<TAB>開始日<TAB>開始SHA<TAB>理由）'
+    } else {
+      $key = $col[0]; $sys = $col[1]; $d = $col[2]; $h = $col[3]; $r = $col[4]
+      $sl = @($sys.Split([char[]]','))
+      $pp = @()
+      if (Onin $ItemKeys $key) { $err = "項目キー「$key」は存在しない" }
+      elseif (-not $FrzPart.ContainsKey($key)) {
+        $err = "項目「$key」は凍結できない（凍結できるのは系統の出力を突き合わせる項目だけ。internal-keys は凍結中も追随を続ける）"
+      } else {
+        $pp = @($FrzPart[$key])
+        foreach ($w in $sl) {
+          if (Onin $SysAll $w) { $err = "系統「$w」は存在しない（bash / pwsh / ps51）"; break }
+          if (Onin $pp $w) { $err = "項目「$key」は系統 $w を検査しない（検査する系統: $($pp -join ' ')）"; break }
+        }
+      }
+      if (-not $err) {
+        if ($d -cnotmatch '^[0123456789]{4}-[0123456789]{2}-[0123456789]{2}$') { $err = "開始日「$d」が YYYY-MM-DD の形でない" }
+        elseif ($h -cnotmatch '^[0123456789abcdef]{7,40}$') { $err = "開始SHA「$h」が 16 進（小文字）7〜40 桁でない" }
+        elseif (Oeq $r '') { $err = '理由が空' }
+      }
+      if (-not $err) {
+        foreach ($w in $sl) {
+          if ($pairs.ContainsKey("${key}:$w")) { $err = "項目「$key」の系統 $w が $($pairs["${key}:$w"]) 行目と重複"; break }
+          $pairs["${key}:$w"] = $ln
+        }
+      }
+      if (-not $err) {
+        $np = @($pp | Where-Object { $pairs.ContainsKey("${key}:$_") }).Count
+        if ($np -ge $pp.Count) { $err = "項目「$key」の系統（$($pp -join ' ')）をすべて凍結している（少なくとも 1 系統は残す）" }
+      }
+    }
+    if ($err) { $errs.Add("$ln 行目: $err"); continue }
+    if (-not $tsys.ContainsKey($key)) { $tsys[$key] = @(); $tnote[$key] = @() }
+    $tsys[$key] += $sl
+    $tnote[$key] += "$(Labels $sl)〔$d $h〕$r"
+    $list.Add("${key}:$sys")
+  }
+  if ($errs.Count -gt 0) { Verdict 'FAIL' $t "不正な行が $($errs.Count) 件あるため凍結を一切適用しない: $($errs -join ' ／ ')"; return }
+  foreach ($k in @($tsys.Keys)) { $script:FrzSys[$k] = @($tsys[$k]); $script:FrzNote[$k] = (@($tnote[$k]) -join '、') }
+  $ls = if ($list.Count -gt 0) { '凍結 ' + ($list -join ' ') } else { '凍結なし' }
+  Verdict 'PASS' $t "データ行 $nrow 件（$ls）"
+}
+
+# 凍結した系統を除く（項目キー $key が frozen.txt に載っていれば）。残りを Kept に、凍結の説明を CurFrozen に入れる（次の Verdict が
+# PASS を FROZEN として出し、空に戻す）。残りがあれば $true。呼ぶのは系統の出力を突き合わせる項目（$FrzPart の項目）だけで、
+# probe の異常終了の検査（Crashed-In）より後に呼ぶ（凍結した系統の probe も実行し続け、異常終了は従来どおり FAIL にする）
+function Drop-Frozen([string]$key, [string[]]$systems) {
+  $fs = if ($script:FrzSys.ContainsKey($key)) { @($script:FrzSys[$key]) } else { @() }
+  $script:Kept = @($systems | Where-Object { Onin $fs $_ })
+  $script:CurFrozen = if ($script:FrzNote.ContainsKey($key)) { $script:FrzNote[$key] } else { '' }
+  return ($script:Kept.Count -gt 0)
+}
+$FrozenNone = '凍結していない系統で実行できるものが無い'
+
 # ---- 各検査 -------------------------------------------------------------------
 function Item-Syntax([string]$s, [string]$t) {
   if ($SysState[$s] -eq 'missing') { Verdict 'SKIP' $t $SysWhy[$s]; return }
@@ -1484,6 +1591,7 @@ function Item-Version {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'version' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $ver = ''; $nskip = 0; $why = ''
   foreach ($s in $avail) {
     $lines = Get-Sec $s 'version'
@@ -1507,6 +1615,7 @@ function Item-Launcher {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'launcher' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $bad = Test-LauncherCases
   if ($bad) { Verdict 'FAIL' $t $bad; return }
   $cases = @(Get-Cases)
@@ -1534,6 +1643,7 @@ function Item-LauncherStaleRc {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t 'PowerShell 系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'launcher-stalerc' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   foreach ($s in $avail) {
     $lines = Get-Sec $s 'launcher-stalerc'
     $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
@@ -1553,6 +1663,7 @@ function Item-LauncherStreams {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'launcher-streams' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $bad = Test-FixKeys 'launcher-streams.txt' @('env', 'opt', 'team', 'in', 'stderr') '定義済みの行頭タグ（env / opt / team / in / stderr）' 2
   if ($bad) { Verdict 'FAIL' $t $bad; return }
   $fr = @(Get-StreamsTag 'stderr')
@@ -1585,6 +1696,7 @@ function Item-Optset {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'optset' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $nk = 0
   foreach ($s in $avail) {
     $lines = Get-Sec $s 'optset'
@@ -1606,6 +1718,7 @@ function Item-SetupEnv {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'setupenv' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $bad = Test-FixKeys 'setup-environment.expect' @('SET') '定義済みの行頭タグ（SET）'
   if ($bad) { Verdict 'FAIL' $t $bad; return }
   $exp = @(Tag-Vals @(Read-Lines (Join-Path $VkFix 'setup-environment.expect')) 'SET')
@@ -1720,6 +1833,7 @@ function Item-CaRoot {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'ca-root' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   Drop-Skipping @('checkassets root') $avail
   if ($script:Kept.Count -eq 0) { Verdict 'SKIP' $t $script:SkipNote; return }
   $avail = $script:Kept
@@ -1747,13 +1861,14 @@ function Drop-Skipping([string[]]$secs, [string[]]$systems) {
 function Skip-Note { if ($script:SkipNote) { return "（$($script:SkipNote)）" } else { return '' } }
 
 # check-assets の fixture のケースを全系統で突き合わせ、期待値と照合する（Item-CaFixture / Item-CaLinks が使う。verify-kit.sh の
-# ca_cases_check と同じ）。期待値ファイルの鍵は $CaCases と $CaLinkCases を合わせた列挙に照らす
-function Test-CaCases([string]$t, [string]$desc, [string[]]$cases) {
+# ca_cases_check と同じ）。$key は凍結用の項目キー。期待値ファイルの鍵は $CaCases と $CaLinkCases を合わせた列挙に照らす
+function Test-CaCases([string]$key, [string]$t, [string]$desc, [string[]]$cases) {
   $all = @($CaCases) + @($CaLinkCases)
   $avail = @(Usable $SysAll)
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen $key $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $bad = Test-FixKeys 'check-assets.expect' $all "ケースの列挙（$($all -join ' ')）" 4
   if ($bad) { Verdict 'FAIL' $t $bad; return }
   Drop-Skipping @($cases | ForEach-Object { "checkassets $_" }) $avail
@@ -1784,12 +1899,12 @@ function Test-CaCases([string]$t, [string]$desc, [string[]]$cases) {
   Verdict 'PASS' $t "$($cases.Count) ケース × $(Labels $avail) で同一判定・期待どおり（$desc）$(Missing-Note $SysAll)$(Skip-Note)"
 }
 function Item-CaFixture {
-  Test-CaCases 'check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ）' `
+  Test-CaCases 'ca-fixture' 'check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ）' `
     "U/M/E と絶対パス混在とパス付きの Write / NotebookEdit / MultiEdit / Glob ルールは WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順・rules / CLAUDE.md は 200 行超で WARN・32,000 文字（コードポイント。BOM は数えない）超で FAIL（両方なら FAIL だけ）、ちょうどは PASS で、rules はサブディレクトリも数え（. で始まるディレクトリの中は除く）、SKILL.md・agents は数えない" `
     $CaCases
 }
 function Item-CaLinks {
-  Test-CaCases 'check-assets リンク（ジャンクション / シンボリックリンク）' `
+  Test-CaCases 'ca-links' 'check-assets リンク（ジャンクション / シンボリックリンク）' `
     "リンクは辿らず、…/results のディレクトリとしても数えない（2-c' は PASS）・リンク先のファイルを 2-e で読まない" `
     $CaLinkCases
 }
@@ -1800,6 +1915,7 @@ function Item-CleanEnv {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'cleanenv' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $bad = Test-FixKeys 'clean-test-env.txt' @('PRE', 'OUTHAS', 'ARG', 'ENV', 'CWD', 'SETTINGS', 'AFTER', 'BADMODE', 'BADRC', 'BADOUT', 'BADSHARERC', 'BADSHAREOUT') '定義済みの行頭タグ（PRE / OUTHAS / ARG / ENV / CWD / SETTINGS / AFTER / BADMODE / BADRC / BADOUT / BADSHARERC / BADSHAREOUT）'
   if ($bad) { Verdict 'FAIL' $t $bad; return }
   $fx = @(Read-Lines (Join-Path $VkFix 'clean-test-env.txt'))
@@ -1839,8 +1955,9 @@ function Item-CleanEnvBadMode {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'cleanenv-badmode' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $fx = @(Read-Lines (Join-Path $VkFix 'clean-test-env.txt'))
-  $modes = @(Tag-Vals $fx 'BADMODE')
+  $modes =@(Tag-Vals $fx 'BADMODE')
   $erc = @(Tag-Vals $fx 'BADRC') | Select-Object -First 1
   $frag = @(Tag-Vals $fx 'BADOUT') | Select-Object -First 1
   if ($modes.Count -eq 0 -or -not $erc -or -not $frag) { Verdict 'FAIL' $t 'fixture に BADMODE / BADRC / BADOUT が無い'; return }
@@ -1867,6 +1984,7 @@ function Item-CleanEnvBadShare {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'cleanenv-badshare' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $fx = @(Read-Lines (Join-Path $VkFix 'clean-test-env.txt'))
   $erc = @(Tag-Vals $fx 'BADSHARERC') | Select-Object -First 1
   $frag = @(Tag-Vals $fx 'BADSHAREOUT') | Select-Object -First 1
@@ -1891,6 +2009,7 @@ function Item-PubName {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t 'bash / pwsh 7 がどちらも無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'pubname' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $sec = @{}; $fallback = $false
   foreach ($s in $avail) {
     $sec[$s] = Get-Sec $s 'pubname'
@@ -1952,6 +2071,7 @@ function Item-PubCase {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t 'bash / pwsh 7 がどちらも無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'pubcase' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $rows = @(Read-Lines (Join-Path $VkFix 'plugin-case.tsv') | Where-Object { (One $_ '') -and -not $_.StartsWith('#') })
   $nclash = 0; $npass = 0
   foreach ($s in $avail) {
@@ -1977,6 +2097,7 @@ function Item-PubManifest {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t 'bash / pwsh 7 がどちらも無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'pubmanifest' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $notes = New-Object 'System.Collections.Generic.List[string]'
   $sec = @{}; $run = @()
   foreach ($s in $avail) {
@@ -2043,6 +2164,7 @@ function Item-PubArgs {
   if ($avail.Count -eq 0) { Verdict 'SKIP' $t 'bash / pwsh 7 がどちらも無い'; return }
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'pubargs' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
   $bad = Test-FixKeys 'publish-args.tsv' @('plugin', 'share') '対象（plugin / share）' 3
   if ($bad) { Verdict 'FAIL' $t $bad; return }
   $rows = @(Read-Lines (Join-Path $VkFix 'publish-args.tsv') | Where-Object { (One $_ '') -and -not $_.StartsWith('#') })
@@ -2113,6 +2235,8 @@ try {
       if ($SysState[$_] -eq 'ok') { "$($SysName[$_]) $($SysVer[$_])" } else { "$($SysLabel[$_])（$($SysWhy[$_])）" }
     }) -join ' / '
   Write-Host "[verify-kit] 系統: $sys"
+  # 凍結 fixture を最初に検証する（以降の項目が FrzSys / FrzNote を使う）。項目の並びは $ItemKeys と同じ
+  Item-Frozen
   Item-Syntax 'bash' '構文 bash -n（.sh / .sh.template）'
   Item-Syntax 'pwsh' '構文 pwsh 7 Parser（.ps1 / .ps1.template）'
   Item-Syntax 'ps51' '構文 Windows PowerShell 5.1 Parser（.ps1 / .ps1.template）'
@@ -2143,7 +2267,7 @@ try {
       @(Read-Lines $lf) | Select-Object -First 40 | ForEach-Object { Write-Host "         | $_" }
     }
   }
-  Write-Host ("[verify-kit] 集計: PASS {0} / FAIL {1} / SKIP {2}（所要 {3} 秒）" -f $script:NPass, $script:NFail, $script:NSkip, [int]((Get-Date) - $t0).TotalSeconds)
+  Write-Host ("[verify-kit] 集計: PASS {0} / FAIL {1} / SKIP {2} / FROZEN {3}（所要 {4} 秒）" -f $script:NPass, $script:NFail, $script:NSkip, $script:NFrozen, [int]((Get-Date) - $t0).TotalSeconds)
 } finally {
   Remove-Item -LiteralPath $VkTmp -Recurse -Force -ErrorAction SilentlyContinue
 }

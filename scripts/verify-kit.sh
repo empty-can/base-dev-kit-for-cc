@@ -12,7 +12,23 @@
 # 使い方:  ./scripts/verify-kit.sh [-v]
 #   -v              詳細（差分・probe のログ）を表示する
 #   --probe <out>   （内部用）bash 系統の probe を実行し、結果を <out> へ書く
-# 終了コード: FAIL が 1 件以上で 1、なければ 0（CI 利用可）。引数の誤り等は 2。
+# 終了コード: FAIL が 1 件以上で 1、なければ 0（CI 利用可。FROZEN は数えない）。引数の誤り等は 2。
+# 集計: PASS（検査する全系統が一致し期待どおり）/ FAIL / SKIP / FROZEN（凍結した系統を除いた残りが一致し期待どおり）。
+#
+# 凍結モード（verify-kit.d/frozen.txt。verify-kit.ps1 と同じ仕様）: ある系統の追随を一時中断（凍結）している間、
+#   期待される非対称を fixture で宣言し、その系統を一致判定から外す。1 行 1 件・TAB 区切り（# で始まる行と空行は無視）:
+#     項目キー<TAB>凍結する系統（bash / pwsh / ps51。複数は , 区切り）<TAB>開始日（YYYY-MM-DD）<TAB>開始SHA<TAB>理由
+#   載った項目は残りの系統で判定し、一致して期待どおりなら PASS ではなく「[FROZEN] 項目: 説明（凍結: 系統〔開始日 SHA〕理由）」
+#   と出す。残りが食い違えば従来どおり FAIL。凍結した系統の probe も実行し続ける。fixture が無い・データ行が 0 なら従来どおり。
+#   fixture に誤り（存在しない項目キー・系統名、列の不足、開始日・開始SHA の不正、空の理由、凍結できない項目、その項目が
+#   検査しない系統、（項目, 系統）の重複、項目の全系統の凍結）が 1 行でもあれば、項目「凍結 fixture frozen.txt」が FAIL し、
+#   凍結は一切適用しない（誤記で黙って緩まない）。
+#   項目キー（出力の順）: frozen syntax-bash syntax-pwsh syntax-ps51 format version launcher launcher-stalerc launcher-streams
+#     optset setupenv internal-keys ca-root ca-fixture ca-links cleanenv cleanenv-badmode cleanenv-badshare pubname pubcase
+#     pubmanifest pubargs left
+#   凍結できない項目: frozen（fixture の検証）・syntax-*（系統ごとの構文検査）・format・left（比較でない）・internal-keys
+#     （sh / ps1 / docs の名前の集合の突き合わせ。凍結中もデータとして追随を続ける）。凍結できる項目が検査する系統は
+#     frozen.txt の冒頭に一覧がある（launcher-stalerc は pwsh / ps51、pub* は bash / pwsh、ほかは 3 系統）。
 #
 # 要件: bash 4.4 以上（mapfile -d）・git 2.32 以上・python 3（python3 / python）・pwsh 7（Windows PowerShell 5.1 は任意）。
 #   - git 2.32 以上: 一時リポジトリに対して実物の git を使う検査は、GIT_CONFIG_GLOBAL（2.32 で追加）に空のファイルを渡して
@@ -912,14 +928,30 @@ fi
 # =============================================================================
 # 比較役（全系統の probe を呼んで突き合わせる）。判定の内容・文言は verify-kit.ps1 と揃えること。
 # =============================================================================
-NPASS=0; NFAIL=0; NSKIP=0
+NPASS=0; NFAIL=0; NSKIP=0; NFROZEN=0
 SYS_ALL=(bash pwsh ps51)
 declare -A SYS_STATE=() SYS_WHY=() SYS_LABEL=([bash]="bash" [pwsh]="pwsh 7" [ps51]="5.1") SYS_VER=()
 declare -A SYS_NAME=([bash]="bash" [pwsh]="pwsh" [ps51]="Windows PowerShell")
 
-verdict(){ # $1=PASS|FAIL|SKIP $2=項目 $3=理由
-  case "$1" in PASS) NPASS=$((NPASS + 1));; FAIL) NFAIL=$((NFAIL + 1));; SKIP) NSKIP=$((NSKIP + 1));; esac
-  printf '  [%s] %s: %s\n' "$1" "$2" "$3"
+# 項目キー（compare_main の呼び出し順）と、凍結できる項目が検査する系統（verify-kit.ps1 の $ItemKeys / $FrzPart と同じ。
+# frozen.txt の冒頭の一覧とも揃える）。VK_FRZ_PART に無い項目は凍結できない
+VK_ITEM_KEYS=(frozen syntax-bash syntax-pwsh syntax-ps51 format version launcher launcher-stalerc launcher-streams optset setupenv
+              internal-keys ca-root ca-fixture ca-links cleanenv cleanenv-badmode cleanenv-badshare pubname pubcase pubmanifest pubargs left)
+declare -A VK_FRZ_PART=([version]="bash pwsh ps51" [launcher]="bash pwsh ps51" [launcher-stalerc]="pwsh ps51"
+  [launcher-streams]="bash pwsh ps51" [optset]="bash pwsh ps51" [setupenv]="bash pwsh ps51" [ca-root]="bash pwsh ps51"
+  [ca-fixture]="bash pwsh ps51" [ca-links]="bash pwsh ps51" [cleanenv]="bash pwsh ps51" [cleanenv-badmode]="bash pwsh ps51"
+  [cleanenv-badshare]="bash pwsh ps51" [pubname]="bash pwsh" [pubcase]="bash pwsh" [pubmanifest]="bash pwsh" [pubargs]="bash pwsh")
+# 検証を通った frozen.txt の内容（項目キー → 凍結する系統 / FROZEN の行に添える説明）。item_frozen が埋める
+declare -A FRZ_SYS=() FRZ_NOTE=()
+# 実行中の項目で凍結した系統の説明（drop_frozen が入れ、verdict が使って空に戻す）
+CUR_FROZEN=""
+
+verdict(){ # $1=PASS|FAIL|SKIP $2=項目 $3=理由。凍結した系統を除いた項目（CUR_FROZEN あり）の PASS は FROZEN として出す
+  local v="$1" why="$3"
+  if [ "$v" = PASS ] && [ -n "$CUR_FROZEN" ]; then v=FROZEN; why+="（凍結: ${CUR_FROZEN}）"; fi
+  CUR_FROZEN=""
+  case "$v" in PASS) NPASS=$((NPASS + 1));; FAIL) NFAIL=$((NFAIL + 1));; SKIP) NSKIP=$((NSKIP + 1));; FROZEN) NFROZEN=$((NFROZEN + 1));; esac
+  printf '  [%s] %s: %s\n' "$v" "$2" "$why"
 }
 detail_file(){ [ "$VERBOSE" -eq 1 ] || return 0; sed -n '1,40p' "$1" | sed 's/^/         | /'; }
 # FAIL の詳細（-v のときだけ差分を出す）。差分の対象は set_diff で先に登録しておく
@@ -1039,6 +1071,85 @@ run_probes(){
   done
 }
 
+# ---- 凍結モード（verify-kit.d/frozen.txt。verify-kit.ps1 の Item-Frozen / Drop-Frozen と同じ判定・文言）----------------
+vk_in(){ local x="$1" w; shift; for w in "$@"; do [ "$w" = "$x" ] && return 0; done; return 1; }
+
+# frozen.txt を検証し、誤りが無ければ FRZ_SYS / FRZ_NOTE を埋める。誤りが 1 行でもあれば何も入れず（凍結を一切適用しない）FAIL。
+# 誤りは行ごとに最初の 1 件を集め、すべて 1 行に並べる。列は TAB で正確に分ける（IFS=$'\t' の read は連続する TAB を 1 個に
+# 潰すため、空の列を見落とす）
+item_frozen(){
+  local t="凍結 fixture frozen.txt" f="$VK_FIX/frozen.txt" line rest key sys d h r w k err errs="" list="" ln=0 nrow=0 nerr=0 np
+  local -a col sl pp
+  local -A pairs=() tsys=() tnote=()
+  if [ ! -f "$f" ]; then verdict PASS "$t" "ファイルが無い（凍結なし）"; return; fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    ln=$((ln + 1))
+    line="${line%$'\r'}"
+    [ "$ln" -eq 1 ] && line="${line#$'\357\273\277'}"
+    case "$line" in ''|'#'*) continue;; esac
+    nrow=$((nrow + 1)); err=""
+    # 先頭の 4 列を切り出し、残りを理由にする（verify-kit.ps1 は Split の上限 5）
+    rest="$line"; col=()
+    for k in 1 2 3 4; do
+      case "$rest" in *$'\t'*) col+=("${rest%%$'\t'*}"); rest="${rest#*$'\t'}";; *) break;; esac
+    done
+    if [ "${#col[@]}" -lt 4 ]; then
+      err="列が足りない（5 列必要: 項目キー<TAB>系統<TAB>開始日<TAB>開始SHA<TAB>理由）"
+    else
+      key="${col[0]}"; sys="${col[1]}"; d="${col[2]}"; h="${col[3]}"; r="$rest"
+      sl=(); rest="$sys"
+      while :; do case "$rest" in *,*) sl+=("${rest%%,*}"); rest="${rest#*,}";; *) sl+=("$rest"); break;; esac; done
+      pp=()
+      if ! vk_in "$key" "${VK_ITEM_KEYS[@]}"; then err="項目キー「${key}」は存在しない"
+      elif [ -z "${VK_FRZ_PART[$key]+x}" ]; then
+        err="項目「${key}」は凍結できない（凍結できるのは系統の出力を突き合わせる項目だけ。internal-keys は凍結中も追随を続ける）"
+      else
+        read -r -a pp <<< "${VK_FRZ_PART[$key]}"
+        for w in "${sl[@]}"; do
+          if ! vk_in "$w" "${SYS_ALL[@]}"; then err="系統「${w}」は存在しない（bash / pwsh / ps51）"; break; fi
+          if ! vk_in "$w" "${pp[@]}"; then err="項目「${key}」は系統 ${w} を検査しない（検査する系統: ${pp[*]}）"; break; fi
+        done
+      fi
+      if [ -z "$err" ]; then
+        if ! [[ "$d" =~ ^[0123456789]{4}-[0123456789]{2}-[0123456789]{2}$ ]]; then err="開始日「${d}」が YYYY-MM-DD の形でない"
+        elif ! [[ "$h" =~ ^[0123456789abcdef]{7,40}$ ]]; then err="開始SHA「${h}」が 16 進（小文字）7〜40 桁でない"
+        elif [ -z "$r" ]; then err="理由が空"
+        fi
+      fi
+      if [ -z "$err" ]; then
+        for w in "${sl[@]}"; do
+          if [ -n "${pairs[$key:$w]+x}" ]; then err="項目「${key}」の系統 ${w} が ${pairs[$key:$w]} 行目と重複"; break; fi
+          pairs[$key:$w]="$ln"
+        done
+      fi
+      if [ -z "$err" ]; then
+        np=0
+        for w in "${pp[@]}"; do [ -n "${pairs[$key:$w]+x}" ] && np=$((np + 1)); done
+        [ "$np" -lt "${#pp[@]}" ] || err="項目「${key}」の系統（${pp[*]}）をすべて凍結している（少なくとも 1 系統は残す）"
+      fi
+    fi
+    if [ -n "$err" ]; then nerr=$((nerr + 1)); errs+="${errs:+ ／ }${ln} 行目: ${err}"; continue; fi
+    tsys[$key]+=" ${sl[*]}"
+    tnote[$key]+="${tnote[$key]:+、}$(labels "${sl[@]}")〔${d} ${h}〕${r}"
+    list+="${list:+ }${key}:${sys}"
+  done < "$f"
+  if [ "$nerr" -gt 0 ]; then verdict FAIL "$t" "不正な行が ${nerr} 件あるため凍結を一切適用しない: ${errs}"; return; fi
+  for k in "${!tnote[@]}"; do FRZ_SYS[$k]="${tsys[$k]# }"; FRZ_NOTE[$k]="${tnote[$k]}"; done
+  verdict PASS "$t" "データ行 ${nrow} 件（${list:+凍結 }${list:-凍結なし}）"
+}
+
+# 凍結した系統を除く（項目キー $1 が frozen.txt に載っていれば）。残りを KEPT に、凍結の説明を CUR_FROZEN に入れる（次の verdict が
+# PASS を FROZEN として出し、空に戻す）。残りが無ければ 1 を返す。呼ぶのは系統の出力を突き合わせる項目（VK_FRZ_PART の項目）だけで、
+# probe の異常終了の検査（crashed_in）より後に呼ぶ（凍結した系統の probe も実行し続け、異常終了は従来どおり FAIL にする）
+drop_frozen(){ # 項目キー -- 系統…
+  local key="$1" s; shift 2
+  KEPT=()
+  for s in "$@"; do case " ${FRZ_SYS[$key]:-} " in *" $s "*) ;; *) KEPT+=("$s");; esac; done
+  CUR_FROZEN="${FRZ_NOTE[$key]:-}"
+  [ "${#KEPT[@]}" -gt 0 ]
+}
+FROZEN_NONE="凍結していない系統で実行できるものが無い"
+
 # ---- 各検査 -------------------------------------------------------------------
 item_syntax(){ # $1=系統 $2=項目名
   local s="$1" t="$2" n ng
@@ -1101,6 +1212,7 @@ item_version(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen version -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   for s in "${S[@]}"; do
     getsec "$s" version > "$VK_TMP/i-ver"
     pre="$(sed -n 's/^PRECHECK\t//p' "$VK_TMP/i-ver")"
@@ -1121,6 +1233,7 @@ item_launcher(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen launcher -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   if ! bad="$(vk_check_launcher_cases)"; then verdict FAIL "$t" "$bad"; return; fi
   mapfile -t CASES < <(vk_case_names)
   for cs in "${CASES[@]}"; do
@@ -1148,6 +1261,7 @@ item_launcher_stalerc(){
   mapfile -t S < <(usable pwsh ps51)
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "PowerShell 系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen launcher-stalerc -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   for s in "${S[@]}"; do
     getsec "$s" launcher-stalerc > "$VK_TMP/i-sr"
     a="$(sed -n 's/^ASSERT	//p' "$VK_TMP/i-sr")"
@@ -1167,6 +1281,7 @@ item_launcher_streams(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen launcher-streams -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   if ! bad="$(vk_check_keys launcher-streams.txt "env opt team in stderr" "定義済みの行頭タグ（env / opt / team / in / stderr）" 2)"; then verdict FAIL "$t" "$bad"; return; fi
   mapfile -t FR < <(vk_streams_tag stderr)
   if [ "${#FR[@]}" -eq 0 ]; then verdict FAIL "$t" "launcher-streams.txt に stderr 行が無い"; return; fi
@@ -1201,6 +1316,7 @@ item_optset(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen optset -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   for s in "${S[@]}"; do
     getsec "$s" optset > "$VK_TMP/i-o"
     if ! grep -q $'^LOAD\tok$' "$VK_TMP/i-o"; then verdict FAIL "$t" "${SYS_LABEL[$s]}: 全項目版がロードできない（$(sed -n 's/^LOAD\t//p' "$VK_TMP/i-o")）"; return; fi
@@ -1220,6 +1336,7 @@ item_setupenv(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen setupenv -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   if ! bad="$(vk_check_keys setup-environment.expect "SET" "定義済みの行頭タグ（SET）")"; then verdict FAIL "$t" "$bad"; return; fi
   sed -n 's/^SET\t//p' "$VK_FIX/setup-environment.expect" > "$VK_TMP/i-exp"
   : > "$VK_TMP/i-allow"
@@ -1322,6 +1439,7 @@ item_ca_root(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen ca-root -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   drop_skipping "checkassets root" -- "${S[@]}"
   if [ "${#KEPT[@]}" -eq 0 ]; then verdict SKIP "$t" "$SKIP_NOTE"; return; fi
   S=("${KEPT[@]}")
@@ -1350,14 +1468,15 @@ drop_skipping(){ # 節… -- 系統…
 }
 
 # check-assets の fixture のケースを全系統で突き合わせ、期待値と照合する（item_ca_fixture / item_ca_links が使う）。
-#   $1=項目名 $2=PASS の説明 残り=ケース。期待値ファイルの鍵は CA_CASES と CA_LINK_CASES を合わせた列挙に照らす
+#   $1=項目キー（凍結用） $2=項目名 $3=PASS の説明 残り=ケース。期待値ファイルの鍵は CA_CASES と CA_LINK_CASES を合わせた列挙に照らす
 ca_cases_check(){
-  local t="$1" desc="$2" s c d cs erc tag tg frag n bad all; shift 2
+  local key="$1" t="$2" desc="$3" s c d cs erc tag tg frag n bad all; shift 3
   local -a S secs=() cases=("$@")
   all="${CA_CASES[*]} ${CA_LINK_CASES[*]}"
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen "$key" -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   if ! bad="$(vk_check_keys check-assets.expect "$all" "ケースの列挙（${all}）" 4)"; then verdict FAIL "$t" "$bad"; return; fi
   for cs in "${cases[@]}"; do secs+=("checkassets $cs"); done
   drop_skipping "${secs[@]}" -- "${S[@]}"
@@ -1391,12 +1510,12 @@ ca_cases_check(){
   verdict PASS "$t" "${#cases[@]} ケース × $(labels "${S[@]}") で同一判定・期待どおり（${desc}）$(missing_note "${SYS_ALL[@]}")${SKIP_NOTE:+（${SKIP_NOTE}）}"
 }
 item_ca_fixture(){
-  ca_cases_check "check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ）" \
+  ca_cases_check ca-fixture "check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ）" \
     "U/M/E と絶対パス混在とパス付きの Write / NotebookEdit / MultiEdit / Glob ルールは WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順・rules / CLAUDE.md は 200 行超で WARN・32,000 文字（コードポイント。BOM は数えない）超で FAIL（両方なら FAIL だけ）、ちょうどは PASS で、rules はサブディレクトリも数え（. で始まるディレクトリの中は除く）、SKILL.md・agents は数えない" \
     "${CA_CASES[@]}"
 }
 item_ca_links(){
-  ca_cases_check "check-assets リンク（ジャンクション / シンボリックリンク）" \
+  ca_cases_check ca-links "check-assets リンク（ジャンクション / シンボリックリンク）" \
     "リンクは辿らず、…/results のディレクトリとしても数えない（2-c' は PASS）・リンク先のファイルを 2-e で読まない" \
     "${CA_LINK_CASES[@]}"
 }
@@ -1407,6 +1526,7 @@ item_cleanenv(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen cleanenv -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   if ! bad="$(vk_check_keys clean-test-env.txt "PRE OUTHAS ARG ENV CWD SETTINGS AFTER BADMODE BADRC BADOUT BADSHARERC BADSHAREOUT" "定義済みの行頭タグ（PRE / OUTHAS / ARG / ENV / CWD / SETTINGS / AFTER / BADMODE / BADRC / BADOUT / BADSHARERC / BADSHAREOUT）")"; then verdict FAIL "$t" "$bad"; return; fi
   grep -E $'^(ARG|ENV|CWD|SETTINGS|AFTER)\t' "$VK_FIX/clean-test-env.txt" > "$VK_TMP/i-exp"
   for s in "${S[@]}"; do
@@ -1442,6 +1562,7 @@ item_cleanenv_badmode(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen cleanenv-badmode -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   n="$(grep -c $'^BADMODE\t' "$VK_FIX/clean-test-env.txt")"
   erc="$(sed -n 's/^BADRC\t//p' "$VK_FIX/clean-test-env.txt" | head -n 1)"
   frag="$(sed -n 's/^BADOUT\t//p' "$VK_FIX/clean-test-env.txt" | head -n 1)"
@@ -1472,6 +1593,7 @@ item_cleanenv_badshare(){
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen cleanenv-badshare -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   erc="$(sed -n 's/^BADSHARERC\t//p' "$VK_FIX/clean-test-env.txt" | head -n 1)"
   frag="$(sed -n 's/^BADSHAREOUT\t//p' "$VK_FIX/clean-test-env.txt" | head -n 1)"
   if [ -z "$erc" ] || [ -z "$frag" ]; then verdict FAIL "$t" "fixture に BADSHARERC / BADSHAREOUT が無い"; return; fi
@@ -1497,6 +1619,7 @@ item_pubname(){
   mapfile -t S < <(usable bash pwsh)
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "bash / pwsh 7 がどちらも無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen pubname -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   for s in "${S[@]}"; do
     getsec "$s" pubname > "$VK_TMP/p-$s"
     m="$(sed -n 's/^MODE\t//p' "$VK_TMP/p-$s")"; modes+="$m "
@@ -1553,6 +1676,7 @@ item_pubcase(){
   mapfile -t S < <(usable bash pwsh)
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "bash / pwsh 7 がどちらも無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen pubcase -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   for s in "${S[@]}"; do
     getsec "$s" pubcase > "$VK_TMP/pk-$s"
     if ! grep -q $'^ASSERT\tok$' "$VK_TMP/pk-$s"; then
@@ -1582,6 +1706,7 @@ item_pubmanifest(){
   mapfile -t S < <(usable bash pwsh)
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "bash / pwsh 7 がどちらも無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen pubmanifest -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   for s in "${S[@]}"; do
     getsec "$s" pubmanifest > "$VK_TMP/pm-$s"
     if grep -q '^SKIP' "$VK_TMP/pm-$s"; then note+="${note:+、}${SYS_LABEL[$s]}: $(val "$(grep -m1 '^SKIP' "$VK_TMP/pm-$s")")"; continue; fi
@@ -1645,6 +1770,7 @@ item_pubargs(){
   mapfile -t S < <(usable bash pwsh)
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "bash / pwsh 7 がどちらも無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen pubargs -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
   if ! bad="$(vk_check_keys publish-args.tsv "plugin share" "対象（plugin / share）" 3)"; then verdict FAIL "$t" "$bad"; return; fi
   for s in "${S[@]}"; do
     getsec "$s" pubargs > "$VK_TMP/pa-$s"
@@ -1720,6 +1846,8 @@ compare_main(){
     esac
   done
   echo "[verify-kit] 系統: $sys"
+  # 凍結 fixture を最初に検証する（以降の項目が FRZ_SYS / FRZ_NOTE を使う）。項目の並びは VK_ITEM_KEYS と同じ
+  item_frozen
   item_syntax bash "構文 bash -n（.sh / .sh.template）"
   item_syntax pwsh "構文 pwsh 7 Parser（.ps1 / .ps1.template）"
   item_syntax ps51 "構文 Windows PowerShell 5.1 Parser（.ps1 / .ps1.template）"
@@ -1748,7 +1876,7 @@ compare_main(){
       echo "  --- probe ログ（${SYS_LABEL[$s]}）---"; detail_file "$VK_TMP/log-$s.txt"
     done
   fi
-  echo "[verify-kit] 集計: PASS ${NPASS} / FAIL ${NFAIL} / SKIP ${NSKIP}（所要 $((SECONDS - t0)) 秒）"
+  echo "[verify-kit] 集計: PASS ${NPASS} / FAIL ${NFAIL} / SKIP ${NSKIP} / FROZEN ${NFROZEN}（所要 $((SECONDS - t0)) 秒）"
   [ "$NFAIL" -eq 0 ]
 }
 

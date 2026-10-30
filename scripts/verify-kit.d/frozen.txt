@@ -1,0 +1,42 @@
+# 凍結 fixture（項目「凍結 fixture frozen.txt」。verify-kit.sh / verify-kit.ps1 が読む）。区切りは TAB。1 行 1 件。
+# # で始まる行と空行は無視する。
+#   ある系統の追随を一時中断（凍結）している間、期待される非対称をここで宣言し、その系統を一致判定から外す。
+#   載った項目は残りの系統で判定し、一致して期待どおりなら PASS ではなく FROZEN と出す（集計の FROZEN に数える。終了コードは
+#   FAIL の有無だけで決まる。PASS は「検査する全系統が一致」の意味のまま）。残りが食い違えば従来どおり FAIL。
+#   凍結した系統の probe も実行し続ける。凍結を終えるときは該当行を消す（再開は機能単位で移植し、1 行ずつ消す）。
+#
+#   書式: 項目キー<TAB>凍結する系統<TAB>開始日<TAB>開始SHA<TAB>理由
+#     項目キー … 下の「凍結できる項目」のどれか
+#     系統     … bash / pwsh / ps51 のいずれか。複数は , 区切り（空白を入れない）。その項目が検査する系統に限る。
+#                 項目が検査する系統をすべて凍結することはできない（比べるものが無くなる）
+#     開始日   … YYYY-MM-DD
+#     開始SHA  … 凍結を始めた時点のコミット（16 進・小文字 7〜40 桁）
+#     理由     … 空にしない（FROZEN の行の末尾にそのまま出る）
+#   同じ（項目キー, 系統）の組は 1 回だけ書く。誤り（存在しない項目キー・系統名、列の不足、開始日・開始SHA の不正、空の理由、
+#   凍結できない項目、その項目が検査しない系統、重複、項目の全系統の凍結）が 1 行でもあれば項目「凍結 fixture frozen.txt」が
+#   FAIL し、凍結は一切適用しない（誤記で黙って緩まない）。
+#
+#   凍結できる項目（項目キー / 検査する系統 / 出力の項目名）:
+#     version            bash pwsh ps51   ランチャー 実物 claude --version
+#     launcher           bash pwsh ps51   ランチャー 引数列（スタブ）
+#     launcher-stalerc   pwsh ps51        ランチャー 古い $LASTEXITCODE を返さない（スタブ）
+#     launcher-streams   bash pwsh ps51   ランチャー stdout / stderr の振り分け（スタブ）
+#     optset             bash pwsh ps51   option-settings テンプレ（全項目を有効化してロード）
+#     setupenv           bash pwsh ps51   setup-environment（custom.env fixture）
+#     ca-root            bash pwsh ps51   check-assets リポジトリルート
+#     ca-fixture         bash pwsh ps51   check-assets fixture（U/M/E・無害・壊れた JSON・…）
+#     ca-links           bash pwsh ps51   check-assets リンク（ジャンクション / シンボリックリンク）
+#     cleanenv           bash pwsh ps51   clean-test-env（スタブ）
+#     cleanenv-badmode   bash pwsh ps51   clean-test-env 不正な権限モード（スタブ）
+#     cleanenv-badshare  bash pwsh ps51   clean-test-env 存在しない <Share>（スタブ）
+#     pubname            bash pwsh        publish-plugin --name 検証
+#     pubcase            bash pwsh        publish-plugin 大文字小文字だけが違う既存エントリ（偽 marketplace）
+#     pubmanifest        bash pwsh        publish-plugin plugin.json の name 照合（一時リポジトリ）
+#     pubargs            bash pwsh        publish-plugin / publish-share 引数の検証（スタブ）
+#   凍結できない項目（書くと FAIL）:
+#     frozen             凍結 fixture frozen.txt（この fixture の検証）
+#     syntax-bash / syntax-pwsh / syntax-ps51   構文の検査（系統ごとの検査で、比較ではない）
+#     format             保存形式（BOM / CR / LF）（ファイルの性質の検査で、比較ではない）
+#     internal-keys      setup-environment 内部変数名の集合（sh / ps1 / docs）（fail-closed のガード。凍結中もデータとして追随を続ける）
+#     left               リポジトリ .claude/ に試験用ファイルを作っていない
+#   例: launcher-streams<TAB>bash<TAB>2026-10-30<TAB>1b6e9fb<TAB>PowerShell 版だけに警告を追加（.sh は凍結中）
