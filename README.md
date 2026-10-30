@@ -276,7 +276,7 @@ PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.
 `.claude/` を共有本体 `basic_dot_claude` へ反映する。**publish はこのスクリプトでしか push しない**。
 
 ```bash
-bash scripts/publish-share.sh --ref <ref>       # 例: --ref v1.0.0
+bash scripts/publish-share.sh --ref <ref>       # <ref> はリリースタグ名（下の注記）
 ```
 
 PowerShell では `scripts\publish-share.ps1 -Ref <ref>`。
@@ -292,6 +292,7 @@ PowerShell では `scripts\publish-share.ps1 -Ref <ref>`。
 
 > **feature ブランチからの publish は検証用に限る**。本番の共有本体へ向けるのは、
 > develop → main へ統合しタグを打った ref だけにすること。
+> タグは publish の基準点を示すだけで、互換性の約束を含まない。約束（バージョニングルール）はチーム展開時に定め、それまでタグは打たない（2026-10-30 の決定。約束を定義しないまま打っていた v1.0.x 系のタグは廃止した）。
 
 ---
 
