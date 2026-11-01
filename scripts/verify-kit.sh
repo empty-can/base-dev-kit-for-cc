@@ -1307,7 +1307,7 @@ item_launcher_streams(){
       esac
     done
   done
-  verdict PASS "$t" "$(labels "${S[@]}") とも stdout は空（claude スタブは何も書かない）・警告 ${#FR[@]} 行（誤配置の custom.env・分類A のキー・誤配置の option-settings・option-settings と TEAM_OPTS の --add-dir が UNC）はすべて stderr・exit 0$(missing_note "${SYS_ALL[@]}")"
+  verdict PASS "$t" "$(labels "${S[@]}") とも stdout は空（claude スタブは何も書かない）・警告 ${#FR[@]} 行（誤配置の custom.env・分類A のキー・誤配置の option-settings・option-settings と TEAM_OPTS の --add-dir が UNC・区分 1 のキー（--restricted / --bare）・project を含まない --setting-sources）はすべて stderr・exit 0$(missing_note "${SYS_ALL[@]}")"
 }
 
 item_optset(){

@@ -1687,7 +1687,7 @@ function Item-LauncherStreams {
       }
     }
   }
-  Verdict 'PASS' $t "$(Labels $avail) とも stdout は空（claude スタブは何も書かない）・警告 $($fr.Count) 行（誤配置の custom.env・分類A のキー・誤配置の option-settings・option-settings と TEAM_OPTS の --add-dir が UNC）はすべて stderr・exit 0$(Missing-Note $SysAll)"
+  Verdict 'PASS' $t "$(Labels $avail) とも stdout は空（claude スタブは何も書かない）・警告 $($fr.Count) 行（誤配置の custom.env・分類A のキー・誤配置の option-settings・option-settings と TEAM_OPTS の --add-dir が UNC・区分 1 のキー（--restricted / --bare）・project を含まない --setting-sources）はすべて stderr・exit 0$(Missing-Note $SysAll)"
 }
 
 function Item-Optset {
