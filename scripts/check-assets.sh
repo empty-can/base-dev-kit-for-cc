@@ -22,6 +22,10 @@
 #   ただし settings.json の同じオブジェクト内に完全一致または大文字小文字だけが違うキーが並ぶもの（systemroot と SystemRoot 等）は、
 #   照合の前に重複キーとして層によらず FAIL（どちらの値が効くかが読み手で変わる。3. を参照）。
 #
+# 追跡文書（.md）から成果物クラス配下のファイルへのパス参照（2-h）は、層によらず WARN（FAIL にしない）。gitignored の成果物は
+#   clone 先・配布先では辿れず、フォルダ整理でも壊れる（ルート CLAUDE.md「追跡文書から非追跡の成果物を参照しない」）。読むのは
+#   git 層では追跡されている全 .md（.claude の外の docs/・README.md 等も含む）、payload 層では .claude 配下の .md。
+#
 # 使い方:  ./check-assets.sh [--payload] <Share-path>
 #   --payload  実体基準を強制する（publish-share から payload を検査する時に使う）
 # 終了コード: FAIL が1件以上で 1、なければ 0（CI 利用可）。
@@ -191,6 +195,7 @@ verdict_artifact(){ # $1=層:出どころ:分類 $2=クラス 残り=case で一
 # 位置が固定でないクラス（evals/results/）は直後の 2-c' が正本。
 #   .claude/worktrees            … --worktree / EnterWorktree が作る git worktree（公式も .gitignore を推奨）
 #   .claude/scheduled_tasks.json … 永続化したスケジュールタスク（作成したフォルダでしか動かない個人状態）
+# 2-h（追跡文書から成果物ファイルへの参照）もこの配列をそのまま使う（複製しない）。
 _ARTIFACTS=(".claude/reports" ".claude/work" ".claude/workspace" ".claude/plans"
             ".claude/agent-memory-local" ".claude/work_instructions.txt"
             ".claude/.bat-shadow" ".claude/worktrees" ".claude/scheduled_tasks.json")
@@ -445,6 +450,57 @@ while IFS= read -r -d '' _f; do
   fi
 done < <(payload_files)
 [[ $_rule_hit -eq 0 ]] && pass "rules / CLAUDE.md の大きさ（200 行・32,000 文字以内）: ${_rule_n} ファイル"
+
+# 2-h. 追跡文書（.md）から非追跡の成果物ファイルへのパス参照（ルート CLAUDE.md「開発時の約束」の「追跡文書から非追跡の成果物を
+#      参照しない」。2026-11-01 の作業指示者の決定）。gitignored の成果物（.claude/reports/… 等）は clone 先・配布先では辿れず、
+#      フォルダ整理でも壊れる。結論は本文に写し、出所はコミット SHA か issue にする。どの層でも WARN（FAIL にしない。基準は変えない）。
+#      対象: 名前が .md で終わる（序数の末尾一致）テキストファイル。git 層は追跡されている全ファイル（ls-files -z。.claude の外の
+#        docs/・README.md 等も含む。pathspec の '*.md' は候補を絞るだけで、.md かどうかはここで決める）、payload 層は payload_files
+#        （.claude 配下の実体。2-e と同じ列挙・序数順）。成果物クラスのディレクトリの中のファイル自体は対象外（追跡されていれば 2-c が
+#        FAIL にする）。実体の無いもの・バイナリ（2-e の is_binary）は読まず、件数にも入れない。
+#      一致の規則: 行の中の「成果物クラスのパス（2-c の _ARTIFACTS をそのまま使う。中の / は \ でもよい）＋ 区切り（/ か \）＋ 終端までの
+#        1 文字以上」を取り出し、その最後のパス要素が「. ＋ 1 文字以上の英数字（A〜Z・a〜z・0〜9）」で終わるもの（ファイルらしいもの）
+#        だけを WARN にする。終端は 空白（スペース・タブ・CR・全角空白）・バッククォート・引用符（" '）・括弧（( ) （ ） 「 」）・<・>・
+#        句読点（、 。）。区切りの直後が終端のもの（.claude/reports/ 等のディレクトリ名だけの方針の言及）、ディレクトリへの参照
+#        （.claude/workspace/skill-request/<フォルダ名>/ のように / や <…> で終わるもの）、** で終わる glob（.claude/reports/**）は
+#        ファイルらしくないので WARN にしない。* は終端にしない（…_*.md や …_{00,A}_*.md のようなファイル名の中の glob は、辿れない
+#        文書群への参照なので WARN にする。[ ] { } も同じ理由で終端にしない）。
+#        大文字小文字は区別する（序数。大文字小文字だけが違うものはこの検査では扱わない）。PS 版の $refRe と同じ規則。
+#      出力: 一致 1 件につき WARN 1 行。ファイルは列挙の順（git 層は ls-files の順 = パスのバイト順、payload 層は序数順）、ファイルの中は
+#        行番号の順、行の中は左から。一致した文字列は本文のまま出す（\ を / に直さない）。
+# ⚠ 全角の終端は LC_ALL=C の grep の [^…] に書けない（各バイトが別々に除外され、あ〔E3 81 82〕等を含む名前の途中で切れる）。先に sed で
+#    全角の終端だけをスペースに置き換え、ASCII の終端だけの否定クラスで grep -o する（grep の一致を後から全角の終端で切り詰めると、
+#    「…/a.md、…/b.txt」の 2 つ目の参照を取りこぼす）。UTF-8 として正しい本文では PS 版（UTF-8 で読む）と同じ結果になる。
+# ⚠ grep -q で受けない（2-e と同じ。SIGPIPE）。行番号は LF で数える（PS 版も LF だけで分ける。CR は終端なので一致に入らない）。
+# ⚠ 終端・区切りの表を変えたら PS 版の $refRe も同時に直す。
+_REF_FW=($'\343\200\200' '（' '）' '「' '」' '、' '。')   # 全角の終端（先頭は全角空白 U+3000）
+_REF_TERM=$' \t\r`"\'()<>'                                 # ASCII の終端（[^…] の中に置く）
+_REF_SEP='[/\]'                                             # 区切り（ブラケット式の中の \ は文字どおり）
+_ref_sed=""; for _c in "${_REF_FW[@]}"; do _ref_sed+="s/${_c}/ /g;"; done
+_ref_alt=""
+for _a in "${_ARTIFACTS[@]}"; do
+  IFS=/ read -r -a _parts <<< "$_a"
+  _x=""; for _p in "${_parts[@]}"; do _x+="${_x:+$_REF_SEP}${_p//./[.]}"; done
+  _ref_alt+="${_ref_alt:+|}${_x}"
+done
+_ref_re="(${_ref_alt})${_REF_SEP}[^${_REF_TERM}]+"
+ref_files(){
+  if [[ $IS_GIT -eq 1 ]]; then git -C "$SHARE" ls-files -z -- '*.md' 2>/dev/null; else payload_files; fi
+}
+_ref_n=0; _ref_hit=0
+while IFS= read -r -d '' _f; do
+  case "$_f" in *.md) ;; *) continue ;; esac
+  _in=0; for _a in "${_ARTIFACTS[@]}"; do case "$_f" in "$_a"/*) _in=1; break ;; esac; done
+  [[ $_in -eq 1 ]] && continue
+  [[ -f "$SHARE/$_f" ]] || continue
+  is_binary "$SHARE/$_f" && continue
+  _ref_n=$((_ref_n + 1))
+  while IFS= read -r _l; do
+    warn "追跡文書が非追跡の成果物ファイルを参照している（辿れない参照。結論を本文に写し、出所はコミット SHA か issue にする）: ${_f}:${_l%%:*} ${_l#*:}"
+    _ref_hit=1
+  done < <(LC_ALL=C sed -e "$_ref_sed" -- "$SHARE/$_f" 2>/dev/null | LC_ALL=C grep -aonE -- "$_ref_re" | LC_ALL=C grep -aE '[.][A-Za-z0-9]+$')
+done < <(ref_files)
+[[ $_ref_hit -eq 0 ]] && pass "追跡文書（.md）に成果物クラス配下のファイルへのパス参照なし（${_ref_n} ファイルを検査）"
 
 # 3. settings.json の JSON 構文 ＋ project（.claude/settings.json）では効かないキーの検出
 #    根拠: settings-reference の Scope 欄。`Any file` 以外のキーは共有 project ファイルからは適用されない。

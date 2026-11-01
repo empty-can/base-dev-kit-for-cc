@@ -634,7 +634,7 @@ function Invoke-CheckAssets([string]$share, [string]$label, [bool]$payload) {
 }
 
 # fixture のケース（check-assets.expect の 1 列目。probe と比較役が同じ順で使う。verify-kit.sh の CA_CASES と同じ）
-$CaCases = @('ume', 'clean', 'broken', 'bom', 'worktree', 'pcase', 'pexact', 'gcase', 'gexact', 'hidden', 'dupkey', 'pmulti', 'wtcase', 'wrule', 'rwarn', 'rfail', 'rlimit')
+$CaCases = @('ume', 'clean', 'broken', 'bom', 'worktree', 'pcase', 'pexact', 'gcase', 'gexact', 'hidden', 'dupkey', 'pmulti', 'wtcase', 'wrule', 'rwarn', 'rfail', 'rlimit', 'artref')
 # リンク（Windows はジャンクション、それ以外は symlink）を作るケース。作れない系統はそのケースを SKIP し、比較役の
 # Drop-Skipping は項目単位で系統を除くので、ほかのケースを巻き添えにしないよう別の項目（Item-CaLinks）で判定する（verify-kit.sh と同じ）。
 $CaLinkCases = @('junction')
@@ -651,10 +651,10 @@ function Probe-CheckAssets {
   if (-not (Resolve-Cmd 'git')) { Put 'SKIP' 'git が無い（リポジトリルートを追跡基準で検査できない）' }
   else { Invoke-CheckAssets $VkRoot '<ROOT>' $false }
   # ケースごとの payload は check-assets.expect の冒頭に記した内容で作る（verify-kit.sh と同じ）。
-  # g で始まるケースは一時の git リポジトリ（ルート＝追跡基準）で、それ以外は -Payload（実体基準）で検査する。
+  # g で始まるケースと artref は一時の git リポジトリ（ルート＝追跡基準）で、それ以外は -Payload（実体基準）で検査する。
   foreach ($c in @($CaCases) + @($CaLinkCases)) {
     Sec "checkassets $c"
-    $repo = $c.StartsWith('g', [StringComparison]::Ordinal)
+    $repo = $c.StartsWith('g', [StringComparison]::Ordinal) -or (Oeq $c 'artref')
     if ($repo) {
       $script:RealGit = Resolve-Cmd 'git'
       if (-not $script:RealGit) { Put 'SKIP' 'git が無い（一時リポジトリを作れない）'; continue }
@@ -675,7 +675,7 @@ function Probe-CheckAssets {
       New-Item -ItemType Directory -Force -Path (Join-Full $cd 'Worktrees/evals/results') | Out-Null
     } elseif (Oeq $c 'pcase') {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-envcase.json') -Destination $dst
-    } elseif (Oin (@('pexact', 'gcase', 'gexact', 'junction', 'hidden', 'pmulti', 'rwarn', 'rfail', 'rlimit')) $c) {
+    } elseif (Oin (@('pexact', 'gcase', 'gexact', 'junction', 'hidden', 'pmulti', 'rwarn', 'rfail', 'rlimit', 'artref')) $c) {
       Copy-Item -LiteralPath (Join-Path $VkFix 'settings-clean.json') -Destination $dst
     } else {
       Copy-Item -LiteralPath (Join-Path $VkFix "settings-$c.json") -Destination $dst
@@ -754,6 +754,17 @@ function Probe-CheckAssets {
       foreach ($pair in @(@('rules/.h/deep.md', 'd'), @('rules/a/.h/deep.md', 'd'), @('rules/notes.txt', 'n'), @('skills/big/SKILL.md', 'k'), @('agents/big.md', 'a'), @('long-outside.md', 'o'))) {
         [System.IO.File]::WriteAllText((Join-Full $cd $pair[0]), ((@($pair[1]) * 300) -join "`n") + "`n", $Utf8NoBom)
       }
+    } elseif (Oeq $c 'artref') {
+      # 2-h（追跡文書から成果物ファイルへの参照）。git 層は .claude の外の追跡 .md も読む。WARN は docs/a.md の 1 行目（/ 区切り）と
+      # 2 行目（\ 区切り。クラスのパスの中も \）だけ。3 行目（ディレクトリ名だけの方針の言及）・4 行目（成果物クラスのパスを含まない）と
+      # .claude/rules/b.md の 3 行（glob・ディレクトリへの参照 2 つ）は WARN にしない。成果物クラスのディレクトリの中には何も置かない
+      # （2-c の判定を混ぜない）。verify-kit.sh と同じバイト列
+      New-Item -ItemType Directory -Force -Path (Join-Full $s 'docs'), (Join-Full $cd 'rules') | Out-Null
+      [System.IO.File]::WriteAllText((Join-Full $s 'docs/a.md'), ((@('参照: .claude/reports/2026-01-01_x/2026-01-01_x_01_plan.md を見る',
+        '`.claude\work\notes.txt`', '方針: `.claude/reports/` `.claude/work/` は配布しない',
+        'MCP config file not found: …\work\hello world test') -join "`n") + "`n"), $Utf8NoBom)
+      [System.IO.File]::WriteAllText((Join-Full $cd 'rules/b.md'), ((@('`.claude/plans/**`', '.claude/workspace/skill-request/<フォルダ名>/ に作る',
+        '.claude/reports/2026-01-01_x/ を参照') -join "`n") + "`n"), $Utf8NoBom)
     }
     foreach ($a in $art) {
       $f = Join-Full $s $a
@@ -776,6 +787,8 @@ function Probe-CheckAssets {
       # 日本語名の追跡ファイル（絶対パスを含む）。git 層の 2-e の一覧が 3 系統で一致すること（verify-kit.sh と同じ）
       [System.IO.File]::WriteAllText((Join-Full $cd '日本語-abspath.md'), "C:\Users\verify-kit\jp`n", $Utf8NoBom)
       $tracked += '.claude/日本語-abspath.md'
+    } elseif (Oeq $c 'artref') {
+      $tracked += @('docs/a.md', '.claude/rules/b.md')
     }
     $ok = $true
     foreach ($argv in @(@('init', '-q', $s),
@@ -1947,8 +1960,8 @@ function Test-CaCases([string]$key, [string]$t, [string]$desc, [string[]]$cases)
   Verdict 'PASS' $t "$($cases.Count) ケース × $(Labels $avail) で同一判定・期待どおり（$desc）$(Missing-Note $SysAll)$(Skip-Note)"
 }
 function Item-CaFixture {
-  Test-CaCases 'ca-fixture' 'check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ）' `
-    "U/M/E と絶対パス混在とパス付きの Write / NotebookEdit / MultiEdit / Glob ルールは WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順・rules / CLAUDE.md は 200 行超で WARN・32,000 文字（コードポイント。BOM は数えない）超で FAIL（両方なら FAIL だけ）、ちょうどは PASS で、rules はサブディレクトリも数え（. で始まるディレクトリの中は除く）、SKILL.md・agents は数えない" `
+  Test-CaCases 'ca-fixture' 'check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ・成果物ファイルへの参照）' `
+    "U/M/E と絶対パス混在とパス付きの Write / NotebookEdit / MultiEdit / Glob ルールは WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順・rules / CLAUDE.md は 200 行超で WARN・32,000 文字（コードポイント。BOM は数えない）超で FAIL（両方なら FAIL だけ）、ちょうどは PASS で、rules はサブディレクトリも数え（. で始まるディレクトリの中は除く）、SKILL.md・agents は数えない・追跡 .md から成果物クラス配下のファイルへの参照は WARN（/ と \ の両方。ディレクトリ名だけ・ディレクトリへの参照・** で終わる glob は WARN にしない）" `
     $CaCases
 }
 function Item-CaLinks {
