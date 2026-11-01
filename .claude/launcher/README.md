@@ -122,6 +122,7 @@ claude <OPTS> <TEAM_OPTS> [--] <起動時引数>
 - `OPTS`（PowerShell 版は `$Opts`）が option-settings、`TEAM_OPTS`（PowerShell 版は `$TeamOpts`）が `start_claude_code` の中にあるチーム統制の起動オプション（分類C）。
 - 同じフラグを両方に書いた場合、値を 1 つだけ取るフラグは、後に置かれる `TEAM_OPTS` の値が採用される（後勝ち）。`--add-dir` のような繰り返して指定できるフラグは上書きされず、両方の値が渡る（累積する）。`--append-system-prompt` とその -file 版も、上書きではなく両方が使われる（v2.1.283 以降）。
 - これは既定値をチームで揃える仕組みであって、強制力は無い。起動時引数はさらに後ろに付くので、値を 1 つだけ取るフラグは利用者が起動時引数で明示指定すれば上書きできる。強制したい統制は settings.json / managed settings 側で行う。
+- PowerShell 版の `start_claude_code` には、キットの前提が崩れる起動オプション（付録 A）を option-settings か `$TeamOpts` に見つけたときの扱いを決めるチーム定数 `$TeamKitCheck` もある。`'abort'`（既定）はエラーを出して起動を中止し、`'warn'` は警告を出してそのまま起動する。`$TeamOpts` と同じくチームで揃える値で、強制力は無い。bash 版はこれに追随していない（§1）。
 - 並び順: bash 版は各配列をキーの辞書順（C ロケール）で並べる（書いた順ではない）。PowerShell 版は書いた順。
 - プロンプトを起動時引数で渡すなら、フラグはすべてプロンプトより前に置く。値を複数取るフラグ（`--add-dir` / `--mcp-config` / `--tools` 等）や値を省略できるフラグ（`--debug` / `--resume` 等）は、直後のプロンプトを値として取り込む。ランチャーは起動時引数が全部 `-` で始まらない（＝プロンプトだけ）ときに限り、組み立てたオプションとの間に `--` を補う。
 
@@ -212,7 +213,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 
 全オプションの説明は公式 docs の CLI reference（https://code.claude.com/docs/en/cli-reference）を参照。
 
-ランチャーは option-settings と `TEAM_OPTS`（PowerShell 版は `$TeamOpts`）のキーの綴りを照合するだけで、書かれたキーはすべてそのまま `claude` へ渡す。そのため、テンプレートに載せていないオプション（上の表のものを含む）も書けば効く。ただし、キットの前提が黙って崩れるもの（`--restricted`・`--bare`・`--safe-mode`・`--system-prompt`・`--system-prompt-file` と、値に `project` を含まない `--setting-sources`）だけは、PowerShell 版のランチャーが起動前に stderr へ 1 件 1 行で警告する（値の出どころ〔option-settings かチーム統制か〕を示す。起動は止めず、キーも捨てない。起動時引数は検査しない）。bash 版はこの警告に追随していない（§1）。キーの綴りを誤ると `claude` 自身がエラーにする。チームとして禁じたいオプションがあるなら、managed settings で固定する（ランチャーの統制には強制力が無い。§3-1）。
+ランチャーは option-settings と `TEAM_OPTS`（PowerShell 版は `$TeamOpts`）のキーの綴りを照合するだけで、書かれたキーはすべてそのまま `claude` へ渡す。そのため、テンプレートに載せていないオプション（上の表のものを含む）も書けば効く。ただし、キットの前提が黙って崩れるもの（`--restricted`・`--bare`・`--safe-mode`・`--system-prompt`・`--system-prompt-file` と、値に `project` を含まない `--setting-sources`。ネットワークパスの `--add-dir`〔付録 B〕も同じ扱い）は、PowerShell 版のランチャーが起動前に検出して stderr へ 1 件 1 行で知らせ（値の出どころ〔option-settings かチーム統制か〕を示す）、既定では起動を中止する（エラーを出して `claude` を起動しない）。チーム定数 `$TeamKitCheck` を `'warn'` にすると、警告を出すだけでそのまま起動する（キーは捨てずに `claude` へ渡す。§3-1）。起動時引数は検査しない。bash 版はこの検出と中止に追随していない（ネットワークパスの `--add-dir` を警告するだけで、起動は止めない。§1）。キーの綴りを誤ると `claude` 自身がエラーにする。チームとして禁じたいオプションがあるなら、managed settings で固定する（ランチャーの統制には強制力が無い。§3-1）。
 
 ## 付録 B. option-settings の項目ごとの補足
 
@@ -225,7 +226,8 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 
 - UNC（`\\server\share`）などのネットワークパスは拒否される（v2.1.257 以降）。Windows では、共有フォルダをネットワークドライブとしてドライブ文字に割り当て、そのドライブ文字から始まるパスを書く。
 - 起動時に渡したネットワークパスは、Claude Code がそのディレクトリを外して起動する。v2.1.305 以降の対話起動では、その警告がデバッグログにしか出ない（読み方は下の「起動時の警告を読む」）。
-- option-settings（とチーム統制の `TEAM_OPTS`）の `--add-dir` の値が `\\` か `//` で始まると、ランチャーが起動前に stderr へ警告する（起動は止めない）。起動時引数の `--add-dir` は検査しない。
+- option-settings（とチーム統制の `TEAM_OPTS`）の `--add-dir` の値が `\\` か `//` で始まると、PowerShell 版のランチャーは起動前に stderr へ知らせ、既定では起動を中止する（`$TeamKitCheck = 'warn'` なら警告だけで起動する。付録 A）。bash 版は警告するだけで、起動は止めない。起動時引数の `--add-dir` は検査しない。
+- 判定は綴りだけなので、`\\wsl$\…`・`\\?\C:\…`・`\\.\…` のようなローカルのパスも対象になり、PowerShell 版の既定では起動が止まる。パスの書き方を変える（`\\?\C:\…` なら `C:\…` と書く等）か、`$TeamKitCheck` を `'warn'` にする。
 - 追加したディレクトリの `.claude/skills/` も読み込まれる。既存の skill と同名のものは `/<フォルダ名>:<skill 名>` で呼ぶ（v2.1.309 以降。それ以前は呼べなかった）。
 
 ### --setting-sources の影響範囲
@@ -233,7 +235,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 - `project` を外すと、キットの `.claude/settings.json`（permissions.deny・hooks。.bat 保護を含む）が読まれない。
 - `--add-dir` で足したディレクトリの skill・コマンド・サブエージェントも読まれなくなる。
 - この値は、このセッションから起動するチームメイト・`/bg`・`claude agents` のセッションにも引き継がれる。
-- option-settings（とチーム統制の `$TeamOpts`）の `--setting-sources` の値に `project` が無いと、PowerShell 版のランチャーが起動前に stderr へ警告する（起動は止めない。付録 A）。未設定なら全ソースが読まれるので警告しない。
+- option-settings（とチーム統制の `$TeamOpts`）の `--setting-sources` の値に `project` が無いと、PowerShell 版のランチャーが起動前に stderr へ知らせ、既定では起動を中止する（`$TeamKitCheck = 'warn'` なら警告だけで起動する。付録 A）。未設定なら全ソースが読まれるので対象外。
 
 ### --permission-mode の既定
 

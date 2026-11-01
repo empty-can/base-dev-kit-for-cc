@@ -476,45 +476,70 @@ function Probe-Launcher {
   }
 }
 
-# ---- ランチャーの出力の振り分け（スタブ。警告は stderr、stdout は claude の出力だけ）-----------------------
+# ---- ランチャーの出力の振り分けと中断モード（スタブ。警告・エラーは stderr、stdout は claude の出力だけ）-----------
 # launcher-streams.txt の行頭タグ $tag の値を返す（verify-kit.sh の vk_streams_tag と同じ）
 function Get-StreamsTag([string]$tag) {
   @(Read-Lines (Join-Path $VkFix 'launcher-streams.txt') | Where-Object { $_.StartsWith("$tag`t", [StringComparison]::Ordinal) } |
     ForEach-Object { $_.Substring($tag.Length + 1) })
 }
-# 結果は ASSERT / RC / RAN と、stdout が空か（OUTEMPTY）、stdout と stderr の各行（OUT / ERR。CR を落とし \ を / に揃え、
-# 一時ツリーを <T> に置き換え、空行は除く）。verify-kit.sh の probe_launcher_streams と同じ形。ランチャーは -File で起動する
-# （利用者の使い方と同じ）。stderr はコンソールのコード ページで書かれるが、期待値の断片は ASCII だけなので UTF-8 で読んでよい
+# 一時ツリー $t のランチャーを 1 回実行し（スタブの出力先は $sd）、結果を今の節へ書く。結果は ASSERT / RC / RAN と、stdout が空か
+# （OUTEMPTY）、stdout と stderr の各行（OUT / ERR。CR を落とし \ を / に揃え、一時ツリーを <T> に置き換え、空行は除く）。
+# verify-kit.sh の vk_streams_run と同じ形。ランチャーは -File で起動する（利用者の使い方と同じ）。stderr はコンソールのコード ページで
+# 書かれるが、期待値の断片は ASCII だけなので UTF-8 で読んでよい
+function Invoke-StreamsRun([string]$sd, [string]$t) {
+  $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Full $t 'start_claude_code.ps1')) + @(Get-StreamsTag 'in')
+  $script:StreamsRes = $null
+  Invoke-Stubbed $sd @('claude') { param($a) $script:StreamsRes = Invoke-Proc $script:HostExe $a 120000; $script:StreamsRes.Rc } $argv
+  Put-Args $sd
+  $r = $script:StreamsRes
+  if ($null -eq $r) { return }
+  Put 'OUTEMPTY' $(if ($r.Out.Length -eq 0) { 'yes' } else { 'no' })
+  foreach ($l in ($r.Out -split "`n")) { $n = Norm $l @($t, '<T>'); if (One $n '') { Put 'OUT' $n } }
+  foreach ($l in ($r.Err -split "`n")) { $n = Norm $l @($t, '<T>'); if (One $n '') { Put 'ERR' $n } }
+}
+# 同じ一時ツリーでランチャーを 2 回実行し、節「launcher-streams abort」「launcher-streams warn」に分けて書く。1 回目は複製した
+# ランチャーのまま（中断モードは既定の abort）。2 回目は複製の中断モードの定数の行（$TeamKitCheck = 'abort'）を $TeamKitCheck = 'warn' に
+# 書き換えてから実行する（実物は書き換えない。定数の行〔$TeamKitCheck = 'abort' か 'warn'〕がちょうど 1 行でなければ書き換えられないので、
+# 2 回目は実行せずに ASSERT ng を出す）。スタブの出力先は実行ごとに分ける（RAN を前の実行の結果で汚さない）。
+# verify-kit.sh の probe_launcher_streams と同じ
 function Probe-LauncherStreams {
-  Sec 'launcher-streams'
-  if ($script:LauncherGuard) { Put 'ASSERT' $script:LauncherGuard; return }
   $ldir = Join-Full $script:PT 'launcher'
   $t = Join-Full $ldir 'tree-streams'
-  New-Tree $t 'none'
-  # team 行（キー TAB 値）を、一時ツリーへ複製したランチャーの $TeamOpts の定義の行（$TeamOpts = [ordered]@{）の直後に
-  # 差し込む（値は単一引用符で囲む。opt 行と同じ書き方）。実物のランチャーは書き換えない。定義の行がちょうど 1 行でなければ
-  # 差し込めないので、実行せずに ASSERT ng を出す（黙って差し込まずに走らせると、$TeamOpts を見ていないのに PASS しうる）。
-  # 改行は定義の行のもの（CRLF）に合わせ、BOM 付きで書き戻す（5.1 が日本語を読めるように）。verify-kit.sh の probe_launcher_streams と同じ
-  $team = @(Get-StreamsTag 'team')
-  if ($team.Count -gt 0) {
-    $lp = Join-Full $t 'start_claude_code.ps1'
-    $src = [System.IO.File]::ReadAllText($lp, $Utf8NoBom)
-    $ms = [regex]::Matches($src, '(?m)^\$TeamOpts = \[ordered\]@\{\r?$')
-    if ($ms.Count -ne 1) {
-      Put 'ASSERT' "ng start_claude_code.ps1 の `$TeamOpts の定義の行（`$TeamOpts = [ordered]@{）が $($ms.Count) 行（1 行でないので team 行を差し込めない）"
-      return
+  $lp = Join-Full $t 'start_claude_code.ps1'
+  $why = ''
+  if ($script:LauncherGuard) {
+    $why = $script:LauncherGuard
+  } else {
+    New-Tree $t 'none'
+    # team 行（キー TAB 値）を、一時ツリーへ複製したランチャーの $TeamOpts の定義の行（$TeamOpts = [ordered]@{）の直後に
+    # 差し込む（値は単一引用符で囲む。opt 行と同じ書き方）。実物のランチャーは書き換えない。定義の行がちょうど 1 行でなければ
+    # 差し込めないので、実行せずに ASSERT ng を出す（黙って差し込まずに走らせると、$TeamOpts を見ていないのに PASS しうる）。
+    # 改行は定義の行のもの（CRLF）に合わせ、BOM 付きで書き戻す（5.1 が日本語を読めるように）。verify-kit.sh の probe_launcher_streams と同じ
+    $team = @(Get-StreamsTag 'team')
+    if ($team.Count -gt 0) {
+      $src = [System.IO.File]::ReadAllText($lp, $Utf8NoBom)
+      $ms = [regex]::Matches($src, '(?m)^\$TeamOpts = \[ordered\]@\{\r?$')
+      if ($ms.Count -ne 1) {
+        $why = "ng start_claude_code.ps1 の `$TeamOpts の定義の行（`$TeamOpts = [ordered]@{）が $($ms.Count) 行（1 行でないので team 行を差し込めない）"
+      } else {
+        $m = $ms[0]
+        $nl = if ($m.Value.EndsWith("`r")) { "`r`n" } else { "`n" }
+        $ins = New-Object System.Text.StringBuilder
+        foreach ($line in $team) {
+          $i = $line.IndexOf("`t")
+          $k = if ($i -lt 0) { $line } else { $line.Substring(0, $i) }; $v = if ($i -lt 0) { '' } else { $line.Substring($i + 1) }
+          [void]$ins.Append("    '$k' = '" + $v.Replace("'", "''") + "'" + $nl)
+        }
+        $pos = $m.Index + $m.Length + 1   # 定義の行の LF の直後
+        $src = $src.Substring(0, $pos) + $ins.ToString() + $src.Substring($pos)
+        [System.IO.File]::WriteAllText($lp, $src, $Utf8Bom)
+      }
     }
-    $m = $ms[0]
-    $nl = if ($m.Value.EndsWith("`r")) { "`r`n" } else { "`n" }
-    $ins = New-Object System.Text.StringBuilder
-    foreach ($line in $team) {
-      $i = $line.IndexOf("`t")
-      $k = if ($i -lt 0) { $line } else { $line.Substring(0, $i) }; $v = if ($i -lt 0) { '' } else { $line.Substring($i + 1) }
-      [void]$ins.Append("    '$k' = '" + $v.Replace("'", "''") + "'" + $nl)
-    }
-    $pos = $m.Index + $m.Length + 1   # 定義の行の LF の直後
-    $src = $src.Substring(0, $pos) + $ins.ToString() + $src.Substring($pos)
-    [System.IO.File]::WriteAllText($lp, $src, $Utf8Bom)
+  }
+  if ($why) {
+    Sec 'launcher-streams abort'; Put 'ASSERT' $why
+    Sec 'launcher-streams warn'; Put 'ASSERT' $why
+    return
   }
   $envText = (@(Get-StreamsTag 'env') | ForEach-Object { "$_`n" }) -join ''
   [System.IO.File]::WriteAllText((Join-Full $t '.claude/custom.env'), $envText, $Utf8NoBom)
@@ -530,16 +555,20 @@ function Probe-LauncherStreams {
   }
   [void]$sb.Append("}`r`n")
   [System.IO.File]::WriteAllText((Join-Full $t '.claude/option-settings.ps1'), $sb.ToString(), $Utf8Bom)
-  $sd = Join-Full $ldir 'run-streams'
-  $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Full $t 'start_claude_code.ps1')) + @(Get-StreamsTag 'in')
-  $script:StreamsRes = $null
-  Invoke-Stubbed $sd @('claude') { param($a) $script:StreamsRes = Invoke-Proc $script:HostExe $a 120000; $script:StreamsRes.Rc } $argv
-  Put-Args $sd
-  $r = $script:StreamsRes
-  if ($null -eq $r) { return }
-  Put 'OUTEMPTY' $(if ($r.Out.Length -eq 0) { 'yes' } else { 'no' })
-  foreach ($l in ($r.Out -split "`n")) { $n = Norm $l @($t, '<T>'); if (One $n '') { Put 'OUT' $n } }
-  foreach ($l in ($r.Err -split "`n")) { $n = Norm $l @($t, '<T>'); if (One $n '') { Put 'ERR' $n } }
+  Sec 'launcher-streams abort'
+  Invoke-StreamsRun (Join-Full $ldir 'run-streams-abort') $t
+  Sec 'launcher-streams warn'
+  # 値だけを置き換える（行末の CR は先読みで残す）。BOM 付きで書き戻す（team 行の差し込みと同じ）
+  $src = [System.IO.File]::ReadAllText($lp, $Utf8NoBom)
+  $ms = [regex]::Matches($src, '(?m)^\$TeamKitCheck = ''(abort|warn)''(?=\r?$)')
+  if ($ms.Count -ne 1) {
+    Put 'ASSERT' "ng start_claude_code.ps1 の中断モードの定数の行（`$TeamKitCheck = 'abort'）が $($ms.Count) 行（1 行でないので warn に書き換えられない）"
+    return
+  }
+  $m = $ms[0]
+  $src = $src.Substring(0, $m.Index) + "`$TeamKitCheck = 'warn'" + $src.Substring($m.Index + $m.Length)
+  [System.IO.File]::WriteAllText($lp, $src, $Utf8Bom)
+  Invoke-StreamsRun (Join-Full $ldir 'run-streams-warn') $t
 }
 
 # 呼び出し元に古い $LASTEXITCODE（7）が残っている状態で、$LASTEXITCODE を設定しない claude（.ps1 ラッパー。
@@ -1653,10 +1682,40 @@ function Item-LauncherStaleRc {
   Verdict 'PASS' $t "$(Labels $avail) とも、呼び出し元に `$LASTEXITCODE=7 が残り claude スタブが設定しなくても exit 0"
 }
 
-# ランチャーの警告が stderr に出て、stdout には claude（スタブ。何も書かない）の出力しか出ないこと（W42-C-02 の回帰防止）。
-# option-settings の --add-dir が UNC の形なら警告が 1 行だけ出ること（W42-F-05）と、TEAM_OPTS / $TeamOpts の --add-dir でも
-# 同じく 1 行出ること（J-3。probe が一時ツリーのランチャーに team 行を差し込む）も同じツリーで見る。
-# 期待は launcher-streams.txt の stderr 行（各行に順に含まれるべき断片。行数も一致）。verify-kit.sh の item_launcher_streams と同じ
+# ランチャーの警告・エラーが stderr に出て、stdout には claude（スタブ。何も書かない）の出力しか出ないこと（W42-C-02 の回帰防止）。
+# あわせて、キットの前提が崩れる起動オプション（option-settings と TEAM_OPTS / $TeamOpts の UNC の --add-dir〔W42-F-05・J-3〕と
+# 区分 1）の検出と中断モード（B-5）を、同じ一時ツリーでの 2 回の実行で見る（probe が team 行を差し込み、2 回目の前に定数を warn に
+# 書き換える）。abort（既定）の実行は終了コード 0 以外・claude スタブ未起動、warn の実行は exit 0・claude スタブ起動で、どちらも
+# stdout は空、stderr の各行に launcher-streams.txt の stderr-abort / stderr-warn 行の断片が順に含まれること（行数も一致）。
+# verify-kit.sh の item_launcher_streams / vk_streams_judge と同じ
+# 1 回分の判定（$s=系統 $m=abort|warn $fr=期待の断片）。不正があれば理由を返し、無ければ空文字列を返す
+function Test-StreamsRun([string]$s, [string]$m, [string[]]$fr) {
+  $lab = "$($SysLabel[$s])（$m）"
+  $lines = Get-Sec $s "launcher-streams $m"
+  $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
+  if (One $a 'ok') { return "${lab}: $(if ($a) { $a } else { '結果が無い' })" }
+  $rc = @(Tag-Vals $lines 'RC') | Select-Object -First 1
+  $ran = Oin (@(Tag-Vals $lines 'RAN')) 'yes'
+  if (Oeq $m 'abort') {
+    if ($ran) { return "${lab}: claude スタブが起動した（起動を中止していない）" }
+    if ((-not $rc) -or (Oeq $rc '0')) { return "${lab}: ランチャーの終了コードが 0 以外でない（RC=$(if ($rc) { $rc } else { '?' })）" }
+  } else {
+    if (-not $ran) { return "${lab}: スタブが起動していない" }
+    if (One $rc '0') { return "${lab}: ランチャーの終了コードが 0 でない（RC=$(if ($rc) { $rc } else { '?' })）" }
+  }
+  if (Onin (@(Tag-Vals $lines 'OUTEMPTY')) 'yes') {
+    $o = @(Tag-Vals $lines 'OUT') | Select-Object -First 1
+    return "${lab}: stdout に claude（スタブ）以外の出力がある（1 行目: $(if ($o) { $o } else { '<空行のみ>' })）"
+  }
+  $er = @(Tag-Vals $lines 'ERR')
+  if ($er.Count -ne $fr.Count) { return "${lab}: stderr の行数が期待（$($fr.Count) 行）と違う（$($er.Count) 行）" }
+  for ($i = 0; $i -lt $fr.Count; $i++) {
+    if ($er[$i].IndexOf($fr[$i], [StringComparison]::Ordinal) -lt 0) {
+      return "${lab}: stderr の $($i + 1) 行目に「$($fr[$i])」が無い（$($er[$i])）"
+    }
+  }
+  return ''
+}
 function Item-LauncherStreams {
   $t = 'ランチャー stdout / stderr の振り分け（スタブ）'
   $avail = @(Usable $SysAll)
@@ -1664,30 +1723,19 @@ function Item-LauncherStreams {
   $c = Crashed-In $avail
   if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
   if (-not (Drop-Frozen 'launcher-streams' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
-  $bad = Test-FixKeys 'launcher-streams.txt' @('env', 'opt', 'team', 'in', 'stderr') '定義済みの行頭タグ（env / opt / team / in / stderr）' 2
+  $bad = Test-FixKeys 'launcher-streams.txt' @('env', 'opt', 'team', 'in', 'stderr-abort', 'stderr-warn') '定義済みの行頭タグ（env / opt / team / in / stderr-abort / stderr-warn）' 2
   if ($bad) { Verdict 'FAIL' $t $bad; return }
-  $fr = @(Get-StreamsTag 'stderr')
-  if ($fr.Count -eq 0) { Verdict 'FAIL' $t 'launcher-streams.txt に stderr 行が無い'; return }
+  $fa = @(Get-StreamsTag 'stderr-abort')
+  $fw = @(Get-StreamsTag 'stderr-warn')
+  if ($fa.Count -eq 0) { Verdict 'FAIL' $t 'launcher-streams.txt に stderr-abort 行が無い'; return }
+  if ($fw.Count -eq 0) { Verdict 'FAIL' $t 'launcher-streams.txt に stderr-warn 行が無い'; return }
   foreach ($s in $avail) {
-    $lines = Get-Sec $s 'launcher-streams'
-    $a = @(Tag-Vals $lines 'ASSERT') | Select-Object -First 1
-    if (One $a 'ok') { Verdict 'FAIL' $t "$($SysLabel[$s]): $(if ($a) { $a } else { '結果が無い' })"; return }
-    if (Onin (@(Tag-Vals $lines 'RAN')) 'yes') { Verdict 'FAIL' $t "$($SysLabel[$s]): スタブが起動していない"; return }
-    $rc = @(Tag-Vals $lines 'RC') | Select-Object -First 1
-    if (One $rc '0') { Verdict 'FAIL' $t "$($SysLabel[$s]): ランチャーの終了コードが 0 でない（RC=$(if ($rc) { $rc } else { '?' })）"; return }
-    if (Onin (@(Tag-Vals $lines 'OUTEMPTY')) 'yes') {
-      $o = @(Tag-Vals $lines 'OUT') | Select-Object -First 1
-      Verdict 'FAIL' $t "$($SysLabel[$s]): stdout に claude（スタブ）以外の出力がある（1 行目: $(if ($o) { $o } else { '<空行のみ>' })）"; return
-    }
-    $er = @(Tag-Vals $lines 'ERR')
-    if ($er.Count -ne $fr.Count) { Verdict 'FAIL' $t "$($SysLabel[$s]): stderr の行数が期待（$($fr.Count) 行）と違う（$($er.Count) 行）"; return }
-    for ($i = 0; $i -lt $fr.Count; $i++) {
-      if ($er[$i].IndexOf($fr[$i], [StringComparison]::Ordinal) -lt 0) {
-        Verdict 'FAIL' $t "$($SysLabel[$s]): stderr の $($i + 1) 行目に「$($fr[$i])」が無い（$($er[$i])）"; return
-      }
-    }
+    $bad = Test-StreamsRun $s 'abort' $fa
+    if ($bad) { Verdict 'FAIL' $t $bad; return }
+    $bad = Test-StreamsRun $s 'warn' $fw
+    if ($bad) { Verdict 'FAIL' $t $bad; return }
   }
-  Verdict 'PASS' $t "$(Labels $avail) とも stdout は空（claude スタブは何も書かない）・警告 $($fr.Count) 行（誤配置の custom.env・分類A のキー・誤配置の option-settings・option-settings と TEAM_OPTS の --add-dir が UNC・区分 1 のキー（--restricted / --bare）・project を含まない --setting-sources）はすべて stderr・exit 0$(Missing-Note $SysAll)"
+  Verdict 'PASS' $t "$(Labels $avail) とも abort（既定）: 終了コード 0 以外・claude スタブ未起動・stdout 空・stderr $($fa.Count) 行／warn: exit 0・claude スタブ起動・stdout 空・stderr $($fw.Count) 行（内訳はどちらも、誤配置の custom.env・分類A のキー・誤配置の option-settings の警告、option-settings と TEAM_OPTS の --add-dir が UNC・区分 1 のキー（--restricted / --bare）・project を含まない --setting-sources の検出、まとめ行）$(Missing-Note $SysAll)"
 }
 
 function Item-Optset {

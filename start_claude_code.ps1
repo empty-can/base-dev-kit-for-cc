@@ -16,7 +16,7 @@
 # 出力の約束: ランチャー（本ファイルと setup-environment）自身の警告・エラーはすべて stderr に書く。stdout は claude の
 #   出力だけにする（claude -p の結果を読むスクリプトに混ざらないように。bash 版も同じ）。
 # ⚠ これは利用者が端末から起動するランチャーで、CLAUDE_CODE_PROCESS_WRAPPER / processWrapper に登録するもの
-#    ではない。登録しても契約を満たさない（Claude Code の引数に起動オプションを足す、起動前に警告を出しうる。
+#    ではない。登録しても契約を満たさない（Claude Code の引数に起動オプションを足す、起動前に警告やエラーを出して中止しうる。
 #    PS 版は exec しない）うえ、Windows ではその設定自体が無視される。必要なら別の薄いスクリプトを作る
 #    （契約: https://code.claude.com/docs/en/corporate-launcher#the-launcher-contract）。
 # ⚠ プロンプトを起動時引数で渡すなら、フラグはすべてプロンプトより前に置くこと。値を複数取るフラグ
@@ -112,6 +112,15 @@ $TeamOpts = [ordered]@{
     # '--setting-sources' = 'project,user'
 }
 
+# キットの前提が崩れる起動オプションを option-settings（$Opts）か $TeamOpts に見つけたときの扱い（チームで揃える値。利用者は触らない）。
+# 対象は区分 1 のキー（--restricted 等）・project を含まない --setting-sources・ネットワークパス（UNC）の --add-dir（3) の検査）。
+#   'abort' … エラーを出して claude を起こさずに終了する（既定）
+#   'warn'  … 警告を出して、そのまま claude を起動する
+# $TeamOpts と同じく既定値をチームで揃える仕組みで、強制力は無い（起動時引数で渡したオプションは検査しない）。
+# 'abort' / 'warn' 以外の値（空や大文字小文字の違いを含む）は 'abort' として扱い、その旨をエラーとして 1 行出す（fail-closed）。
+# 2026-11-01 の作業指示者決定（設計 §5-4）。bash 版は凍結中で未追随（SH-DEFER-02）。
+$TeamKitCheck = 'abort'
+
 # ---- 3) 利用者可変の起動オプション（分類D・option-settings.ps1）------------
 $Opts = [ordered]@{}
 $OptsFile = Join-Path $RootDir '.claude\option-settings.ps1'
@@ -129,39 +138,42 @@ if (Test-Path $OptsFile) {
     . $OptsFile   # $Opts を定義（未作成なら空のまま）
 }
 
-# option-settings（$Opts）と $TeamOpts の --add-dir がネットワークパス（UNC）の形なら起動前に警告する（止めない）。
-# Claude Code は起動時に渡されたネットワークパスを外して起動し（v2.1.257 以降）、v2.1.305 以降の対話起動ではその警告が
-# デバッグログにしか出ない。<Share> を UNC で書くとキット無しで黙って起動するので、画面に出せるランチャーが知らせる。
-# チームが <Share> を固定するのは $TeamOpts なので、そこも同じ判定で見る（2026-10-27 の判断 J-3。それまでは option-settings
-# だけ）。警告文の先頭で値の出どころ（option-settings か $TeamOpts か）を示し、順は $Opts → $TeamOpts（bash 版と同じ）。
-# 判定は綴りだけ（\\ か // で始まるか。解決するとネットワークへ触れてしまう）。起動時引数の --add-dir は見ない（利用者が
-# 並べた引数は守らない。設計 §5-3 の責任分界）。'--add-dir=<パス>' のような = 形のキーも見ない（キーが '--add-dir' そのものの
-# 値だけ。設計 §5-4）。bash 版と同じ文言（出どころの表記も同じ。単一引用符なので $TeamOpts は展開されない。前置きは 1) と
-# 同じ「警告: 」）。
+# option-settings（$Opts）と $TeamOpts に、キットの前提が崩れる起動オプションがあれば、claude を起こす前に知らせる。見つけたものは
+# 下の (a)・(b) の検査で $kitCheckFound に溜め（1 件 = 出どころ付きの理由 1 行。理由の本文はモードで変えない）、最後にまとめて出す。
+# 前置きは $TeamKitCheck が 'abort' なら「エラー: 」、'warn' なら「警告: 」。続けてまとめ 1 行を出し、'abort' なら claude を起こさずに
+# exit 1、'warn' ならそのまま起動する（2026-11-01 の作業指示者決定。設計 §5-4。それまでは警告だけで止めなかった）。
+# 中止しても 1) の setup-environment が設定した環境変数は戻さない（対話セッションで .\start_claude_code.ps1 と実行した場合は、claude の
+# 終了後と同じくセッションに残る）。読み込みの順（1) → 3)）は変えない（設計 §5-4）。
+# 出どころの表記と順（$Opts → $TeamOpts）は (a)・(b) で共通で、出力は (a) の分が先、(b) の分が後。出どころごとに独立に判定する
+# （$Opts と $TeamOpts を合成した実効値は見ない）。起動時引数と '--add-dir=<パス>' / '--bare=…' のような = 形のキーは見ない（利用者が
+# 並べた引数は守らない。設計 §5-3 の責任分界・§5-4）。キーの照合は [ordered] の Contains で、大文字小文字を区別しない（'--Bare' も
+# 対象）。チームとして禁じるなら managed settings で固定する（ランチャーの統制には強制力が無い）。出どころの表記は単一引用符なので
+# $TeamOpts は展開されない。bash 版は凍結中で未追随（警告だけで止めない旧版のまま。SH-DEFER-01・02。docs/launcher/sh-freeze-backlog.md）。
+$kitCheckFound = [System.Collections.Generic.List[string]]::new()
 $uncSources = [ordered]@{
     'option-settings' = $Opts
     'start_claude_code のチーム統制（TEAM_OPTS / $TeamOpts）' = $TeamOpts
 }
+
+# (a) --add-dir がネットワークパス（UNC）の形か。Claude Code は起動時に渡されたネットワークパスを外して起動し（v2.1.257 以降）、
+# v2.1.305 以降の対話起動ではその警告がデバッグログにしか出ない。<Share> を UNC で書くとキット無しで黙って起動するので、画面に
+# 出せるランチャーが知らせる。チームが <Share> を固定するのは $TeamOpts なので、そこも同じ判定で見る（2026-10-27 の判断 J-3。
+# それまでは option-settings だけ）。判定は綴りだけ（\\ か // で始まるか。解決するとネットワークへ触れてしまう）なので、\\wsl$ や
+# \\?\C:\… のようなローカルのパスも対象になる（'abort' では止まる。書き方を変えるか 'warn' にする。設計 §5-4）。
 foreach ($uncFrom in $uncSources.Keys) {
     $uncMap = $uncSources[$uncFrom]
     if (-not $uncMap.Contains('--add-dir')) { continue }
     $addDir = [string]$uncMap['--add-dir']
     if ($addDir.StartsWith('\\', [StringComparison]::Ordinal) -or $addDir.StartsWith('//', [StringComparison]::Ordinal)) {
-        [Console]::Error.WriteLine("警告: $uncFrom の --add-dir $addDir はネットワークパスの形です。ネットワークパスは v2.1.257 以降拒否され、v2.1.305 以降は警告がデバッグログにしか出ないため、Claude Code はこのディレクトリを黙って外して起動します。ドライブ文字に割り当てて指定してください。")
+        $kitCheckFound.Add("$uncFrom の --add-dir $addDir はネットワークパスの形です。ネットワークパスは v2.1.257 以降拒否され、Claude Code はこのディレクトリを黙って外して起動するため、ドライブ文字に割り当てて指定してください。")
     }
 }
 
-# option-settings（$Opts）と $TeamOpts に、キットの前提が黙って崩れる起動オプション（区分 1）があれば起動前に警告する（止めない）。
-# 2026-10-30 の作業指示者決定（設計 §5-4）。対象は下の表のキー（キットの settings.json の permissions.deny・hooks や CLAUDE.md /
-# rules が読まれないまま起動する）と、--setting-sources の値に project が無い場合（キットの .claude/settings.json が読まれない）。
-# --setting-sources は値を [string] にしてカンマで分け、前後の空白を除いた要素に project（大文字小文字を区別した完全一致）が
-# 無ければ警告する（$true は 'True' になり、project が無いので警告する）。未設定は既定で全ソースを読むので対象外。
-# 警告するだけでキーは捨てない（そのまま claude へ渡す）。1 検出 = stderr 1 行で、前置き・出どころの表記・出どころの順
-# （$Opts → $TeamOpts）は上の UNC 検査と同じ。出どころの中は表の順、最後に --setting-sources。出どころごとに独立に判定する
-# （$Opts と $TeamOpts を合成した実効値は見ない。UNC 検査と同じ責任分界）。起動時引数と '--bare=…' のような = 形のキーは
-# 見ない（設計 §5-3・§5-4）。キーの照合は UNC 検査と同じ Contains で、大文字小文字を区別しない（'--Bare' も警告する）。
-# チームとして禁じるなら managed settings で固定する（ランチャーの統制には強制力が無い）。
-# bash 版は凍結中で未追随（SH-DEFER-01。docs/launcher/sh-freeze-backlog.md）。
+# (b) 区分 1: キットの前提が黙って崩れる起動オプション（2026-10-30 の作業指示者決定。設計 §5-4）。対象は下の表のキー（キットの
+# settings.json の permissions.deny・hooks や CLAUDE.md / rules が読まれないまま起動する）と、--setting-sources の値に project が無い
+# 場合（キットの .claude/settings.json が読まれない）。--setting-sources は値を [string] にしてカンマで分け、前後の空白を除いた要素に
+# project（大文字小文字を区別した完全一致）が無ければ対象（$true は 'True' になり、project が無いので対象）。未設定は既定で全ソースを
+# 読むので対象外。キーは捨てない（'warn' ならそのまま claude へ渡す）。出どころの中は表の順、最後に --setting-sources。
 $kitBreakingOpts = [ordered]@{
     '--restricted'         = 'user・project・local の settings を読まずに起動するため、キットの permissions.deny も hooks も効きません'
     '--bare'               = 'settings は読みますが hooks・CLAUDE.md・skills を読まないため、キットの hooks（.bat 保護を含む）も CLAUDE.md も効きません'
@@ -169,21 +181,44 @@ $kitBreakingOpts = [ordered]@{
     '--system-prompt'      = '既定のシステムプロンプトを丸ごと置き換えるため、キットの前提（CLAUDE.md / rules のロード）が崩れます'
     '--system-prompt-file' = '既定のシステムプロンプトを丸ごと置き換えるため、キットの前提（CLAUDE.md / rules のロード）が崩れます'
 }
-$omitTail = 'そのまま渡して起動します（止めません）。チームで禁じるなら managed settings で固定してください。'
 foreach ($omitFrom in $uncSources.Keys) {
     $omitMap = $uncSources[$omitFrom]
     foreach ($omitKey in $kitBreakingOpts.Keys) {
         if ($omitMap.Contains($omitKey)) {
-            [Console]::Error.WriteLine("警告: $omitFrom の $omitKey は、$($kitBreakingOpts[$omitKey])。$omitTail")
+            $kitCheckFound.Add("$omitFrom の $omitKey は、$($kitBreakingOpts[$omitKey])。")
         }
     }
     if ($omitMap.Contains('--setting-sources')) {
         $srcRaw = [string]$omitMap['--setting-sources']
         $srcParts = @($srcRaw.Split(',') | ForEach-Object { $_.Trim() })
         if (-not ($srcParts -ccontains 'project')) {
-            [Console]::Error.WriteLine("警告: $omitFrom の --setting-sources $srcRaw に project が含まれません。キットの .claude/settings.json（permissions.deny・hooks）と、--add-dir で足したディレクトリの skill 等が読まれません。$omitTail")
+            $kitCheckFound.Add("$omitFrom の --setting-sources $srcRaw に project が含まれません。キットの .claude/settings.json（permissions.deny・hooks）と、--add-dir で足したディレクトリの skill 等が読まれません。")
         }
     }
+}
+
+# モードを決めて出力する。$TeamKitCheck が 'abort' / 'warn' 以外（序数比較。空・大文字小文字の違い・行を消した場合を含む）なら
+# 'abort' として扱い、検出の有無にかかわらずその旨を 1 行出す（チーム定数の誤りは毎回知らせる。検出が無ければ中止する理由も無いので
+# そのまま起動する）。まとめ行には bash 版と共通にする ASCII の断片 TEAM_KIT_CHECK / $TeamKitCheck を含める（verify-kit が照合する）。
+# 文は単一引用符で連結する（$TeamKitCheck を展開させない）。
+$kitCheckMode = ''
+if (Test-Path Variable:TeamKitCheck) { $kitCheckMode = [string]$TeamKitCheck }
+if (-not ([string]::Equals($kitCheckMode, 'abort', [StringComparison]::Ordinal) -or [string]::Equals($kitCheckMode, 'warn', [StringComparison]::Ordinal))) {
+    [Console]::Error.WriteLine('エラー: start_claude_code のチーム定数 TEAM_KIT_CHECK / $TeamKitCheck の値「' + $kitCheckMode + '」は ''abort'' / ''warn'' のどちらでもないため、''abort'' として扱います。')
+    $kitCheckMode = 'abort'
+}
+if ($kitCheckFound.Count -gt 0) {
+    $kitCheckAbort = [string]::Equals($kitCheckMode, 'abort', [StringComparison]::Ordinal)
+    $kitCheckPrefix = '警告: '
+    if ($kitCheckAbort) { $kitCheckPrefix = 'エラー: ' }
+    foreach ($kitCheckLine in $kitCheckFound) {
+        [Console]::Error.WriteLine($kitCheckPrefix + $kitCheckLine)
+    }
+    if ($kitCheckAbort) {
+        [Console]::Error.WriteLine('エラー: キットの前提が崩れる起動オプションが ' + $kitCheckFound.Count + ' 件あるため起動を中止します。該当のキーを外すか、start_claude_code の TEAM_KIT_CHECK / $TeamKitCheck を ''warn'' にすると警告だけで起動します。チームで禁じるなら managed settings で固定してください。')
+        exit 1
+    }
+    [Console]::Error.WriteLine('警告: キットの前提が崩れる起動オプションが ' + $kitCheckFound.Count + ' 件あります。TEAM_KIT_CHECK / $TeamKitCheck が ''warn'' のため、そのまま渡して起動します。チームで禁じるなら managed settings で固定してください。')
 }
 
 # ---- 4) claude コマンドを組み立て ------------------------------------------

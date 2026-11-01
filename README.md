@@ -86,7 +86,8 @@ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 \
 > path」）。Windows ではドライブ文字に割り当ててから渡す（例: `net use Z: \\server\share` の後に `--add-dir Z:\`。ドライブ
 > 文字と `\\wsl$` のパスはネットワークパスとして扱われない）。ランチャー（`start_claude_code.*`）は、option-settings に
 > 書いた `--add-dir` と、ランチャー本体のチーム統制（`TEAM_OPTS` / `$TeamOpts`）に書いた `--add-dir` が `\\` / `//` で
-> 始まると起動前に stderr へ警告する（起動は止めない。警告文の先頭に値の出どころが出る。判定は綴りだけなので `\\wsl$`
+> 始まると起動前に stderr へ知らせる（PowerShell 版は既定で起動を中止し、チーム定数 `$TeamKitCheck = 'warn'` なら
+> 警告だけで起動する。bash 版は凍結中で警告するだけ。文の先頭に値の出どころが出る。判定は綴りだけなので `\\wsl$`
 > でも出る）が、上の例のように `claude` へ直接渡す場合と、ランチャーの起動時引数で渡す場合は検査しない。
 >
 > **⚠ 方法 A と方法 B では効く settings キーが違う**。`--settings` は user settings に置けるキーなら何でも効く
