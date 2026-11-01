@@ -151,6 +151,41 @@ foreach ($uncFrom in $uncSources.Keys) {
     }
 }
 
+# option-settings（$Opts）と $TeamOpts に、キットの前提が黙って崩れる起動オプション（区分 1）があれば起動前に警告する（止めない）。
+# 2026-10-30 の作業指示者決定（設計 §5-4）。対象は下の表のキー（キットの settings.json の permissions.deny・hooks や CLAUDE.md /
+# rules が読まれないまま起動する）と、--setting-sources の値に project が無い場合（キットの .claude/settings.json が読まれない）。
+# --setting-sources は値を [string] にしてカンマで分け、前後の空白を除いた要素に project（大文字小文字を区別した完全一致）が
+# 無ければ警告する（$true は 'True' になり、project が無いので警告する）。未設定は既定で全ソースを読むので対象外。
+# 警告するだけでキーは捨てない（そのまま claude へ渡す）。1 検出 = stderr 1 行で、前置き・出どころの表記・出どころの順
+# （$Opts → $TeamOpts）は上の UNC 検査と同じ。出どころの中は表の順、最後に --setting-sources。出どころごとに独立に判定する
+# （$Opts と $TeamOpts を合成した実効値は見ない。UNC 検査と同じ責任分界）。起動時引数と '--bare=…' のような = 形のキーは
+# 見ない（設計 §5-3・§5-4）。キーの照合は UNC 検査と同じ Contains で、大文字小文字を区別しない（'--Bare' も警告する）。
+# チームとして禁じるなら managed settings で固定する（ランチャーの統制には強制力が無い）。
+# bash 版は凍結中で未追随（SH-DEFER-01。docs/launcher/sh-freeze-backlog.md）。
+$kitBreakingOpts = [ordered]@{
+    '--restricted'         = 'user・project・local の settings を読まずに起動するため、キットの permissions.deny も hooks も効きません'
+    '--bare'               = 'settings は読みますが hooks・CLAUDE.md・skills を読まないため、キットの hooks（.bat 保護を含む）も CLAUDE.md も効きません'
+    '--safe-mode'          = 'settings は読みますが hooks・CLAUDE.md・skills を読まないため、キットの hooks（.bat 保護を含む）も CLAUDE.md も効きません'
+    '--system-prompt'      = '既定のシステムプロンプトを丸ごと置き換えるため、キットの前提（CLAUDE.md / rules のロード）が崩れます'
+    '--system-prompt-file' = '既定のシステムプロンプトを丸ごと置き換えるため、キットの前提（CLAUDE.md / rules のロード）が崩れます'
+}
+$omitTail = 'そのまま渡して起動します（止めません）。チームで禁じるなら managed settings で固定してください。'
+foreach ($omitFrom in $uncSources.Keys) {
+    $omitMap = $uncSources[$omitFrom]
+    foreach ($omitKey in $kitBreakingOpts.Keys) {
+        if ($omitMap.Contains($omitKey)) {
+            [Console]::Error.WriteLine("警告: $omitFrom の $omitKey は、$($kitBreakingOpts[$omitKey])。$omitTail")
+        }
+    }
+    if ($omitMap.Contains('--setting-sources')) {
+        $srcRaw = [string]$omitMap['--setting-sources']
+        $srcParts = @($srcRaw.Split(',') | ForEach-Object { $_.Trim() })
+        if (-not ($srcParts -ccontains 'project')) {
+            [Console]::Error.WriteLine("警告: $omitFrom の --setting-sources $srcRaw に project が含まれません。キットの .claude/settings.json（permissions.deny・hooks）と、--add-dir で足したディレクトリの skill 等が読まれません。$omitTail")
+        }
+    }
+}
+
 # ---- 4) claude コマンドを組み立て ------------------------------------------
 # $TeamOpts を後に置くことで、同じフラグを $Opts にも書いた場合はチーム値が後勝ちする。
 $cliArgs = [System.Collections.Generic.List[string]]::new()

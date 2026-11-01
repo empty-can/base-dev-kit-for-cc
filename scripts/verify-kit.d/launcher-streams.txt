@@ -4,14 +4,21 @@
 #   stdout に書くため、PS 版は警告を stderr へ回している（W42-C-02）。この回帰を検出する。
 #   あわせて、option-settings の --add-dir がネットワークパス（\\ / // 始まり）の形なら起動前に 1 行警告すること（W42-F-05）と、
 #   TEAM_OPTS / $TeamOpts の --add-dir でも同じく 1 行警告すること（J-3。警告は option-settings → TEAM_OPTS の順）。
-#   一時ツリーは vk_mktree … none / New-Tree … 'none' で作り、probe が警告を出す 5 つを置く:
+#   さらに、キットの前提が黙って崩れる起動オプション（区分 1: キー --restricted・--bare・--safe-mode・--system-prompt・
+#   --system-prompt-file と、値に project を含まない --setting-sources）が option-settings / TEAM_OPTS にあれば 1 件 1 行で
+#   警告すること（2026-10-30 決定。PowerShell 版だけが実装し、bash 系統はこの項目を frozen.txt で凍結中。SH-DEFER-01）。
+#   区分 1 の警告は UNC の 2 行の後に、出どころ順（option-settings → TEAM_OPTS）、各出どころの中は上のキーの順、最後に
+#   --setting-sources の順で出る。team の --setting-sources project,user は project を含むので警告しない対照（行数の一致で見る）。
+#   一時ツリーは vk_mktree … none / New-Tree … 'none' で作り、probe が警告のもとを 5 か所に置く（stderr は 8 行）:
 #     .claude/custom.env（下の env 行。分類A のキーを含む）、誤配置の .claude/launcher/custom.env、
 #     誤配置の .claude/launcher/option-settings.sh（bash 系統）/ option-settings.ps1（PowerShell 系統）、
-#     .claude/option-settings.sh / .ps1（下の opt 行。UNC の --add-dir）、
-#     一時ツリーに複製したランチャーの TEAM_OPTS / $TeamOpts（下の team 行。定義の行の直後に差し込む。実物は書き換えない）
+#     .claude/option-settings.sh / .ps1（下の opt 行。UNC の --add-dir と区分 1 の --restricted・--setting-sources user,local）、
+#     一時ツリーに複製したランチャーの TEAM_OPTS / $TeamOpts（下の team 行。UNC の --add-dir・区分 1 の --bare・対照の
+#     --setting-sources。定義の行の直後に差し込む。実物は書き換えない）
 #   PowerShell 系統はランチャーを -File で起動する（利用者の使い方と同じ）。
 #   env<TAB>行      … .claude/custom.env の 1 行
-#   opt<TAB>キー<TAB>値 … .claude/option-settings の 1 項目（値はそのまま単一引用符で囲んで書く。\ は潰れない）
+#   opt<TAB>キー<TAB>値 … .claude/option-settings の 1 項目（値はそのまま単一引用符で囲んで書く。\ は潰れない。値を取らない
+#                     フラグは値を true にする〔ランチャーが 'true' を値なしとして扱う。$true は書けない〕）
 #   team<TAB>キー<TAB>値 … ランチャーの TEAM_OPTS / $TeamOpts の 1 項目（書き方は opt 行と同じ。差し込み先の定義の行
 #                     〔declare -A TEAM_OPTS=( / $TeamOpts = [ordered]@{〕がちょうど 1 行でなければ ASSERT ng で FAIL）。
 #                     opt 行と別のホスト名にして、どちらの値の警告かを断片で区別する
@@ -24,10 +31,17 @@
 env	ANTHROPIC_API_KEY=verify-kit-dummy
 env	VERIFY_KIT_STREAMS=1
 opt	--add-dir	\\vk-unc-host\share
+opt	--restricted	true
+opt	--setting-sources	user,local
 team	--add-dir	\\vk-unc-team\share
+team	--bare	true
+team	--setting-sources	project,user
 in	verify-kit prompt
 stderr	/.claude/launcher/custom.env
 stderr	ANTHROPIC_API_KEY
 stderr	/.claude/launcher/option-settings.
 stderr	--add-dir //vk-unc-host/share
 stderr	--add-dir //vk-unc-team/share
+stderr	--restricted
+stderr	--setting-sources user,local
+stderr	--bare

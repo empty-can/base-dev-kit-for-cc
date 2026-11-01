@@ -27,6 +27,8 @@
 | C | チーム単位で統制する値 | 環境変数は `setup-environment`、起動オプションは `start_claude_code` の `TEAM_OPTS` / `$TeamOpts` |
 | D | 統制不要・利用者が都度変える・非機微の値 | `custom.env` と `option-settings`（このフォルダのテンプレートから作る） |
 
+**⚠ bash 版は PowerShell 版に追随していない**: `start_claude_code.sh`・`setup-environment.sh`・`option-settings.sh.template` は、2026-10-30 から PowerShell 版（`start_claude_code.ps1`・`setup-environment.ps1`・`option-settings.ps1.template`）に追随していない（最後に同期した版: `c241150`）。bash 版を使う場合は、PowerShell 版との差分に注意する。追随は、bash 利用者へ展開できる状態になった時点でまとめて行う。
+
 ## 2. custom.env（環境変数）
 
 ### 2-1. 書式の細則と理由
@@ -210,7 +212,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 
 全オプションの説明は公式 docs の CLI reference（https://code.claude.com/docs/en/cli-reference）を参照。
 
-ランチャーは option-settings と `TEAM_OPTS`（PowerShell 版は `$TeamOpts`）のキーを検査せず、書かれたキーをすべてそのまま `claude` へ渡す。そのため、テンプレートに載せていないオプション（上の表のものを含む）も書けば効き、キットの前提が崩れるものでもランチャーは警告しない。キーの綴りを誤ると `claude` 自身がエラーにする。チームとして禁じたいオプションがあるなら、managed settings で固定する（ランチャーの統制には強制力が無い。§3-1）。
+ランチャーは option-settings と `TEAM_OPTS`（PowerShell 版は `$TeamOpts`）のキーの綴りを照合するだけで、書かれたキーはすべてそのまま `claude` へ渡す。そのため、テンプレートに載せていないオプション（上の表のものを含む）も書けば効く。ただし、キットの前提が黙って崩れるもの（`--restricted`・`--bare`・`--safe-mode`・`--system-prompt`・`--system-prompt-file` と、値に `project` を含まない `--setting-sources`）だけは、PowerShell 版のランチャーが起動前に stderr へ 1 件 1 行で警告する（値の出どころ〔option-settings かチーム統制か〕を示す。起動は止めず、キーも捨てない。起動時引数は検査しない）。bash 版はこの警告に追随していない（§1）。キーの綴りを誤ると `claude` 自身がエラーにする。チームとして禁じたいオプションがあるなら、managed settings で固定する（ランチャーの統制には強制力が無い。§3-1）。
 
 ## 付録 B. option-settings の項目ごとの補足
 
@@ -231,6 +233,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 - `project` を外すと、キットの `.claude/settings.json`（permissions.deny・hooks。.bat 保護を含む）が読まれない。
 - `--add-dir` で足したディレクトリの skill・コマンド・サブエージェントも読まれなくなる。
 - この値は、このセッションから起動するチームメイト・`/bg`・`claude agents` のセッションにも引き継がれる。
+- option-settings（とチーム統制の `$TeamOpts`）の `--setting-sources` の値に `project` が無いと、PowerShell 版のランチャーが起動前に stderr へ警告する（起動は止めない。付録 A）。未設定なら全ソースが読まれるので警告しない。
 
 ### --permission-mode の既定
 

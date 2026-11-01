@@ -211,7 +211,7 @@ C-BDK（`C:\cc-workspace\base-dev-kit-for-cc`・branch `feat/launcher-scripts`�
 
 ### 8-ter. Claude Code v2.1.302 追随（2026-10-18 調査・反映）
 
-v1.0.1（2026-07-20）以降の公式 docs 差分（LLMs リポ `c7a24cb`→`df8be8b`、changelog 2.1.215〜2.1.302）を SubAgent 4 本で調査し、反映した。調査報告は `.claude/reports/2026-10-18_cc-update_*.md`（gitignore 対象）。
+コミット 9404a86（2026-07-20。旧タグ v1.0.1）以降の公式 docs 差分（LLMs リポ `c7a24cb`→`df8be8b`、changelog 2.1.215〜2.1.302）を SubAgent 4 本で調査し、反映した。調査報告は `.claude/reports/2026-10-18_cc-update_*.md`（gitignore 対象）。
 
 - [x] **実行モデル**: background セッションへの env 到達の記述を是正（`start_claude_code.*` 冒頭・§3(1)・design §5 新設）。`CLAUDE_CODE_PROCESS_WRAPPER` は Windows で無視される旨を design §5-1 に、サブコマンド（`remote-control` / `agents`）委譲の注意を冒頭コメントと design §5-2 に明記
 - [x] **option-settings テンプレ（sh/ps1 対称・44 キー。2026-10-27 に `--debug-file` を加えて 45 キー〔§8-quater〕）**: `--model` の既定説明とモデル ID（エイリアス `opus` / `sonnet,haiku`、フルネームは `claude-opus-5-5` 等）、`--permission-mode` の値集合（`auto` / `dontAsk` / `manual` 追加）と既定 auto、`--agents` のファイル指定が `--print` 専用、`--debug` の `=` 形、print 専用フラグの print 節への移動、`--from-pr` の説明修正、`--effort` の `ultracode`、新規 `--autocompact` / `--system-prompt-snapshot` / `--advisor` / `--name` / `--tmux` / `--permission-prompts` / `--append-subagent-system-prompt-file` / `--allow-dangerously-skip-permissions`、隔離節の `--permission-mode` 重複キー（PS で構文エラー）の除去、`--restricted` / `--bare` / `--safe-mode` 等の意図的除外を明記
