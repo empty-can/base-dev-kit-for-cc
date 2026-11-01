@@ -322,33 +322,57 @@ probe_launcher(){
   done < <(vk_case_names)
 }
 
-# ---- ランチャーの出力の振り分け（スタブ。警告は stderr、stdout は claude の出力だけ）-----------------------
+# ---- ランチャーの出力の振り分けと中断モード（スタブ。警告・エラーは stderr、stdout は claude の出力だけ）-----------
 # launcher-streams.txt の行頭タグ $1 の値を 1 行ずつ出す（verify-kit.ps1 の Get-StreamsTag と同じ）
 vk_streams_tag(){ awk -F'\t' -v t="$1" '$1 == t { sub(/^[^\t]*\t/, ""); print }' "$VK_FIX/launcher-streams.txt"; }
-# 結果は ASSERT / RC / RAN と、stdout が空か（OUTEMPTY）、stdout と stderr の各行（OUT / ERR。CR を落とし \ を / に揃え、
-# 一時ツリーを <T> に置き換え、空行は除く）。verify-kit.ps1 の Probe-LauncherStreams と同じ形
+# 一時ツリー $2 のランチャーを 1 回実行し（スタブの出力先は $1）、結果を今の節へ書く。結果は ASSERT / RC / RAN と、stdout が空か
+# （OUTEMPTY）、stdout と stderr の各行（OUT / ERR。CR を落とし \ を / に揃え、一時ツリーを <T> に置き換え、空行は除く）。
+# verify-kit.ps1 の Invoke-StreamsRun と同じ形
+vk_streams_run(){
+  local sd="$1" t="$2" l
+  local -a sin
+  mapfile -t sin < <(vk_streams_tag in)
+  vk_stubbed "$sd" claude -- "$BASH" "$t/start_claude_code.sh" ${sin[@]+"${sin[@]}"}
+  vk_put_args "$sd"
+  [ -f "$sd/stdout" ] && [ -f "$sd/stderr" ] || return 0
+  if [ -s "$sd/stdout" ]; then put OUTEMPTY no; else put OUTEMPTY yes; fi
+  while IFS= read -r l; do [ -n "$l" ] && put OUT "$l"; done < <(vk_norm "$t" "<T>" < "$sd/stdout")
+  while IFS= read -r l; do [ -n "$l" ] && put ERR "$l"; done < <(vk_norm "$t" "<T>" < "$sd/stderr")
+}
+# 同じ一時ツリーでランチャーを 2 回実行し、節「launcher-streams abort」「launcher-streams warn」に分けて書く。1 回目は複製した
+# ランチャーのまま（中断モードは既定の abort）。2 回目は複製の中断モードの定数の行（TEAM_KIT_CHECK=abort）を TEAM_KIT_CHECK=warn に
+# 書き換えてから実行する（実物は書き換えない。定数の行〔TEAM_KIT_CHECK=abort か =warn〕がちょうど 1 行でなければ書き換えられないので、
+# 2 回目は実行せずに ASSERT ng を出す）。スタブの出力先は実行ごとに分ける（RAN を前の実行の結果で汚さない）。
+# verify-kit.ps1 の Probe-LauncherStreams と同じ
 probe_launcher_streams(){
-  local t="$VK_TMP/launcher/tree-streams" sd="$VK_TMP/launcher/run-streams" l k v n
-  local -a sin team=()
-  sec launcher-streams
-  if [ -n "$LAUNCHER_GUARD" ]; then put ASSERT "$LAUNCHER_GUARD"; return; fi
-  vk_mktree "$t" none
-  # team 行（キー TAB 値）を、一時ツリーへ複製したランチャーの TEAM_OPTS の定義の行（declare -A TEAM_OPTS=(）の直後に
-  # 差し込む（値は単一引用符で囲む。opt 行と同じ書き方）。実物のランチャーは書き換えない。定義の行がちょうど 1 行でなければ
-  # 差し込めないので、実行せずに ASSERT ng を出す（黙って差し込まずに走らせると、TEAM_OPTS を見ていないのに PASS しうる）。
-  # verify-kit.ps1 の Probe-LauncherStreams と同じ
-  while IFS=$'\t' read -r k v; do team+=("  [$k]=$(vk_sq "$v")"); done < <(vk_streams_tag team)
-  if [ "${#team[@]}" -gt 0 ]; then
-    n="$(grep -c '^declare -A TEAM_OPTS=($' "$t/start_claude_code.sh")"
-    if [ "$n" != 1 ]; then
-      put ASSERT "ng start_claude_code.sh の TEAM_OPTS の定義の行（declare -A TEAM_OPTS=(）が ${n} 行（1 行でないので team 行を差し込めない）"
-      return
+  local t="$VK_TMP/launcher/tree-streams" sd="$VK_TMP/launcher/run-streams" l k v n why=""
+  local -a team=()
+  if [ -n "$LAUNCHER_GUARD" ]; then
+    why="$LAUNCHER_GUARD"
+  else
+    vk_mktree "$t" none
+    # team 行（キー TAB 値）を、一時ツリーへ複製したランチャーの TEAM_OPTS の定義の行（declare -A TEAM_OPTS=(）の直後に
+    # 差し込む（値は単一引用符で囲む。opt 行と同じ書き方）。実物のランチャーは書き換えない。定義の行がちょうど 1 行でなければ
+    # 差し込めないので、実行せずに ASSERT ng を出す（黙って差し込まずに走らせると、TEAM_OPTS を見ていないのに PASS しうる）。
+    # verify-kit.ps1 の Probe-LauncherStreams と同じ
+    while IFS=$'\t' read -r k v; do team+=("  [$k]=$(vk_sq "$v")"); done < <(vk_streams_tag team)
+    if [ "${#team[@]}" -gt 0 ]; then
+      n="$(grep -c '^declare -A TEAM_OPTS=($' "$t/start_claude_code.sh")"
+      if [ "$n" != 1 ]; then
+        why="ng start_claude_code.sh の TEAM_OPTS の定義の行（declare -A TEAM_OPTS=(）が ${n} 行（1 行でないので team 行を差し込めない）"
+      else
+        while IFS= read -r l || [ -n "$l" ]; do
+          printf '%s\n' "$l"
+          if [ "$l" = 'declare -A TEAM_OPTS=(' ]; then printf '%s\n' "${team[@]}"; fi
+        done < "$t/start_claude_code.sh" > "$t/start_claude_code.sh.vk"
+        mv -f "$t/start_claude_code.sh.vk" "$t/start_claude_code.sh"
+      fi
     fi
-    while IFS= read -r l || [ -n "$l" ]; do
-      printf '%s\n' "$l"
-      if [ "$l" = 'declare -A TEAM_OPTS=(' ]; then printf '%s\n' "${team[@]}"; fi
-    done < "$t/start_claude_code.sh" > "$t/start_claude_code.sh.vk"
-    mv -f "$t/start_claude_code.sh.vk" "$t/start_claude_code.sh"
+  fi
+  if [ -n "$why" ]; then
+    sec "launcher-streams abort"; put ASSERT "$why"
+    sec "launcher-streams warn"; put ASSERT "$why"
+    return
   fi
   vk_streams_tag env > "$t/.claude/custom.env"
   printf '%s\n' '# verify-kit: misplaced' > "$t/.claude/launcher/custom.env"
@@ -359,13 +383,22 @@ probe_launcher_streams(){
     while IFS=$'\t' read -r k v; do printf '  [%s]=%s\n' "$k" "$(vk_sq "$v")"; done < <(vk_streams_tag opt)
     printf ')\n'
   } > "$t/.claude/option-settings.sh"
-  mapfile -t sin < <(vk_streams_tag in)
-  vk_stubbed "$sd" claude -- "$BASH" "$t/start_claude_code.sh" ${sin[@]+"${sin[@]}"}
-  vk_put_args "$sd"
-  [ -f "$sd/stdout" ] && [ -f "$sd/stderr" ] || return 0
-  if [ -s "$sd/stdout" ]; then put OUTEMPTY no; else put OUTEMPTY yes; fi
-  while IFS= read -r l; do [ -n "$l" ] && put OUT "$l"; done < <(vk_norm "$t" "<T>" < "$sd/stdout")
-  while IFS= read -r l; do [ -n "$l" ] && put ERR "$l"; done < <(vk_norm "$t" "<T>" < "$sd/stderr")
+  sec "launcher-streams abort"
+  vk_streams_run "$sd-abort" "$t"
+  sec "launcher-streams warn"
+  n="$(grep -c -E '^TEAM_KIT_CHECK=(abort|warn)$' "$t/start_claude_code.sh")"
+  if [ "$n" != 1 ]; then
+    put ASSERT "ng start_claude_code.sh の中断モードの定数の行（TEAM_KIT_CHECK=abort）が ${n} 行（1 行でないので warn に書き換えられない）"
+    return
+  fi
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in
+      TEAM_KIT_CHECK=abort|TEAM_KIT_CHECK=warn) printf '%s\n' 'TEAM_KIT_CHECK=warn';;
+      *) printf '%s\n' "$l";;
+    esac
+  done < "$t/start_claude_code.sh" > "$t/start_claude_code.sh.vk"
+  mv -f "$t/start_claude_code.sh.vk" "$t/start_claude_code.sh"
+  vk_streams_run "$sd-warn" "$t"
 }
 
 probe_version(){
@@ -397,7 +430,7 @@ probe_version(){
 
 # ---- check-assets -------------------------------------------------------------
 # fixture のケース（check-assets.expect の 1 列目。probe と比較役が同じ順で使う。verify-kit.ps1 の $CaCases と同じ）
-CA_CASES=(ume clean broken bom worktree pcase pexact gcase gexact hidden dupkey pmulti wtcase wrule rwarn rfail rlimit)
+CA_CASES=(ume clean broken bom worktree pcase pexact gcase gexact hidden dupkey pmulti wtcase wrule rwarn rfail rlimit artref)
 # リンク（Windows はジャンクション、それ以外は symlink）を作るケース。作れない系統はそのケースを SKIP し、比較役の
 # drop_skipping は項目単位で系統を除くので、ほかのケースを巻き添えにしないよう別の項目（item_ca_links）で判定する。
 CA_LINK_CASES=(junction)
@@ -423,13 +456,13 @@ probe_checkassets(){
     while IFS= read -r l; do put O "$l"; done < <(vk_norm "$VK_ROOT" "<ROOT>" < "$VK_TMP/ca-root.out")
   fi
   # ケースごとの payload は check-assets.expect の冒頭に記した内容で作る（verify-kit.ps1 と同じ）。
-  # g で始まるケースは一時の git リポジトリ（ルート＝追跡基準）で、それ以外は --payload（実体基準）で検査する。
+  # g で始まるケースと artref は一時の git リポジトリ（ルート＝追跡基準）で、それ以外は --payload（実体基準）で検査する。
   for c in "${CA_CASES[@]}" "${CA_LINK_CASES[@]}"; do
     sec "checkassets $c"
     if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
       put SKIP "python が無い（check-assets.sh の settings.json 検査が動かない）"; continue
     fi
-    case "$c" in g*) command -v git >/dev/null 2>&1 || { put SKIP "git が無い（一時リポジトリを作れない）"; continue; };; esac
+    case "$c" in g*|artref) command -v git >/dev/null 2>&1 || { put SKIP "git が無い（一時リポジトリを作れない）"; continue; };; esac
     s="$VK_TMP/ca-$c"; mkdir -p "$s/.claude"
     cp "$VK_ROOT/.claude/.gitignore" "$VK_ROOT/.claude/.gitattributes" "$s/.claude/"
     printf '# verify-kit fixture\n' > "$s/.claude/CLAUDE.md"
@@ -442,7 +475,7 @@ probe_checkassets(){
         cp "$VK_FIX/settings-clean.json" "$s/.claude/settings.json"
         mkdir -p "$s/.claude/Worktrees/evals/results";;
       pcase) cp "$VK_FIX/settings-envcase.json" "$s/.claude/settings.json";;
-      pexact|gcase|gexact|junction|hidden|pmulti|rwarn|rfail|rlimit) cp "$VK_FIX/settings-clean.json" "$s/.claude/settings.json";;
+      pexact|gcase|gexact|junction|hidden|pmulti|rwarn|rfail|rlimit|artref) cp "$VK_FIX/settings-clean.json" "$s/.claude/settings.json";;
       *) cp "$VK_FIX/settings-$c.json" "$s/.claude/settings.json";;
     esac
     case "$c" in
@@ -525,9 +558,19 @@ probe_checkassets(){
         yes k | head -n 300 > "$s/.claude/skills/big/SKILL.md"
         yes a | head -n 300 > "$s/.claude/agents/big.md"
         yes o | head -n 300 > "$s/.claude/long-outside.md";;
+      artref)
+        # 2-h（追跡文書から成果物ファイルへの参照）。git 層は .claude の外の追跡 .md も読む。WARN は docs/a.md の 1 行目（/ 区切り）と
+        # 2 行目（\ 区切り。クラスのパスの中も \）だけ。3 行目（ディレクトリ名だけの方針の言及）・4 行目（成果物クラスのパスを含まない）と
+        # .claude/rules/b.md の 3 行（glob・ディレクトリへの参照 2 つ）は WARN にしない。成果物クラスのディレクトリの中には何も置かない
+        # （2-c の判定を混ぜない）。verify-kit.ps1 と同じバイト列
+        mkdir -p "$s/docs" "$s/.claude/rules"
+        printf '%s\n' '参照: .claude/reports/2026-01-01_x/2026-01-01_x_01_plan.md を見る' '`.claude\work\notes.txt`' \
+          '方針: `.claude/reports/` `.claude/work/` は配布しない' 'MCP config file not found: …\work\hello world test' > "$s/docs/a.md"
+        printf '%s\n' '`.claude/plans/**`' '.claude/workspace/skill-request/<フォルダ名>/ に作る' '.claude/reports/2026-01-01_x/ を参照' \
+          > "$s/.claude/rules/b.md";;
     esac
     case "$c" in
-      g*)
+      g*|artref)
         # 利用者の global / system 設定を読まない（一時リポジトリの作成も check-assets の git 呼び出しも）
         : > "$s.gitconfig"; cfg="$(vk_native "$s.gitconfig")"
         if [ "$c" = gcase ]; then
@@ -535,6 +578,8 @@ probe_checkassets(){
           # 日本語名の追跡ファイル（絶対パスを含む）。git 層の 2-e の一覧が 3 系統で一致すること（PS 版は ls-files -z を UTF-8 で読む）
           printf '%s\n' 'C:\Users\verify-kit\jp' > "$s/.claude/日本語-abspath.md"
           set -- .claude/Reports/x.md .claude/plugin-x/Evals/Results/r.json .claude/日本語-abspath.md
+        elif [ "$c" = artref ]; then
+          set -- docs/a.md .claude/rules/b.md
         else
           set -- .claude/reports/x.md .claude/plugin-x/evals/results/r.json .claude/plugin-x0/evals/results/r.json
         fi
@@ -1271,43 +1316,63 @@ item_launcher_stalerc(){
   verdict PASS "$t" "$(labels "${S[@]}") とも、呼び出し元に \$LASTEXITCODE=7 が残り claude スタブが設定しなくても exit 0$(missing_note pwsh ps51)"
 }
 
-# ランチャーの警告が stderr に出て、stdout には claude（スタブ。何も書かない）の出力しか出ないこと（W42-C-02 の回帰防止）。
-# option-settings の --add-dir が UNC の形なら警告が 1 行だけ出ること（W42-F-05）と、TEAM_OPTS / $TeamOpts の --add-dir でも
-# 同じく 1 行出ること（J-3。probe が一時ツリーのランチャーに team 行を差し込む）も同じツリーで見る。
-# 期待は launcher-streams.txt の stderr 行（各行に順に含まれるべき断片。行数も一致）。verify-kit.ps1 の Item-LauncherStreams と同じ
+# ランチャーの警告・エラーが stderr に出て、stdout には claude（スタブ。何も書かない）の出力しか出ないこと（W42-C-02 の回帰防止）。
+# あわせて、キットの前提が崩れる起動オプション（option-settings と TEAM_OPTS / $TeamOpts の UNC の --add-dir〔W42-F-05・J-3〕と
+# 区分 1）の検出と中断モード（B-5）を、同じ一時ツリーでの 2 回の実行で見る（probe が team 行を差し込み、2 回目の前に定数を warn に
+# 書き換える）。abort（既定）の実行は終了コード 0 以外・claude スタブ未起動、warn の実行は exit 0・claude スタブ起動で、どちらも
+# stdout は空、stderr の各行に launcher-streams.txt の stderr-abort / stderr-warn 行の断片が順に含まれること（行数も一致）。
+# verify-kit.ps1 の Item-LauncherStreams / Test-StreamsRun と同じ
+# 1 回分の判定（$1=系統 $2=abort|warn）。期待の断片は呼び出し元の配列 FA（abort）/ FW（warn）。不正があれば理由を stdout に出して 1 を返す
+vk_streams_judge(){
+  local s="$1" m="$2" lab a rc o i
+  local -a fr er
+  lab="${SYS_LABEL[$s]}（${m}）"
+  if [ "$m" = abort ]; then fr=("${FA[@]}"); else fr=("${FW[@]}"); fi
+  getsec "$s" "launcher-streams $m" > "$VK_TMP/i-ls"
+  a="$(sed -n 's/^ASSERT\t//p' "$VK_TMP/i-ls")"
+  if [ "$a" != ok ]; then printf '%s\n' "${lab}: ${a:-結果が無い}"; return 1; fi
+  rc="$(sed -n 's/^RC\t//p' "$VK_TMP/i-ls")"
+  if [ "$m" = abort ]; then
+    if grep -q $'^RAN\tyes' "$VK_TMP/i-ls"; then printf '%s\n' "${lab}: claude スタブが起動した（起動を中止していない）"; return 1; fi
+    if [ -z "$rc" ] || [ "$rc" = 0 ]; then printf '%s\n' "${lab}: ランチャーの終了コードが 0 以外でない（RC=${rc:-?}）"; return 1; fi
+  else
+    if ! grep -q $'^RAN\tyes' "$VK_TMP/i-ls"; then printf '%s\n' "${lab}: スタブが起動していない"; return 1; fi
+    if [ "$rc" != 0 ]; then printf '%s\n' "${lab}: ランチャーの終了コードが 0 でない（RC=${rc:-?}）"; return 1; fi
+  fi
+  if ! grep -q $'^OUTEMPTY\tyes$' "$VK_TMP/i-ls"; then
+    o="$(sed -n 's/^OUT\t//p' "$VK_TMP/i-ls" | sed -n '1p')"
+    printf '%s\n' "${lab}: stdout に claude（スタブ）以外の出力がある（1 行目: ${o:-<空行のみ>}）"; return 1
+  fi
+  mapfile -t er < <(sed -n 's/^ERR\t//p' "$VK_TMP/i-ls")
+  if [ "${#er[@]}" -ne "${#fr[@]}" ]; then
+    printf '%s\n' "${lab}: stderr の行数が期待（${#fr[@]} 行）と違う（${#er[@]} 行）"; return 1
+  fi
+  for (( i = 0; i < ${#fr[@]}; i++ )); do
+    case "${er[i]}" in
+      *"${fr[i]}"*) ;;
+      *) printf '%s\n' "${lab}: stderr の $((i + 1)) 行目に「${fr[i]}」が無い（${er[i]}）"; return 1;;
+    esac
+  done
+  return 0
+}
 item_launcher_streams(){
-  local t="ランチャー stdout / stderr の振り分け（スタブ）" s c a bad i rc o
-  local -a S FR ER
+  local t="ランチャー stdout / stderr の振り分け（スタブ）" s c bad m
+  local -a S FA FW
   mapfile -t S < <(usable "${SYS_ALL[@]}")
   if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
   if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
   drop_frozen launcher-streams -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
-  if ! bad="$(vk_check_keys launcher-streams.txt "env opt team in stderr" "定義済みの行頭タグ（env / opt / team / in / stderr）" 2)"; then verdict FAIL "$t" "$bad"; return; fi
-  mapfile -t FR < <(vk_streams_tag stderr)
-  if [ "${#FR[@]}" -eq 0 ]; then verdict FAIL "$t" "launcher-streams.txt に stderr 行が無い"; return; fi
+  if ! bad="$(vk_check_keys launcher-streams.txt "env opt team in stderr-abort stderr-warn" "定義済みの行頭タグ（env / opt / team / in / stderr-abort / stderr-warn）" 2)"; then verdict FAIL "$t" "$bad"; return; fi
+  mapfile -t FA < <(vk_streams_tag stderr-abort)
+  mapfile -t FW < <(vk_streams_tag stderr-warn)
+  if [ "${#FA[@]}" -eq 0 ]; then verdict FAIL "$t" "launcher-streams.txt に stderr-abort 行が無い"; return; fi
+  if [ "${#FW[@]}" -eq 0 ]; then verdict FAIL "$t" "launcher-streams.txt に stderr-warn 行が無い"; return; fi
   for s in "${S[@]}"; do
-    getsec "$s" launcher-streams > "$VK_TMP/i-ls"
-    a="$(sed -n 's/^ASSERT\t//p' "$VK_TMP/i-ls")"
-    if [ "$a" != ok ]; then verdict FAIL "$t" "${SYS_LABEL[$s]}: ${a:-結果が無い}"; return; fi
-    if ! grep -q $'^RAN\tyes' "$VK_TMP/i-ls"; then verdict FAIL "$t" "${SYS_LABEL[$s]}: スタブが起動していない"; return; fi
-    rc="$(sed -n 's/^RC\t//p' "$VK_TMP/i-ls")"
-    if [ "$rc" != 0 ]; then verdict FAIL "$t" "${SYS_LABEL[$s]}: ランチャーの終了コードが 0 でない（RC=${rc:-?}）"; return; fi
-    if ! grep -q $'^OUTEMPTY\tyes$' "$VK_TMP/i-ls"; then
-      o="$(sed -n 's/^OUT\t//p' "$VK_TMP/i-ls" | sed -n '1p')"
-      verdict FAIL "$t" "${SYS_LABEL[$s]}: stdout に claude（スタブ）以外の出力がある（1 行目: ${o:-<空行のみ>}）"; return
-    fi
-    mapfile -t ER < <(sed -n 's/^ERR\t//p' "$VK_TMP/i-ls")
-    if [ "${#ER[@]}" -ne "${#FR[@]}" ]; then
-      verdict FAIL "$t" "${SYS_LABEL[$s]}: stderr の行数が期待（${#FR[@]} 行）と違う（${#ER[@]} 行）"; return
-    fi
-    for (( i = 0; i < ${#FR[@]}; i++ )); do
-      case "${ER[i]}" in
-        *"${FR[i]}"*) ;;
-        *) verdict FAIL "$t" "${SYS_LABEL[$s]}: stderr の $((i + 1)) 行目に「${FR[i]}」が無い（${ER[i]}）"; return;;
-      esac
+    for m in abort warn; do
+      if ! bad="$(vk_streams_judge "$s" "$m")"; then verdict FAIL "$t" "$bad"; return; fi
     done
   done
-  verdict PASS "$t" "$(labels "${S[@]}") とも stdout は空（claude スタブは何も書かない）・警告 ${#FR[@]} 行（誤配置の custom.env・分類A のキー・誤配置の option-settings・option-settings と TEAM_OPTS の --add-dir が UNC・区分 1 のキー（--restricted / --bare）・project を含まない --setting-sources）はすべて stderr・exit 0$(missing_note "${SYS_ALL[@]}")"
+  verdict PASS "$t" "$(labels "${S[@]}") とも abort（既定）: 終了コード 0 以外・claude スタブ未起動・stdout 空・stderr ${#FA[@]} 行／warn: exit 0・claude スタブ起動・stdout 空・stderr ${#FW[@]} 行（内訳はどちらも、誤配置の custom.env・分類A のキー・誤配置の option-settings の警告、option-settings と TEAM_OPTS の --add-dir が UNC・区分 1 のキー（--restricted / --bare）・project を含まない --setting-sources の検出、まとめ行）$(missing_note "${SYS_ALL[@]}")"
 }
 
 item_optset(){
@@ -1510,8 +1575,8 @@ ca_cases_check(){
   verdict PASS "$t" "${#cases[@]} ケース × $(labels "${S[@]}") で同一判定・期待どおり（${desc}）$(missing_note "${SYS_ALL[@]}")${SKIP_NOTE:+（${SKIP_NOTE}）}"
 }
 item_ca_fixture(){
-  ca_cases_check ca-fixture "check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ）" \
-    "U/M/E と絶対パス混在とパス付きの Write / NotebookEdit / MultiEdit / Glob ルールは WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順・rules / CLAUDE.md は 200 行超で WARN・32,000 文字（コードポイント。BOM は数えない）超で FAIL（両方なら FAIL だけ）、ちょうどは PASS で、rules はサブディレクトリも数え（. で始まるディレクトリの中は除く）、SKILL.md・agents は数えない" \
+  ca_cases_check ca-fixture "check-assets fixture（U/M/E・無害・壊れた JSON・BOM・重複キー・worktree・大文字小文字違い・バイナリ・隠し属性・並び順・rules / CLAUDE.md の大きさ・成果物ファイルへの参照）" \
+    "U/M/E と絶対パス混在とパス付きの Write / NotebookEdit / MultiEdit / Glob ルールは WARN・無害は PASS・壊れた JSON と BOM 付きと重複キー・worktree の混入は FAIL・成果物の大文字小文字違いは payload で FAIL・git で WARN（Worktrees にも 2-c' は降りない）、env キーの大文字小文字違いは WARN で、完全一致は従来どおり・先頭 8000 バイトに NUL があれば 2-e の対象外・隠し属性も数える・一覧は序数順・rules / CLAUDE.md は 200 行超で WARN・32,000 文字（コードポイント。BOM は数えない）超で FAIL（両方なら FAIL だけ）、ちょうどは PASS で、rules はサブディレクトリも数え（. で始まるディレクトリの中は除く）、SKILL.md・agents は数えない・追跡 .md から成果物クラス配下のファイルへの参照は WARN（/ と \ の両方。ディレクトリ名だけ・ディレクトリへの参照・** で終わる glob は WARN にしない）" \
     "${CA_CASES[@]}"
 }
 item_ca_links(){

@@ -1,33 +1,45 @@
-# ランチャーの出力の振り分け（項目「ランチャー stdout / stderr の振り分け（スタブ）」）。区切りは TAB。
-#   ランチャー（start_claude_code）と setup-environment の警告は stderr に書き、stdout は claude の出力だけにする約束
+# ランチャーの出力の振り分けと中断モード（項目「ランチャー stdout / stderr の振り分け（スタブ）」）。区切りは TAB。
+#   ランチャー（start_claude_code）と setup-environment の警告・エラーは stderr に書き、stdout は claude の出力だけにする約束
 #   （claude -p の結果を読むスクリプトに混ざらないように）。PowerShell は別のプログラムから起動されると warning ストリームを
 #   stdout に書くため、PS 版は警告を stderr へ回している（W42-C-02）。この回帰を検出する。
-#   あわせて、option-settings の --add-dir がネットワークパス（\\ / // 始まり）の形なら起動前に 1 行警告すること（W42-F-05）と、
-#   TEAM_OPTS / $TeamOpts の --add-dir でも同じく 1 行警告すること（J-3。警告は option-settings → TEAM_OPTS の順）。
-#   さらに、キットの前提が黙って崩れる起動オプション（区分 1: キー --restricted・--bare・--safe-mode・--system-prompt・
-#   --system-prompt-file と、値に project を含まない --setting-sources）が option-settings / TEAM_OPTS にあれば 1 件 1 行で
-#   警告すること（2026-10-30 決定。PowerShell 版だけが実装し、bash 系統はこの項目を frozen.txt で凍結中。SH-DEFER-01）。
-#   区分 1 の警告は UNC の 2 行の後に、出どころ順（option-settings → TEAM_OPTS）、各出どころの中は上のキーの順、最後に
-#   --setting-sources の順で出る。team の --setting-sources project,user は project を含むので警告しない対照（行数の一致で見る）。
-#   一時ツリーは vk_mktree … none / New-Tree … 'none' で作り、probe が警告のもとを 5 か所に置く（stderr は 8 行）:
+#   あわせて、キットの前提が崩れる起動オプションの検出と中断モードを見る。検出の対象は、option-settings と TEAM_OPTS / $TeamOpts の
+#   --add-dir がネットワークパス（\\ / // 始まり）の形であること（W42-F-05・J-3）と、区分 1（キー --restricted・--bare・
+#   --safe-mode・--system-prompt・--system-prompt-file と、値に project を含まない --setting-sources。2026-10-30 決定）。
+#   ランチャーは検出を 1 件 1 行で出し（UNC の分が先で option-settings → TEAM_OPTS の順、次に区分 1 の分で option-settings →
+#   TEAM_OPTS の順。各出どころの中は上のキーの順、最後に --setting-sources）、最後にまとめ 1 行を出す。中断モード（ランチャー本体の
+#   チーム定数 TEAM_KIT_CHECK / $TeamKitCheck。2026-11-01 決定〔B-5〕）が abort（既定）なら claude を起こさずに終了コード 0 以外で
+#   終わり、warn ならそのまま起動する。PowerShell 版だけが実装し、bash 系統はこの項目を frozen.txt で凍結中（SH-DEFER-01・02）。
+#   team の --setting-sources project,user は project を含むので検出しない対照（行数の一致で見る）。
+#   一時ツリーは vk_mktree … none / New-Tree … 'none' で作り、probe が警告・検出のもとを 5 か所に置く:
 #     .claude/custom.env（下の env 行。分類A のキーを含む）、誤配置の .claude/launcher/custom.env、
 #     誤配置の .claude/launcher/option-settings.sh（bash 系統）/ option-settings.ps1（PowerShell 系統）、
 #     .claude/option-settings.sh / .ps1（下の opt 行。UNC の --add-dir と区分 1 の --restricted・--setting-sources user,local）、
 #     一時ツリーに複製したランチャーの TEAM_OPTS / $TeamOpts（下の team 行。UNC の --add-dir・区分 1 の --bare・対照の
 #     --setting-sources。定義の行の直後に差し込む。実物は書き換えない）
+#   probe は同じ一時ツリーでランチャーを 2 回実行する（項目キーは 1 つのまま。結果は実行ごとに別の節に書く）:
+#     1 回目 … 複製したランチャーのまま（中断モードは既定の abort）。下の stderr-abort 行で照合する
+#     2 回目 … 複製の中断モードの定数の行（TEAM_KIT_CHECK=abort / $TeamKitCheck = 'abort'）を warn に書き換えてから実行する
+#              （実物は書き換えない。定数の行がちょうど 1 行でなければ ASSERT ng で FAIL）。下の stderr-warn 行で照合する
 #   PowerShell 系統はランチャーを -File で起動する（利用者の使い方と同じ）。
 #   env<TAB>行      … .claude/custom.env の 1 行
 #   opt<TAB>キー<TAB>値 … .claude/option-settings の 1 項目（値はそのまま単一引用符で囲んで書く。\ は潰れない。値を取らない
 #                     フラグは値を true にする〔ランチャーが 'true' を値なしとして扱う。$true は書けない〕）
 #   team<TAB>キー<TAB>値 … ランチャーの TEAM_OPTS / $TeamOpts の 1 項目（書き方は opt 行と同じ。差し込み先の定義の行
 #                     〔declare -A TEAM_OPTS=( / $TeamOpts = [ordered]@{〕がちょうど 1 行でなければ ASSERT ng で FAIL）。
-#                     opt 行と別のホスト名にして、どちらの値の警告かを断片で区別する
-#   in<TAB>引数     … ランチャーへの起動時引数（1 行 1 引数）
-#   stderr<TAB>断片 … stderr の各行（空行を除く）に順に含まれるべき断片。stderr の行数もこの行の数と一致すること。
-#                     ASCII だけで書く（PowerShell 系統の stderr はコンソールのコード ページ（CP932 等）で書かれ、UTF-8 として
-#                     読むと日本語が化ける。ASCII と行の区切りは化けない）。警告の前置き（⚠ / 警告:）は系統で違うので含めない。
-#                     stderr は \ を / に揃えてから比べる（UNC の \\vk-unc-host\share は //vk-unc-host/share になる）。
-#   stdout は空であること（スタブ claude は stdout に何も書かない。ランチャーの警告が stdout に混ざれば FAIL）。終了コードは 0。
+#                     opt 行と別のホスト名にして、どちらの値の検出かを断片で区別する
+#   in<TAB>引数     … ランチャーへの起動時引数（1 行 1 引数。2 回の実行で共通）
+#   stderr-abort<TAB>断片 … 1 回目（abort）の stderr の各行（空行を除く）に順に含まれるべき断片。stderr の行数もこの行の数と
+#                     一致すること。あわせて、終了コードが 0 以外・claude スタブが起動していない（RAN no）・stdout が空であること
+#   stderr-warn<TAB>断片 … 2 回目（warn）の stderr について同じ。あわせて、終了コードが 0・claude スタブが起動した（RAN yes）・
+#                     stdout が空であること
+#   断片の決め方（stderr-abort / stderr-warn とも）:
+#     - ASCII だけで書く（PowerShell 系統の stderr はコンソールのコード ページ（CP932 等）で書かれ、UTF-8 として読むと日本語が
+#       化ける。ASCII と行の区切りは化けない）。そのため前置き（⚠ / 警告: / エラー:）は含めず、abort と warn の違いは
+#       終了コードと RAN で見る。
+#     - 検出の行は、どの値の検出かが分かる断片にする（UNC はキーとホスト名、区分 1 はキー〔--setting-sources は値も〕）。
+#     - まとめ行は、bash 版と共通にする ASCII の断片 TEAM_KIT_CHECK / $TeamKitCheck（モードの切り替え方を示す語）で照合する。
+#     - stderr は \ を / に揃えてから比べる（UNC の \\vk-unc-host\share は //vk-unc-host/share になる）。
+#   stdout は空であること（スタブ claude は stdout に何も書かない。ランチャーの警告・エラーが stdout に混ざれば FAIL）。
 env	ANTHROPIC_API_KEY=verify-kit-dummy
 env	VERIFY_KIT_STREAMS=1
 opt	--add-dir	\\vk-unc-host\share
@@ -37,11 +49,21 @@ team	--add-dir	\\vk-unc-team\share
 team	--bare	true
 team	--setting-sources	project,user
 in	verify-kit prompt
-stderr	/.claude/launcher/custom.env
-stderr	ANTHROPIC_API_KEY
-stderr	/.claude/launcher/option-settings.
-stderr	--add-dir //vk-unc-host/share
-stderr	--add-dir //vk-unc-team/share
-stderr	--restricted
-stderr	--setting-sources user,local
-stderr	--bare
+stderr-abort	/.claude/launcher/custom.env
+stderr-abort	ANTHROPIC_API_KEY
+stderr-abort	/.claude/launcher/option-settings.
+stderr-abort	--add-dir //vk-unc-host/share
+stderr-abort	--add-dir //vk-unc-team/share
+stderr-abort	--restricted
+stderr-abort	--setting-sources user,local
+stderr-abort	--bare
+stderr-abort	TEAM_KIT_CHECK / $TeamKitCheck
+stderr-warn	/.claude/launcher/custom.env
+stderr-warn	ANTHROPIC_API_KEY
+stderr-warn	/.claude/launcher/option-settings.
+stderr-warn	--add-dir //vk-unc-host/share
+stderr-warn	--add-dir //vk-unc-team/share
+stderr-warn	--restricted
+stderr-warn	--setting-sources user,local
+stderr-warn	--bare
+stderr-warn	TEAM_KIT_CHECK / $TeamKitCheck

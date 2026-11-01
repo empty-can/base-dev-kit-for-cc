@@ -54,6 +54,14 @@
 #              対象外（どれも 300 行）の rules/.h/deep.md・rules/a/.h/deep.md（. で始まるディレクトリの中）・rules/notes.txt（.md で
 #              ない）・skills/big/SKILL.md・agents/big.md・long-outside.md。数え方か対象の範囲を 1 つでも誤ると WARN / FAIL が出るか
 #              件数が変わり、PASS の行（5 ファイル）と一致しない
+#   以下は追跡文書（.md）から成果物クラス配下のファイルへのパス参照（2-h。どの層でも WARN。最後のパス要素が「. ＋ 英数字」で終わる
+#   ものだけ）。
+#   artref   … 一時の git リポジトリ（ルート＝追跡基準。git 層は .claude の外の追跡 .md も読む）。settings-clean.json ＋ 追跡する
+#              docs/a.md の 4 行（1: / 区切りの成果物ファイル → WARN、2: `.claude\work\notes.txt`〔\ 区切り。クラスのパスの中も \〕→ WARN、
+#              3: `.claude/reports/` `.claude/work/`〔ディレクトリ名だけ〕、4: …\work\hello world test〔成果物クラスのパスを含まない〕）と、
+#              追跡する .claude/rules/b.md の 3 行（`.claude/plans/**`〔** で終わる glob〕・.claude/workspace/skill-request/<フォルダ名>/・
+#              .claude/reports/2026-01-01_x/〔どちらもディレクトリへの参照〕）。WARN はちょうど 2 件（下の !WARN で 3・4 行目と b.md が
+#              出ないことを確かめる）。成果物クラスのディレクトリの中には何も置かない（2-c の判定を混ぜない）
 # 行頭タグの先頭の ! は否定で、そのタグの行にその断片が 1 行も無いことを求める（!WARN 等。二重に出さないことの検査に使う）。
 #   以下は別の項目（check-assets リンク）で判定する。リンクを作れない系統はこのケースだけを SKIP する。
 #   junction … settings-clean.json ＋ .claude/x（外の outside-x/ へのリンク。outside-x/evals/results/r.md に絶対パス）と
@@ -121,5 +129,10 @@ rfail	1	FAIL	rules / CLAUDE.md の大きさ: .claude/rules/both.md は 32160 文
 rfail	1	!WARN	.claude/rules/both.md
 rfail	1	FAIL	rules / CLAUDE.md の大きさ: .claude/rules/over-chars.md は 32001 文字（32,000 文字超）。on demand で読まれるファイルは 200K コンテキストで 40,000 文字を超えた分が読まれず（v2.1.309〜）、docs の目安（1 ファイル 200 行未満）も大きく超える。分割する（FAIL なので publish-share は公開を中止する）
 rlimit	0	PASS	rules / CLAUDE.md の大きさ（200 行・32,000 文字以内）: 5 ファイル
+artref	0	WARN	追跡文書が非追跡の成果物ファイルを参照している（辿れない参照。結論を本文に写し、出所はコミット SHA か issue にする）: docs/a.md:1 .claude/reports/2026-01-01_x/2026-01-01_x_01_plan.md
+artref	0	WARN	docs/a.md:2 .claude/work/notes.txt
+artref	0	!WARN	docs/a.md:3
+artref	0	!WARN	docs/a.md:4
+artref	0	!WARN	.claude/rules/b.md:
 junction	0	PASS	plugin eval の結果（*/evals/results/）なし
 junction	0	PASS	配布物に環境固有の絶対パスなし

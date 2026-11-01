@@ -86,7 +86,8 @@ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 \
 > path」）。Windows ではドライブ文字に割り当ててから渡す（例: `net use Z: \\server\share` の後に `--add-dir Z:\`。ドライブ
 > 文字と `\\wsl$` のパスはネットワークパスとして扱われない）。ランチャー（`start_claude_code.*`）は、option-settings に
 > 書いた `--add-dir` と、ランチャー本体のチーム統制（`TEAM_OPTS` / `$TeamOpts`）に書いた `--add-dir` が `\\` / `//` で
-> 始まると起動前に stderr へ警告する（起動は止めない。警告文の先頭に値の出どころが出る。判定は綴りだけなので `\\wsl$`
+> 始まると起動前に stderr へ知らせる（PowerShell 版は既定で起動を中止し、チーム定数 `$TeamKitCheck = 'warn'` なら
+> 警告だけで起動する。bash 版は凍結中で警告するだけ。文の先頭に値の出どころが出る。判定は綴りだけなので `\\wsl$`
 > でも出る）が、上の例のように `claude` へ直接渡す場合と、ランチャーの起動時引数で渡す場合は検査しない。
 >
 > **⚠ 方法 A と方法 B では効く settings キーが違う**。`--settings` は user settings に置けるキーなら何でも効く
@@ -222,6 +223,7 @@ PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.
 |---|---|---|
 | **追跡基準** | リポジトリのルート（＝開発者の作業ツリー） | **Git 追跡されていれば FAIL**。gitignore 済みで実在するだけなら WARN |
 | **実体基準** | 非リポジトリ（＝publish 時に取り出した payload の実体） | **実在すれば FAIL**。実際に配布される中身なので追跡状態は無関係 |
+| **層によらない**（2-h） | 追跡基準では追跡されている全 `*.md`（`docs/`・`README.md` 等も含む）、実体基準では `.claude/` 配下の `*.md` | 成果物クラス配下のファイルへのパス参照は**どの層でも WARN**（「追跡文書が非追跡の成果物ファイルを参照している（…）: <相対パス>:<行番号> <一致した文字列>」）。無ければ PASS「追跡文書（.md）に成果物クラス配下のファイルへのパス参照なし」 |
 
 層は自動判定される（対象がリポジトリのルートなら追跡基準）。`publish-share` は `--payload` / `-Payload` で
 実体基準を明示強制して呼ぶ ―― 「追跡解除したから大丈夫」は publish する ref を取り違えた瞬間に崩れるため、
@@ -247,6 +249,12 @@ PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.
   **200 行超は WARN**（止めない。docs が CLAUDE.md に勧める「200 行未満」を rules にも当てる）。両方に当たるものは
   FAIL だけを出す。文字数はコードポイントで数える（BOM は数えない）。追跡基準で数えるのは追跡されたファイルだけ。
   読み取りに失敗したファイル（ロック・権限・I/O エラー）は件数に入れず、ファイルごとに **WARN〔未検査〕**（止めない）
+- **追跡文書から成果物ファイルへのパス参照**（2-h）―― `.md` の中で、成果物クラス（上の一覧。区切りは `/` と `\` の
+  両方）に続けてファイルらしい名前（最後の要素が `.` ＋ 英数字の拡張子で終わる）を書いた参照を、1 件ごとに **WARN**
+  （層によらず。gitignored の成果物は clone 先・配布先では辿れず、フォルダ整理でも壊れる。結論は本文に写し、出所は
+  コミット SHA か issue にする）。ファイル名の中の glob（`…_*.md`）も辿れない文書群への参照として WARN にする。
+  `.claude/reports/` のようなディレクトリ名だけの方針の言及、ディレクトリへの参照（`/` や `<…>` で終わるもの）、
+  `.claude/reports/**` のように `**` で終わる glob は WARN にしない
 - **`settings.json` の設定キー**（3.）―― project（方法 A）で効かないキー（U = user / local / managed / `--settings`
   でのみ有効〔上の「方法 A と方法 B では効く settings キーが違う」〕、M = managed 専用、E = `env` のうち project / local
   から設定できない変数）と、照合されない権限ルール（パス付きの `Write` / `NotebookEdit` / `MultiEdit` / `Glob`。

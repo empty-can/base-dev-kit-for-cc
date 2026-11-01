@@ -24,6 +24,10 @@
     ただし settings.json の同じオブジェクト内に完全一致または大文字小文字だけが違うキーが並ぶもの（systemroot と SystemRoot 等）は、
     照合の前に重複キーとして層によらず FAIL（どちらの値が効くかが読み手で変わる。3. を参照）。
 
+  追跡文書（.md）から成果物クラス配下のファイルへのパス参照（2-h）は、層によらず WARN（FAIL にしない）。gitignored の成果物は
+    clone 先・配布先では辿れず、フォルダ整理でも壊れる（ルート CLAUDE.md「追跡文書から非追跡の成果物を参照しない」）。読むのは
+    git 層では追跡されている全 .md（.claude の外の docs\・README.md 等も含む）、payload 層では .claude 配下の .md。
+
   FAIL が1件以上で終了コード 1、なければ 0（CI 利用可）。
 
 .PARAMETER Payload
@@ -238,9 +242,11 @@ function Verdict-Artifact([string]$key, [string]$cls, [string[]]$paths) {
 # 位置が固定でないクラス（evals\results\）は直後の 2-c' が正本。
 #   .claude\worktrees            … --worktree / EnterWorktree が作る git worktree（公式も .gitignore を推奨）
 #   .claude\scheduled_tasks.json … 永続化したスケジュールタスク（作成したフォルダでしか動かない個人状態）
-foreach ($artifact in @('.claude\reports', '.claude\work', '.claude\workspace', '.claude\plans',
-                        '.claude\agent-memory-local', '.claude\work_instructions.txt',
-                        '.claude\.bat-shadow', '.claude\worktrees', '.claude\scheduled_tasks.json')) {
+# 2-h（追跡文書から成果物ファイルへの参照）もこの配列をそのまま使う（複製しない）。
+$artifacts = @('.claude\reports', '.claude\work', '.claude\workspace', '.claude\plans',
+               '.claude\agent-memory-local', '.claude\work_instructions.txt',
+               '.claude\.bat-shadow', '.claude\worktrees', '.claude\scheduled_tasks.json')
+foreach ($artifact in $artifacts) {
   $key = 'none'; $hits = @()
   if ($isGit) {
     $m = Match-Names $topTracked $artifact
@@ -475,6 +481,52 @@ foreach ($rf in $payloadFiles) {
   }
 }
 if (-not $ruleHit) { Pass "rules / CLAUDE.md の大きさ（200 行・32,000 文字以内）: $ruleN ファイル" }
+
+# 2-h. 追跡文書（.md）から非追跡の成果物ファイルへのパス参照（ルート CLAUDE.md「開発時の約束」の「追跡文書から非追跡の成果物を
+#      参照しない」。2026-11-01 の作業指示者の決定）。対象・一致の規則・出力・層の扱いは bash 版 2-h と同じ（どの層でも WARN）:
+#      対象: 名前が .md で終わる（序数の末尾一致）テキストファイル。git 層は追跡されている全ファイル（ls-files -z を UTF-8 で読む。
+#        Invoke-GitUtf8。.claude の外の docs\・README.md 等も含む。pathspec の '*.md' は候補を絞るだけ）、payload 層は $payloadFiles
+#        （2-e と同じ列挙・序数順）。成果物クラス（$artifacts）のディレクトリの中のファイル自体は対象外。実体の無いもの・バイナリ
+#        （Test-BinaryHead）は読まず、件数にも入れない。
+#      一致の規則: 「成果物クラスのパス（$artifacts。中の \ は / でもよい）＋ 区切り（/ か \）＋ 終端までの 1 文字以上」の最後のパス要素が
+#        「. ＋ 1 文字以上の英数字（A〜Z・a〜z・0〜9）」で終わるものだけを WARN にする。終端は 空白（スペース・タブ・CR・全角空白）・
+#        バッククォート・引用符（" '）・括弧（( ) （ ） 「 」）・<・>・句読点（、 。）。* と [ ] { } は終端にしない（…_*.md のような
+#        ファイル名の中の glob は WARN にし、.claude\reports\** のように ** で終わる glob はファイルらしくないので WARN にしない）。
+#        大文字小文字は区別する（-cmatch・序数）。
+#      出力: 一致 1 件につき WARN 1 行。ファイルは列挙の順、ファイルの中は行番号の順、行の中は左から。一致した文字列は本文のまま出す。
+# ⚠ \s を使わない（.NET の \s は NBSP 等も含み、bash 版と割れる）。空白は上の 4 つに固定する。全角空白は [char]0x3000 で足す。
+# ⚠ 行は LF だけで分ける（Get-Content / ReadLine は単独の CR でも行を分け、bash 版の行番号と割れる）。CR は終端なので一致に入らない。
+# ⚠ 終端・区切りの表を変えたら bash 版の _REF_FW / _REF_TERM / _REF_SEP も同時に直す。
+$refAlt = ($artifacts | ForEach-Object { ($_.Split([char]'\') | ForEach-Object { [regex]::Escape($_) }) -join '[/\\]' }) -join '|'
+$refRe = New-Object System.Text.RegularExpressions.Regex ('(?:' + $refAlt + ')[/\\][^ \t\r`"''()<>' + [char]0x3000 + '（）「」、。]+')
+$refFiles = @()
+if ($isGit) {
+  $refFiles = @(((Invoke-GitUtf8 @('-C', $Share, 'ls-files', '-z', '--', '*.md')) -join "`n") -split "`0" | Where-Object { $_ } | ForEach-Object { $_.Replace('/', '\') })
+} else {
+  $refFiles = $payloadFiles
+}
+$refN = 0; $refHit = $false
+foreach ($rf in $refFiles) {
+  if (-not $rf.EndsWith('.md', [StringComparison]::Ordinal)) { continue }
+  $inArt = $false
+  foreach ($a in $artifacts) { if ($rf.StartsWith($a + '\', [StringComparison]::Ordinal)) { $inArt = $true; break } }
+  if ($inArt) { continue }
+  $rp = Join-Path $Share $rf
+  if (-not (Test-Path -LiteralPath $rp -PathType Leaf)) { continue }
+  if (Test-BinaryHead $rp) { continue }
+  $refN++
+  try { $rt = [System.IO.File]::ReadAllText($rp, [System.Text.Encoding]::UTF8) } catch { continue }   # 読めないものは一致なし（bash 版の sed 2>/dev/null と同じ）
+  $rl = $rt.Split([char]10)
+  for ($i = 0; $i -lt $rl.Count; $i++) {
+    foreach ($m in $refRe.Matches($rl[$i])) {
+      if ($m.Value -cmatch '\.[A-Za-z0-9]+\z') {
+        Warn "追跡文書が非追跡の成果物ファイルを参照している（辿れない参照。結論を本文に写し、出所はコミット SHA か issue にする）: ${rf}:$($i + 1) $($m.Value)"
+        $refHit = $true
+      }
+    }
+  }
+}
+if (-not $refHit) { Pass "追跡文書（.md）に成果物クラス配下のファイルへのパス参照なし（$refN ファイルを検査）" }
 
 # 3. settings.json の JSON 構文 ＋ project（.claude\settings.json）では効かないキーの検出
 #    区分・根拠は bash 版 3. と同じ（U / M / E）。表を更新したら bash 版の _U_KEYS / _M_KEYS / _ENV_RE も同時に更新する。

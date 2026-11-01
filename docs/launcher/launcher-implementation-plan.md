@@ -211,7 +211,7 @@ C-BDK（`C:\cc-workspace\base-dev-kit-for-cc`・branch `feat/launcher-scripts`�
 
 ### 8-ter. Claude Code v2.1.302 追随（2026-10-18 調査・反映）
 
-コミット 9404a86（2026-07-20。旧タグ v1.0.1）以降の公式 docs 差分（LLMs リポ `c7a24cb`→`df8be8b`、changelog 2.1.215〜2.1.302）を SubAgent 4 本で調査し、反映した。調査報告は `.claude/reports/2026-10-18_cc-update_*.md`（gitignore 対象）。
+コミット 9404a86（2026-07-20。旧タグ v1.0.1）以降の公式 docs 差分（LLMs リポ `c7a24cb`→`df8be8b`、changelog 2.1.215〜2.1.302）を SubAgent 4 本で調査し、反映した（2026-10-18。結論は本節に書き写してある）。
 
 - [x] **実行モデル**: background セッションへの env 到達の記述を是正（`start_claude_code.*` 冒頭・§3(1)・design §5 新設）。`CLAUDE_CODE_PROCESS_WRAPPER` は Windows で無視される旨を design §5-1 に、サブコマンド（`remote-control` / `agents`）委譲の注意を冒頭コメントと design §5-2 に明記
 - [x] **option-settings テンプレ（sh/ps1 対称・44 キー。2026-10-27 に `--debug-file` を加えて 45 キー〔§8-quater〕）**: `--model` の既定説明とモデル ID（エイリアス `opus` / `sonnet,haiku`、フルネームは `claude-opus-5-5` 等）、`--permission-mode` の値集合（`auto` / `dontAsk` / `manual` 追加）と既定 auto、`--agents` のファイル指定が `--print` 専用、`--debug` の `=` 形、print 専用フラグの print 節への移動、`--from-pr` の説明修正、`--effort` の `ultracode`、新規 `--autocompact` / `--system-prompt-snapshot` / `--advisor` / `--name` / `--tmux` / `--permission-prompts` / `--append-subagent-system-prompt-file` / `--allow-dangerously-skip-permissions`、隔離節の `--permission-mode` 重複キー（PS で構文エラー）の除去、`--restricted` / `--bare` / `--safe-mode` 等の意図的除外を明記
@@ -228,7 +228,7 @@ C-BDK（`C:\cc-workspace\base-dev-kit-for-cc`・branch `feat/launcher-scripts`�
 
 ### 8-quater. Claude Code v2.1.310 追随（2026-10-24 調査・反映）
 
-公式 docs 差分（LLMs リポ `df8be8b`→`049e3f4`、changelog 2.1.303〜2.1.310）をレール A〜E の SubAgent で調査・反映し、作業指示者の判断（2026-10-27）をレール F〜H で反映し、同日にレビュー工程（I = /code-review、J = /security-review）を行った。調査・反映・レビューの報告は `.claude/reports/2026-10-24_cc-update-w42_{00,A,B,C,D,E,F,G,H,I,J,99}_*.md`（gitignore 対象。99 が統合サマリ）。
+公式 docs 差分（LLMs リポ `df8be8b`→`049e3f4`、changelog 2.1.303〜2.1.310）をレール A〜E の SubAgent で調査・反映し、作業指示者の判断（2026-10-27）をレール F〜H で反映し、同日にレビュー工程（I = /code-review、J = /security-review）を行った（結論は本節と設計書に書き写してある）。
 
 - [x] **実行モデル（レール C）**: 本ランチャーが `CLAUDE_CODE_PROCESS_WRAPPER` に登録するものではないことを再判定し、v2.1.310 時点の契約との対照表を design §5-1 に置いた（標準入力・絶対パス・3 回連続起動・ランチャー自身の引数は不適用か既に満たす）。**PS 版ランチャーの警告が stdout に出ていた**（PowerShell は別のプログラムから起動されると warning ストリームを stdout に書く。pwsh 7・5.1 とも実測）のを、`start_claude_code.ps1` が `setup-environment.ps1` の warning ストリームを stderr へ回す形で直した（bash 版は当初から stderr。design §5-4）。`start_claude_code.*` 冒頭に出力の約束と「`CLAUDE_CODE_PROCESS_WRAPPER` に登録しない」を、`setup-environment.*` 冒頭に同旨を追記。design §5 に起動環境からしか読まれない変数・ゲートウェイが background へ渡る条件、§5-4 に v2.1.305 以降の起動時警告（対話起動はデバッグログのみ）と `--add-dir` の UNC が黙って外れることを追記
 - [x] **option-settings テンプレ（レール A。sh/ps1 対称・44 キーのまま。2026-10-27 の判断で `--debug-file` を加えて 45 キー〔W42-F-01〕）**: コメントのみの修正 12 件（基準版を v2.1.310 へ、`--autocompact` の使えない値の扱い、`--permission-mode` の `-p` 既定の根拠を docs に、`--permission-prompt-tool` の完全名、`--add-dir` のネットワークパスと同名 skill の呼び方〔v2.1.309〜〕、`--tools` と `ToolSearch`、`--worktree` の終了時の後始末、ultrareview の `--trust-workspace` 等）。`--debug-file` は作業指示者の判断（2026-10-27）でキーに加えた（W42-F-01。v2.1.305 以降、対話起動の起動時警告はデバッグログにしか出ないため、それを読む手段として）
