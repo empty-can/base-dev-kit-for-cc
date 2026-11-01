@@ -215,10 +215,10 @@ if ($kitCheckFound.Count -gt 0) {
         [Console]::Error.WriteLine($kitCheckPrefix + $kitCheckLine)
     }
     if ($kitCheckAbort) {
-        [Console]::Error.WriteLine('エラー: キットの前提が崩れる起動オプションが ' + $kitCheckFound.Count + ' 件あるため起動を中止します。該当のキーを外すか、start_claude_code の TEAM_KIT_CHECK / $TeamKitCheck を ''warn'' にすると警告だけで起動します。チームで禁じるなら managed settings で固定してください。')
+        [Console]::Error.WriteLine('エラー: キットの前提が崩れる起動オプションが ' + $kitCheckFound.Count + ' 件あるため起動を中止します。該当のキーを外すか、start_claude_code の TEAM_KIT_CHECK / $TeamKitCheck を ''warn'' にすると警告だけで起動します。')
         exit 1
     }
-    [Console]::Error.WriteLine('警告: キットの前提が崩れる起動オプションが ' + $kitCheckFound.Count + ' 件あります。TEAM_KIT_CHECK / $TeamKitCheck が ''warn'' のため、そのまま渡して起動します。チームで禁じるなら managed settings で固定してください。')
+    [Console]::Error.WriteLine('警告: キットの前提が崩れる起動オプションが ' + $kitCheckFound.Count + ' 件あります。TEAM_KIT_CHECK / $TeamKitCheck が ''warn'' のため、そのまま渡して起動します。')
 }
 
 # ---- 4) claude コマンドを組み立て ------------------------------------------
