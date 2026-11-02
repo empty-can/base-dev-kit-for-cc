@@ -21,8 +21,8 @@
   検査しない系統、（項目, 系統）の重複、項目の全系統の凍結）が 1 行でもあれば、項目「凍結 fixture frozen.txt」が FAIL し、
   凍結は一切適用しない（誤記で黙って緩まない）。
   項目キー（出力の順）: frozen syntax-bash syntax-pwsh syntax-ps51 format version launcher launcher-stalerc launcher-streams
-    optset setupenv internal-keys ca-root ca-fixture ca-links cleanenv cleanenv-badmode cleanenv-badshare pubname pubcase
-    pubmanifest pubargs left
+    optset setupenv internal-keys ca-root ca-fixture ca-links ca-data cleanenv cleanenv-badmode cleanenv-badshare pubname
+    pubcase pubmanifest pubargs left
   凍結できない項目: frozen（fixture の検証）・syntax-*（系統ごとの構文検査）・format・left（比較でない）・internal-keys
     （sh / ps1 / docs の名前の集合の突き合わせ。凍結中もデータとして追随を続ける）。凍結できる項目が検査する系統は
     frozen.txt の冒頭に一覧がある（launcher-stalerc は pwsh / ps51、pub* は bash / pwsh、ほかは 3 系統）。
@@ -807,6 +807,48 @@ function Probe-CheckAssets {
   }
 }
 
+# ---- check-assets の表（scripts/check-assets.d/settings-scope.txt）の欠損・破損・版違い ---------------------------
+# check-assets は表をスクリプト自身の位置から読むので、一時ツリー（<ケース>/tree/scripts/）に check-assets.ps1 と表を複製し、表を
+# 消す・壊す・版を変えてから、最小の payload（<ケース>/share。settings は settings-ume.json）を -Payload で検査する（同一プロセスで
+# 呼び、Write-Host を情報ストリームで受ける）。実物の表は書き換えない。ケースと期待は verify-kit.sh の CA_DATA_CASES /
+# item_ca_data と同じ（ok は対照、missing は表を消す、tag は未知のタグの行、paren は括弧の釣り合わない e の行を足す、version は
+# format<TAB>1 を format<TAB>2 に変える、notool は wtool の行をすべて消す）
+$CaDataCases = @('ok', 'missing', 'tag', 'paren', 'version', 'notool')
+function Probe-CheckAssetsData {
+  foreach ($c in $CaDataCases) {
+    Sec "checkassets-data $c"
+    $d = Join-Full $script:PT "ca-data-$c"
+    $t = Join-Full $d 'tree/scripts'; $s = Join-Full $d 'share'; $cd = Join-Full $s '.claude'
+    $f = Join-Full $t 'check-assets.d/settings-scope.txt'
+    New-Item -ItemType Directory -Force -Path (Join-Full $t 'check-assets.d'), $cd | Out-Null
+    Copy-Item -LiteralPath (Join-Full $VkRoot 'scripts/check-assets.ps1') -Destination $t
+    Copy-Item -LiteralPath (Join-Full $VkRoot 'scripts/check-assets.d/settings-scope.txt') -Destination $f
+    Copy-Item -LiteralPath (Join-Full $VkRoot '.claude/.gitignore'), (Join-Full $VkRoot '.claude/.gitattributes') -Destination $cd
+    [System.IO.File]::WriteAllText((Join-Full $cd 'CLAUDE.md'), "# verify-kit fixture`n", $Utf8NoBom)
+    Copy-Item -LiteralPath (Join-Path $VkFix 'settings-ume.json') -Destination (Join-Full $cd 'settings.json')
+    # 実物の表は LF（format 項目が保証する）。行で読んで LF で書き戻す
+    $lines = @(Read-Lines $f)
+    if (Oeq $c 'missing') { Remove-Item -LiteralPath $f -Force }
+    elseif (Oeq $c 'tag') { [System.IO.File]::AppendAllText($f, "x`ty`n", $Utf8NoBom) }
+    elseif (Oeq $c 'paren') { [System.IO.File]::AppendAllText($f, "e`tVK_(A`n", $Utf8NoBom) }
+    elseif (Oeq $c 'version') {
+      $n = @($lines | Where-Object { Oeq $_ "format`t1" }).Count
+      if ($n -ne 1) { Put 'ASSERT' "ng format<TAB>1 の行が $n 行（1 行のはず）"; continue }
+      $nl = @($lines | ForEach-Object { if (Oeq $_ "format`t1") { "format`t2" } else { $_ } })
+      [System.IO.File]::WriteAllText($f, (($nl -join "`n") + "`n"), $Utf8NoBom)
+    } elseif (Oeq $c 'notool') {
+      $nl = @($lines | Where-Object { -not $_.StartsWith("wtool`t", [StringComparison]::Ordinal) })
+      [System.IO.File]::WriteAllText($f, (($nl -join "`n") + "`n"), $Utf8NoBom)
+    }
+    Put 'ASSERT' 'ok'
+    $ca = Join-Full $t 'check-assets.ps1'
+    $global:LASTEXITCODE = 0
+    $o = @(& $ca -Share $s -Payload 6>&1 | ForEach-Object { "$_" })
+    Put 'RC' ([string]$LASTEXITCODE)
+    foreach ($l in $o) { foreach ($x in ($l -split "`r?`n")) { Put 'O' (Norm $x @($s, '<SHARE>')) } }
+  }
+}
+
 # ---- clean-test-env（スタブ・-Keep。一時ディレクトリは $env:TEMP で自分の一時領域の中へ作らせる）----
 function Probe-CleanEnv {
   Sec 'cleanenv'
@@ -1304,6 +1346,7 @@ function Invoke-ProbeMain {
     Probe-LauncherStreams
     Probe-Version
     Probe-CheckAssets
+    Probe-CheckAssetsData
     Probe-CleanEnv
     Probe-CleanEnvBadMode
     Probe-CleanEnvBadShare
@@ -1336,12 +1379,13 @@ $SysState = @{}; $SysWhy = @{}; $SysVer = @{}; $Results = @{}
 # 項目キー（呼び出し順）と、凍結できる項目が検査する系統（verify-kit.sh の VK_ITEM_KEYS / VK_FRZ_PART と同じ。frozen.txt の
 # 冒頭の一覧とも揃える）。$FrzPart に無い項目は凍結できない。鍵は Oin（序数比較）で照合してから引く（ハッシュ表は大文字小文字を区別しない）
 $ItemKeys = @('frozen', 'syntax-bash', 'syntax-pwsh', 'syntax-ps51', 'format', 'version', 'launcher', 'launcher-stalerc', 'launcher-streams',
-              'optset', 'setupenv', 'internal-keys', 'ca-root', 'ca-fixture', 'ca-links', 'cleanenv', 'cleanenv-badmode', 'cleanenv-badshare',
+              'optset', 'setupenv', 'internal-keys', 'ca-root', 'ca-fixture', 'ca-links', 'ca-data', 'cleanenv', 'cleanenv-badmode', 'cleanenv-badshare',
               'pubname', 'pubcase', 'pubmanifest', 'pubargs', 'left')
 $FrzPart = @{
   'version' = @('bash', 'pwsh', 'ps51'); 'launcher' = @('bash', 'pwsh', 'ps51'); 'launcher-stalerc' = @('pwsh', 'ps51')
   'launcher-streams' = @('bash', 'pwsh', 'ps51'); 'optset' = @('bash', 'pwsh', 'ps51'); 'setupenv' = @('bash', 'pwsh', 'ps51')
   'ca-root' = @('bash', 'pwsh', 'ps51'); 'ca-fixture' = @('bash', 'pwsh', 'ps51'); 'ca-links' = @('bash', 'pwsh', 'ps51')
+  'ca-data' = @('bash', 'pwsh', 'ps51')
   'cleanenv' = @('bash', 'pwsh', 'ps51'); 'cleanenv-badmode' = @('bash', 'pwsh', 'ps51'); 'cleanenv-badshare' = @('bash', 'pwsh', 'ps51')
   'pubname' = @('bash', 'pwsh'); 'pubcase' = @('bash', 'pwsh'); 'pubmanifest' = @('bash', 'pwsh'); 'pubargs' = @('bash', 'pwsh')
 }
@@ -1585,7 +1629,7 @@ function Item-Syntax([string]$s, [string]$t) {
 }
 
 function Fmt-Class([string]$rel) { # 保存形式の区分（bash 版の fmt_class と同じ）
-  if ($rel.StartsWith('scripts/verify-kit.d/', 'Ordinal')) { return 'lfnobom' }
+  if ($rel.StartsWith('scripts/verify-kit.d/', 'Ordinal') -or $rel.StartsWith('scripts/check-assets.d/', 'Ordinal')) { return 'lfnobom' }
   $n = $rel.Substring($rel.LastIndexOf('/') + 1)
   foreach ($e in @('.ps1', '.psm1', '.psd1', '.ps1.template')) { if ($n.EndsWith($e, 'Ordinal')) { return 'ps' } }
   foreach ($e in @('.sh', '.sh.template')) { if ($n.EndsWith($e, 'Ordinal')) { return 'lfnobom' } }
@@ -1970,6 +2014,58 @@ function Item-CaLinks {
     $CaLinkCases
 }
 
+# check-assets の表の欠損・破損・版違い（Probe-CheckAssetsData のケース。判定・文言は verify-kit.sh の item_ca_data と同じ）。
+# 全系統の出力の一致に加え、ok 以外は終了コード 1・表の FAIL 行がちょうど 1 行でケースの理由を含む・キーの検査をしない（U の WARN が
+# 無い）・他の検査は続く（settings.json の構文の PASS がある）こと、ok は終了コード 0・表の FAIL 行が無い・U の WARN があることを見る
+$CaDataFail = '[FAIL] check-assets 自身の表 scripts/check-assets.d/settings-scope.txt を読めない（'
+function CaData-Reason([string]$c) {
+  if (Oeq $c 'missing') { return 'ファイルが無い）' }
+  if (Oeq $c 'tag') { return '行目: 未知のタグ）' }
+  if (Oeq $c 'paren') { return '行目: 括弧が釣り合っていない）' }
+  if (Oeq $c 'version') { return '行目: format の版が 1 でない）' }
+  if (Oeq $c 'notool') { return 'タグ wtool の行が無い）' }
+  return ''
+}
+function Item-CaData {
+  $t = 'check-assets 表の欠損・破損・版違い（scripts/check-assets.d/settings-scope.txt）'
+  $avail = @(Usable $SysAll)
+  if ($avail.Count -eq 0) { Verdict 'SKIP' $t '実行できる系統が無い'; return }
+  $c = Crashed-In $avail
+  if ($c) { Verdict 'FAIL' $t "$($SysLabel[$c]) の probe が異常終了した"; return }
+  if (-not (Drop-Frozen 'ca-data' $avail)) { Verdict 'SKIP' $t $FrozenNone; return }; $avail = $script:Kept
+  Drop-Skipping @($CaDataCases | ForEach-Object { "checkassets-data $_" }) $avail
+  if ($script:Kept.Count -eq 0) { Verdict 'SKIP' $t $script:SkipNote; return }
+  $avail = $script:Kept
+  foreach ($cs in $CaDataCases) {
+    foreach ($s in $avail) {
+      $a = @(Tag-Vals (Get-Sec $s "checkassets-data $cs") 'ASSERT') | Select-Object -First 1
+      if (One $a 'ok') { Verdict 'FAIL' $t "${cs}: $($SysLabel[$s]): $(if ($a) { $a } else { '結果が無い' })"; return }
+    }
+    if (-not (Same-All "checkassets-data $cs" $avail)) { Fail-Diff $t "${cs}: 出力が $($SysLabel[$script:SameA]) と $($SysLabel[$script:SameB]) で違う"; return }
+    $lines = Get-Sec $avail[0] "checkassets-data $cs"
+    $rc = [string](@(Tag-Vals $lines 'RC') | Select-Object -First 1)
+    $o = @(Tag-Vals $lines 'O' | ForEach-Object { $_.TrimStart() })
+    $fl = @($o | Where-Object { $_.Contains($CaDataFail) })
+    $nu = @($o | Where-Object { $_.Contains('[WARN] 方法 A（') }).Count
+    $nj = @($o | Where-Object { Oeq $_ '[PASS] settings.json は valid JSON' }).Count
+    $why = ''
+    if (Oeq $cs 'ok') {
+      if (One $rc '0') { $why = "終了コードが期待（0）と違う（$rc）" }
+      elseif ($fl.Count -ne 0) { $why = '表の FAIL 行がある（複製のままの表は読めるはず）' }
+      elseif ($nu -ne 1) { $why = 'U の WARN が無い（キーの検査が走っていない）' }
+    } else {
+      $reason = CaData-Reason $cs
+      $nr = @($fl | Where-Object { $_.Contains($reason) }).Count
+      if (One $rc '1') { $why = "終了コードが期待（1）と違う（$rc）" }
+      elseif ($fl.Count -ne 1 -or $nr -ne 1) { $why = "表の FAIL 行（…$reason）がちょうど 1 行でない（FAIL 行 $($fl.Count)・理由の一致 $nr）" }
+      elseif ($nu -ne 0) { $why = '表を読めないのにキーの検査が走った（U の WARN がある）' }
+      elseif ($nj -ne 1) { $why = '表を使わない検査が続いていない（settings.json の構文の PASS が無い）' }
+    }
+    if ($why) { Verdict 'FAIL' $t "${cs}: $why"; return }
+  }
+  Verdict 'PASS' $t "$($CaDataCases.Count) ケース × $(Labels $avail) で同一出力・期待どおり（表を消す・未知のタグ・括弧の釣り合わない e・format の版違い・wtool の行が無い は表の FAIL〔終了コード 1〕でキーの検査をせず、他の検査は続く。複製のままの対照は表の FAIL なしで U の WARN が出る）$(Missing-Note $SysAll)$(Skip-Note)"
+}
+
 function Item-CleanEnv {
   $t = 'clean-test-env（スタブ）'
   $avail = @(Usable $SysAll)
@@ -2312,6 +2408,7 @@ try {
   Item-CaRoot
   Item-CaFixture
   Item-CaLinks
+  Item-CaData
   Item-CleanEnv
   Item-CleanEnvBadMode
   Item-CleanEnvBadShare

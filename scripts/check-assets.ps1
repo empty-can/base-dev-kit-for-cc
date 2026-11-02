@@ -529,45 +529,105 @@ foreach ($rf in $refFiles) {
 if (-not $refHit) { Pass "追跡文書（.md）に成果物クラス配下のファイルへのパス参照なし（$refN ファイルを検査）" }
 
 # 3. settings.json の JSON 構文 ＋ project（.claude\settings.json）では効かないキーの検出
-#    区分・根拠は bash 版 3. と同じ（U / M / E）。表を更新したら bash 版の _U_KEYS / _M_KEYS / _ENV_RE も同時に更新する。
-#    E 区分のキー名は 2-c と同じ二段階で照合する（$envRe に完全一致 → A〜Z だけ畳んだ同士で一致。Get-EnvClass）。
+#    区分・根拠は bash 版 3. と同じ（U / M / E）。表（U / M のキー・E の選択肢・照合されない権限ルールのツール名）は
+#    check-assets.d\settings-scope.txt にあり、bash 版も同じファイルを読む（両版のコードに表は無い。表を更新するときはそのファイル
+#    だけを直す。書式・各行の根拠・E の選択肢に使える文字はファイルの冒頭）。表が無い・書式が壊れている・format の版が違うときは、
+#    settings.json の有無によらず 3. の冒頭で専用メッセージの FAIL にし、キーの検査（U / M / E と照合されない権限ルール）をしない
+#    （bash 版と同じ。検査器自身の表が欠けた状態を PASS にしない）。BOM・JSON 構文・重複キーの検査は表を使わないので続ける。
+#    E 区分のキー名は 2-c と同じ二段階で照合する（表の e 行から組み立てた $envRe に完全一致 → A〜Z だけ畳んだ同士で一致。Get-EnvClass）。
 #    判定は、完全一致 → 従来の WARN、大文字小文字だけ違う（systemroot 等）→ 「Windows でのみ同一視される」旨の別の WARN。
 #    同じオブジェクト内のキーの重複（完全一致、または A〜Z だけ畳んで一致 = 大文字小文字だけの違い。env 以外の階層も同じ）は
 #    専用メッセージで FAIL にし、キーの検査には進まない（bash 版と同じ。理由も同じ）。判定の順は BOM → JSON 構文 → 重複キー →
 #    キーの検査。構文が先なので、壊れた JSON は重複があっても「不正な JSON」になる（Get-JsonDupKeys の注記）。
 #    どの settings ファイルからも読まれず起動環境からしか読まれない変数も E に含める（bash 版と同じ）。
 #    加えて、どこに置いても照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob。$wRuleRe）を別の WARN で
-#    報告する。区分・根拠・対象外（ツール名だけのルール・hooks の if 条件）は bash 版 3. と同じ。表を更新したら bash 版の
-#    _W_RULE_RE も同時に更新する。
-# axScreenReader は v2.1.305 から User or managed（--settings も可。それまでは Any file）。sandbox.allowNestedUserNamespaces は
-# v2.1.305 で新設（User or managed。--settings も可。true にするとサンドボックスの境界を外す）
-$uKeys =@('skipDangerousModePermissionPrompt', 'useAutoModeDuringPlan', 'autoMode', 'skipAutoPermissionPrompt',
-           'processWrapper', 'pluginConfigs', 'syncClaudeAiSkills', 'syncClaudeAiPlugins', 'axScreenReader',
-           'sandbox.allowAppleEvents', 'sandbox.allowNestedUserNamespaces', 'sandbox.ripgrep', 'sandbox.filesystem.disabled',
-           'sandbox.network.strictAllowlist', 'sandbox.network.tlsTerminate',
-           'sandbox.credentials.allowPlaintextInject', 'sandbox.credentials.awsPairs', 'sandbox.credentials.sigv4')
-# prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く（bash 版と同じ）
-$mKeys = @('prependPlugins', 'appendPlugins',
-           'allowManagedPermissionRulesOnly', 'allowManagedHooksOnly', 'allowManagedMcpServersOnly', 'managedMcpServers',
-           'strictKnownMarketplaces', 'allowedMarketplaces', 'blockedMarketplaces', 'strictPluginOnlyCustomization',
-           'disableSideloadFlags', 'disableCommandPluginSources', 'claudeMd', 'policyHelper', 'allowedProviders',
-           'deniedModels', 'availableModelsMatch', 'requiredMinimumVersion', 'requiredMaximumVersion', 'sshHostAllowlist',
-           'channelsEnabled', 'allowedChannelPlugins',
-           'sandbox.bwrapPath', 'sandbox.socatPath', 'sandbox.filesystem.allowManagedReadPathsOnly',
-           'sandbox.network.allowManagedDomainsOnly')
-# ⚠ 二段階目は $envRe 自体も A〜Z を畳んで照合する。畳めるのは \D \S \W \B 等の「大文字で意味が変わるエスケープ」を
-#    含まないから。追加するときもリテラルと . * ( ) | ? だけで書くこと（bash 版の _ENV_RE も同じ）。
-# ⚠ CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS は v2.1.310 の docs から消えた（どのページにも無い。changelog に廃止の記載は無い）が、
-#    project の env に書いても効かない事実は変わらないので残す（外すと、効かない変数が黙って PASS になる）。
-# CLAUDE_AX_.* は v2.1.305 から project / local では無視（screen reader 等）。CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB は
-# どの settings ファイルからも読まれない（起動環境だけ。MOUNTED_DRIVE_RM_PROMPT と WARN_* は v2.1.304 以降の docs で追加）。
-# ホスティング環境・Claude Code 自身が設定する変数（CLAUDE_CODE_REMOTE / CLAUDE_CODE_ACCOUNT_UUID / CLAUDE_CODE_MESSAGING_* 等）は、
-# 利用者が settings に書く動機が無いので含めない。
-$envRe ='^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_TMPDIR|HOME|TMPDIR|TMP|TEMP|XDG_.*|SystemRoot|ComSpec|ProgramData|LOCALAPPDATA|PATHEXT|PSModulePath|ProgramFiles.*|CommonProgramFiles.*|ALLUSERSPROFILE|SystemDrive|CLAUDE_CODE_ENABLE_TELEMETRY|CLAUDE_CODE_ENHANCED_TELEMETRY_BETA|ENABLE_ENHANCED_TELEMETRY_BETA|OTEL_(LOGS|METRICS|TRACES)_EXPORTER|OTEL_LOG_.*|OTEL_EXPORTER_OTLP_(.*_)?(ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)|OTEL_EXPORTER_PROMETHEUS_(HOST|PORT)|ENABLE_BETA_TRACING_DETAILED|BETA_TRACING_ENDPOINT|CLAUDE_CODE_PROCESS_WRAPPER|CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)|CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR|CLAUDE_AX_.*|CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS|CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS|CLAUDE_CODE_DISABLE_(ATTACHMENTS|FILE_MENTIONS)|CLAUDE_CODE_PROJECT_DIR_NAME|CLAUDE_CODE_RESTRICTED|CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY|CLAUDE_CODE_DISABLE_(DANGEROUS_RM_TIMEOUT|SUBSTITUTION_RM_PROMPT|INLINE_SHELL_RM_PROMPT|MOUNTED_DRIVE_RM_PROMPT)|CLAUDE_CODE_WARN_(DISK|MEMORY)_FREE_GIB)$'
-# 照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob）。bash 版の _W_RULE_RE と同じ式で、全体一致は
-# \A(?: … )\z で包んで判定する（bash 版は re.fullmatch。.NET の $ は末尾の改行の直前にも一致するので使わない）。-cmatch で
-# 大文字小文字を区別する
-$wRuleRe = '(Write|NotebookEdit|MultiEdit|Glob)\([\s\S]+\)'
+#    報告する。区分・根拠・対象外（ツール名だけのルール・hooks の if 条件）は bash 版 3. と同じ。ツール名は表の wtool 行。
+# ---- 表の読み手（bash 版の ss_load と同じ規則・同じ文言。書式は表のファイルの冒頭）----
+#   行末の CR と先頭の BOM を剥がし、1 文字目が # の行と空行は飛ばす（行頭の空白は剥がさない）。列は TAB ちょうどで分ける。
+#   行番号は物理行（コメント・空行も数える）。最初の誤りで止め、理由を Error に入れて返す。成功なら Error が空で、U / M（表の順。
+#   WARN に並ぶ順になる）と、組み立てた E（e 行を | で結んで ^( )$ で包む）・W（wtool 行を | で結んで ( ) で包み、( ) の中が
+#   1 文字以上の部分を付ける）を返す。値の形の検査（U / M のキーパス・W のツール名・E の選択肢の文字と括弧と * ?）は bash 版と同じで、
+#   理由も bash 版の注記と同じ（python へ空白区切りで渡す U / M と、組み立てられない正規表現で両版の判定が割れないように）。
+#   ⚠ バイト列で読み、UTF-8 として自分で復号する。Get-Content / ReadLine / StreamReader は単独の CR でも行を分け（bash 版と行番号・
+#      判定が割れる）、ReadAllText は UTF-16 等の BOM を見て別の符号化で読む（bash 版は NUL で止まる）。5.1 の既定（ANSI）も使わない。
+#   ⚠ 比較は序数（[string]::Equals(…, Ordinal) / String.Contains）。文字の集合は範囲でなく列挙した文字列との照合で調べる。
+$ssAn = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
+function Read-SettingsScope([string]$path) {
+  $r = @{ Error = ''; U = @(); M = @(); E = ''; W = '' }
+  $ord = [StringComparison]::Ordinal
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $r.Error = 'ファイルが無い'; return $r }
+  try { $bytes = [System.IO.File]::ReadAllBytes($path) } catch { $r.Error = '読めない'; return $r }
+  if ([Array]::IndexOf($bytes, [byte]0) -ge 0) { $r.Error = 'NUL バイトを含む'; return $r }
+  $off = 0
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $off = 3 }
+  $text = (New-Object System.Text.UTF8Encoding $false).GetString($bytes, $off, $bytes.Length - $off)
+  $su = New-Object 'System.Collections.Generic.List[string]'; $sm = New-Object 'System.Collections.Generic.List[string]'
+  $se = New-Object 'System.Collections.Generic.List[string]'; $sw = New-Object 'System.Collections.Generic.List[string]'
+  $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+  $keyMsg = 'キーパスの形でない（英数字と _ の名前を . でつないだもの）'
+  $fmt = $false; $ln = 0
+  foreach ($raw in $text.Split([char]10)) {
+    $ln++
+    $line = if ($raw.EndsWith("`r", $ord)) { $raw.Substring(0, $raw.Length - 1) } else { $raw }
+    if ($line.Length -eq 0 -or $line.StartsWith('#', $ord)) { continue }
+    $cols = $line.Split([char]9)
+    if ($cols.Count -ne 2) { $r.Error = "$ln 行目: 列の数が 2 でない（タグ<TAB>値）"; return $r }
+    $tag = $cols[0]; $val = $cols[1]
+    if ([string]::Equals($tag, 'format', $ord)) {
+      if ($fmt) { $r.Error = "$ln 行目: format 行が重複している"; return $r }
+      if (-not [string]::Equals($val, '1', $ord)) { $r.Error = "$ln 行目: format の版が 1 でない"; return $r }
+      $fmt = $true; continue
+    }
+    if (-not $fmt) { $r.Error = "$ln 行目: format 行より前にデータ行がある"; return $r }
+    $isU = [string]::Equals($tag, 'u', $ord); $isM = [string]::Equals($tag, 'm', $ord)
+    $isE = [string]::Equals($tag, 'e', $ord); $isW = [string]::Equals($tag, 'wtool', $ord)
+    if (-not ($isU -or $isM -or $isE -or $isW)) { $r.Error = "$ln 行目: 未知のタグ"; return $r }
+    if ($val.Length -eq 0) { $r.Error = "$ln 行目: 値が空"; return $r }
+    $depth = 0; $prev = ''; $x = ''
+    for ($i = 0; $i -lt $val.Length; $i++) {
+      $c = $val.Substring($i, 1)
+      if ($isU -or $isM) {
+        if ([string]::Equals($c, '.', $ord)) {
+          if ($prev.Length -eq 0 -or [string]::Equals($prev, '.', $ord)) { $x = $keyMsg }
+        } elseif (-not $ssAn.Contains($c)) { $x = $keyMsg }
+      } elseif ($isW) {
+        if (-not $ssAn.Contains($c)) { $x = 'ツール名の形でない（英数字と _ だけ）' }
+      } elseif ([string]::Equals($c, '(', $ord)) { $depth++ }
+      elseif ([string]::Equals($c, ')', $ord)) { $depth--; if ($depth -lt 0) { $x = '括弧が釣り合っていない' } }
+      elseif ([string]::Equals($c, '|', $ord)) { if ($depth -le 0) { $x = '括弧の外に | がある（1 行に選択肢は 1 個）' } }
+      elseif ([string]::Equals($c, '*', $ord) -or [string]::Equals($c, '?', $ord)) {
+        if ($prev.Length -eq 0 -or '(|*?'.Contains($prev)) { $x = '* と ? の直前が英数字・_・.・) でない' }
+      } elseif (-not [string]::Equals($c, '.', $ord) -and -not $ssAn.Contains($c)) { $x = '使えない文字がある（英数字・_ と . * ( ) | ? だけ）' }
+      if ($x) { $r.Error = "$ln 行目: $x"; return $r }
+      $prev = $c
+    }
+    if (($isU -or $isM) -and [string]::Equals($prev, '.', $ord)) { $r.Error = "$ln 行目: $keyMsg"; return $r }
+    if ($isE -and $depth -ne 0) { $r.Error = "$ln 行目: 括弧が釣り合っていない"; return $r }
+    if (-not $seen.Add("$tag`t$val")) { $r.Error = "$ln 行目: 同じタグの中で重複している"; return $r }
+    if ($isU) { $su.Add($val) } elseif ($isM) { $sm.Add($val) } elseif ($isE) { $se.Add($val) } else { $sw.Add($val) }
+  }
+  if (-not $fmt) { $r.Error = 'format 行が無い'; return $r }
+  if ($su.Count -eq 0) { $r.Error = 'タグ u の行が無い'; return $r }
+  if ($sm.Count -eq 0) { $r.Error = 'タグ m の行が無い'; return $r }
+  if ($se.Count -eq 0) { $r.Error = 'タグ e の行が無い'; return $r }
+  if ($sw.Count -eq 0) { $r.Error = 'タグ wtool の行が無い'; return $r }
+  $r.U = $su.ToArray(); $r.M = $sm.ToArray()
+  $r.E = '^(' + ($se -join '|') + ')$'
+  # 照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob 等。ツール名は表の wtool 行）。bash 版の _W_RULE_RE と
+  # 同じ式で、全体一致は \A(?: … )\z で包んで判定する（bash 版は re.fullmatch。.NET の $ は末尾の改行の直前にも一致するので使わない）。
+  # -cmatch で大文字小文字を区別する
+  $r.W = '(' + ($sw -join '|') + ')\([\s\S]+\)'
+  # 上の形の検査を通った式は組み立てられる（防御として確かめる。bash 版にこの段は無く、python が失敗すれば「未検査」の WARN になる）
+  try { [void](New-Object regex $r.E); [void](New-Object regex (Fold-Ascii $r.E)); [void](New-Object regex ('\A(?:' + $r.W + ')\z')) }
+  catch { $r.Error = 'e / wtool の行から正規表現を組み立てられない'; return $r }
+  return $r
+}
+$ss = Read-SettingsScope ([System.IO.Path]::Combine([string]$PSScriptRoot, 'check-assets.d', 'settings-scope.txt'))
+$ssOk = -not $ss.Error
+if (-not $ssOk) {
+  Bad "check-assets 自身の表 scripts/check-assets.d/settings-scope.txt を読めない（$($ss.Error)）。settings.json のキー（U / M / E）と照合されない権限ルールは検査しない（表の書式はそのファイルの冒頭）"
+}
+$uKeys = @($ss.U); $mKeys = @($ss.M); $envRe = $ss.E; $wRuleRe = $ss.W
 # キーパス（a.b.c）が JSON に存在するか。bash 版の has() と同じ意味（大文字小文字を区別する）。
 # ⚠ [pscustomobject] は PSObject の別名でほぼ何にでも一致するため、完全修飾の型名で判定する。
 function Test-JsonPath($obj, [string]$path) {
@@ -673,6 +733,9 @@ if ($settingsBom) {
     Bad ("settings.json の同じオブジェクト内でキーが重複している（大文字小文字だけが違うものを含む）: " + ($dups -join '、') + "（どの値が効くかは読み手によって変わる。Windows の環境変数名のように大文字小文字を区別しない読み手では同じキーになる。1 つにまとめること。キーの検査は重複を解消してから行う）")
   } elseif ($null -eq $json) {
     Bad "settings.json が不正な JSON（claude doctor / /doctor でも検出される）"
+  } elseif (-not $ssOk) {
+    # 表を読めなかったときはキーの検査をしない（FAIL は 3. の冒頭で出した。bash 版と同じ）
+    Pass "settings.json は valid JSON"
   } else {
     Pass "settings.json は valid JSON"
     $uHits = @($uKeys | Where-Object { Test-JsonPath $json $_ })

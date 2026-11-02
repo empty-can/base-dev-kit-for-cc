@@ -26,6 +26,7 @@
 #     ca-root            bash pwsh ps51   check-assets リポジトリルート
 #     ca-fixture         bash pwsh ps51   check-assets fixture（U/M/E・無害・壊れた JSON・…）
 #     ca-links           bash pwsh ps51   check-assets リンク（ジャンクション / シンボリックリンク）
+#     ca-data            bash pwsh ps51   check-assets 表の欠損・破損・版違い（scripts/check-assets.d/settings-scope.txt）
 #     cleanenv           bash pwsh ps51   clean-test-env（スタブ）
 #     cleanenv-badmode   bash pwsh ps51   clean-test-env 不正な権限モード（スタブ）
 #     cleanenv-badshare  bash pwsh ps51   clean-test-env 存在しない <Share>（スタブ）

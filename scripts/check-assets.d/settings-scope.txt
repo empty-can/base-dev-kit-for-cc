@@ -1,0 +1,136 @@
+# check-assets の 3.（settings.json のキーの検査）が使う表。check-assets.sh / check-assets.ps1 の両版が読む。区切りは TAB。1 行 1 件。
+# 1 文字目が # の行と空行は無視する（行頭の空白は剥がさない）。UTF-8（BOM なし）・LF で保存する。
+#   両版はこのファイルを検査対象のツリーではなくスクリプト自身の位置（check-assets と同じフォルダの check-assets.d/）から読む
+#   （publish-share は .claude/ だけを取り出した一時ツリーを検査させるため）。表は両版のコードにはもう無いので、表を更新するときは
+#   このファイルだけを直す。区分の意味・根拠（settings-reference の Scope 欄）と照合の仕方は check-assets.sh の 3. の冒頭にある。
+#
+#   書式: タグ<TAB>値（行頭のタグで値の意味が決まる）
+#     format<TAB>1   … スキーマ版。最初のデータ行に 1 回だけ書く（読み手は版 1 を期待する）。行を足す・消す・直すだけでは上げず、
+#                      タグや値の意味を変えるときだけ上げる（そのときは両版の読み手も同時に直す）
+#     u<TAB>キーパス  … U = user / local / managed / --settings でのみ有効なキー（project の .claude/settings.json では無視される）
+#     m<TAB>キーパス  … M = managed 専用のキー（project でも --settings でも無視される）
+#     e<TAB>選択肢    … E = env のうち project / local からは設定できない変数名を表す正規表現の選択肢（1 行 1 個）。両版は全行を
+#                      | で結び、^( と )$ で包んで変数名の全体に照合する
+#     wtool<TAB>ツール名 … 照合されない権限ルールのツール名（パス付きのルール「ツール名(…)」がどこに置いても効かないもの）。両版は
+#                      全行を | で結んで ( ) で包み、「( ) の中が 1 文字以上」を表す部分（コードにある）を後ろに付けて、ルールの全体に
+#                      照合する（大文字小文字を区別する）
+#   キーパスは英数字と _ の名前を . でつないだもの（a.b.c。各段の名前を大文字小文字を区別して照合する。値は見ない）。ツール名は
+#   英数字と _ だけ。u / m の行の順が、WARN に並ぶキーの順になる。
+#   書式の誤り（未知のタグ・列の数が 2 でない・空の値・値に使えない文字・同じタグの中での重複・format 行の欠落 / 重複 / 版の違い・
+#   format 行より前のデータ行・u / m / e / wtool のどれかの行が 1 つも無い・NUL バイト）が 1 つでもあれば、check-assets は FAIL に
+#   して settings.json のキーの検査をしない（検査器自身の表が欠けた状態を PASS にしない）。
+#
+#   e の選択肢を書くときの注意:
+#     - 使える文字は英数字・_ と . * ( ) | ? だけ。エスケープ（バックスラッシュ）や [ ] { } + ^ $ は使わない。照合の二段階目は、
+#       選択肢から組み立てた正規表現そのものも A〜Z を小文字に畳んで照合する。バックスラッシュ ＋ D・S・W・B のように大文字と
+#       小文字で意味が違うエスケープを含むと、畳んだときに意味が変わる。リテラルと . * ( ) | ? だけなら畳んでも意味は変わらない
+#     - ( ) は釣り合わせる。| は ( ) の中でだけ使う（括弧の外の | は 1 行に 2 個の選択肢を書いたことになる）。* と ? は英数字・_・
+#       .・) の直後にだけ置く（python の re と .NET のどちらでも組み立てられる形に限る。読み手が検査する）
+#     - 照合は二段階: 完全一致（大文字小文字を区別）→ 一致しなければ A〜Z だけを小文字に畳んだ同士。大文字小文字だけが違う変数名
+#       （systemroot 等）は別の文言の WARN になる（環境変数名の大文字小文字を区別しないのは Windows だけ）
+
+format	1
+
+# U。axScreenReader は v2.1.305 から User or managed（--settings も可。それまでは Any file）。sandbox.allowNestedUserNamespaces は
+# v2.1.305 で新設（User or managed。--settings も可。true にするとサンドボックスの境界を外す）
+u	skipDangerousModePermissionPrompt
+u	useAutoModeDuringPlan
+u	autoMode
+u	skipAutoPermissionPrompt
+u	processWrapper
+u	pluginConfigs
+u	syncClaudeAiSkills
+u	syncClaudeAiPlugins
+u	axScreenReader
+u	sandbox.allowAppleEvents
+u	sandbox.allowNestedUserNamespaces
+u	sandbox.ripgrep
+u	sandbox.filesystem.disabled
+u	sandbox.network.strictAllowlist
+u	sandbox.network.tlsTerminate
+u	sandbox.credentials.allowPlaintextInject
+u	sandbox.credentials.awsPairs
+u	sandbox.credentials.sigv4
+
+# M。prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く
+m	prependPlugins
+m	appendPlugins
+m	allowManagedPermissionRulesOnly
+m	allowManagedHooksOnly
+m	allowManagedMcpServersOnly
+m	managedMcpServers
+m	strictKnownMarketplaces
+m	allowedMarketplaces
+m	blockedMarketplaces
+m	strictPluginOnlyCustomization
+m	disableSideloadFlags
+m	disableCommandPluginSources
+m	claudeMd
+m	policyHelper
+m	allowedProviders
+m	deniedModels
+m	availableModelsMatch
+m	requiredMinimumVersion
+m	requiredMaximumVersion
+m	sshHostAllowlist
+m	channelsEnabled
+m	allowedChannelPlugins
+m	sandbox.bwrapPath
+m	sandbox.socatPath
+m	sandbox.filesystem.allowManagedReadPathsOnly
+m	sandbox.network.allowManagedDomainsOnly
+
+# E。どの settings ファイルからも読まれず起動環境からしか読まれない変数（CLAUDE_CODE_RESTRICTED 等。settings-reference
+# 「Variables Claude Code ignores in `env`」の各項目。v2.1.310 の docs で照合）も含める。
+# CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS は v2.1.310 の docs から消えた（どのページにも無い。changelog に廃止の記載は無い）が、project の
+# env に書いても効かない事実は変わらないので残す（外すと、効かない変数が黙って PASS になる）。
+# CLAUDE_AX_.* は v2.1.305 から project / local では無視（screen reader 等）。CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB は
+# どの settings ファイルからも読まれない（起動環境だけ。MOUNTED_DRIVE_RM_PROMPT と WARN_* は v2.1.304 以降の docs で追加）。
+# ホスティング環境・Claude Code 自身が設定する変数（CLAUDE_CODE_REMOTE / CLAUDE_CODE_ACCOUNT_UUID / CLAUDE_CODE_MESSAGING_* 等）は、
+# 利用者が settings に書く動機が無いので含めない。
+e	CLAUDE_CONFIG_DIR
+e	CLAUDE_CODE_TMPDIR
+e	HOME
+e	TMPDIR
+e	TMP
+e	TEMP
+e	XDG_.*
+e	SystemRoot
+e	ComSpec
+e	ProgramData
+e	LOCALAPPDATA
+e	PATHEXT
+e	PSModulePath
+e	ProgramFiles.*
+e	CommonProgramFiles.*
+e	ALLUSERSPROFILE
+e	SystemDrive
+e	CLAUDE_CODE_ENABLE_TELEMETRY
+e	CLAUDE_CODE_ENHANCED_TELEMETRY_BETA
+e	ENABLE_ENHANCED_TELEMETRY_BETA
+e	OTEL_(LOGS|METRICS|TRACES)_EXPORTER
+e	OTEL_LOG_.*
+e	OTEL_EXPORTER_OTLP_(.*_)?(ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)
+e	OTEL_EXPORTER_PROMETHEUS_(HOST|PORT)
+e	ENABLE_BETA_TRACING_DETAILED
+e	BETA_TRACING_ENDPOINT
+e	CLAUDE_CODE_PROCESS_WRAPPER
+e	CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)
+e	CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR
+e	CLAUDE_AX_.*
+e	CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS
+e	CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS
+e	CLAUDE_CODE_DISABLE_(ATTACHMENTS|FILE_MENTIONS)
+e	CLAUDE_CODE_PROJECT_DIR_NAME
+e	CLAUDE_CODE_RESTRICTED
+e	CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY
+e	CLAUDE_CODE_DISABLE_(DANGEROUS_RM_TIMEOUT|SUBSTITUTION_RM_PROMPT|INLINE_SHELL_RM_PROMPT|MOUNTED_DRIVE_RM_PROMPT)
+e	CLAUDE_CODE_WARN_(DISK|MEMORY)_FREE_GIB
+
+# W。ファイルの権限は Edit(path) / Read(path) ルールだけで照合され、パス付きの Write / NotebookEdit / MultiEdit / Glob はどこに置いても
+# 効かない（permissions「`Write(path)`, `NotebookEdit(path)`, and `Glob(path)` rules never match」）。ツール名だけのルールはツール単位で
+# 効くので対象外（コードの「( ) の中が 1 文字以上」で外れる）
+wtool	Write
+wtool	NotebookEdit
+wtool	MultiEdit
+wtool	Glob

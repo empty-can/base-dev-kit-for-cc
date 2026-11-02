@@ -31,6 +31,10 @@
 # 終了コード: FAIL が1件以上で 1、なければ 0（CI 利用可）。
 set -uo pipefail
 
+# スクリプト自身の位置。3. の表（check-assets.d/settings-scope.txt）は検査対象（<Share-path>）ではなくここから読む
+# （publish-share は .claude だけを取り出した一時ツリーを検査させるので、検査対象の側に scripts/ は無い）。PS 版は $PSScriptRoot
+_SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+
 PAYLOAD=0
 SHARE=""
 while [ $# -gt 0 ]; do
@@ -509,7 +513,7 @@ done < <(ref_files)
 #          無視されるが、方法 B と clean-test-env（--settings で結合）では有効になる＝配布方式で挙動が割れる。
 #      M = managed 専用。project でも --settings でも無視される（組織の managed settings で配る）。
 #      E = env ブロックのうち project / local からは設定できない変数（テレメトリの off 値だけは例外的に効く）。
-#          キー名は 2-c と同じ二段階で照合する（_ENV_RE に完全一致 → A〜Z だけ畳んだ同士で一致）。判定は、
+#          キー名は 2-c と同じ二段階で照合する（表の e 行から組み立てた _ENV_RE に完全一致 → A〜Z だけ畳んだ同士で一致）。判定は、
 #          完全一致 → 従来の WARN、大文字小文字だけ違う（systemroot 等）→ 「Windows でのみ同一視される」旨の別の WARN。
 #          環境変数名の大文字小文字を区別しないのは Windows だけなので、区別する OS では別の変数でありうる。
 #          どの settings ファイルからも読まれず起動環境からしか読まれない変数（CLAUDE_CODE_RESTRICTED 等）も E に含める
@@ -519,43 +523,112 @@ done < <(ref_files)
 #    `NotebookEdit(path)`, and `Glob(path)` rules never match」）を別の WARN で報告する。ツール名だけのルール（Write 等）は
 #    ツール単位で効くので対象外。hooks の if 条件（"Write(...)" 等）は権限ルールではないので見ない。Claude Code 自身も
 #    起動時に警告するが、v2.1.305 以降の対話セッションではバナー下の行とデバッグログにしか出ない（allow ルールは行も出ない）。
-#    ⚠ 判定はキーパス（a.b.c）で行い、PS 版と同じ表・同じ意味に揃えること（raw grep は
+#    ⚠ 判定はキーパス（a.b.c）で行い、PS 版と同じ意味に揃えること（raw grep は
 #       sandbox.filesystem.disabled の "disabled" のような汎用名を区別できない）。
-#    ⚠ 表を更新したら PS 版の $uKeys / $mKeys / $envRe / $wRuleRe も同時に更新する。
+#    表（U / M のキー・E の選択肢・照合されない権限ルールのツール名）は check-assets.d/settings-scope.txt にあり、PS 版も同じ
+#    ファイルを読む（両版のコードに表は無い。表を更新するときはそのファイルだけを直す。書式・各行の根拠・E の選択肢に使える文字は
+#    ファイルの冒頭）。表が無い・書式が壊れている・format の版が違うときは、settings.json の有無によらず 3. の冒頭で専用メッセージの
+#    FAIL にし、キーの検査（U / M / E と照合されない権限ルール）をしない。検査器自身の表が欠けた状態を PASS にしない（2-g の
+#    「未検査」の WARN は検査対象の一時的な読み取りの失敗で、表の欠落とは違う）。BOM・JSON 構文・重複キーの検査は表を使わないので続ける。
 #    同じオブジェクト内のキーの重複（完全一致、または A〜Z だけ畳んで一致 = 大文字小文字だけの違い。env 以外の階層も同じ）は
 #    専用メッセージで FAIL にし、キーの検査には進まない。どの値が効くかは読み手で変わり（python / PowerShell 7 / 5.1 は
 #    完全一致の重複を黙って後勝ちで受理し、PowerShell は大文字小文字だけの違いを拒否する。実測）、Windows の環境変数名は
 #    大文字小文字を区別しない。判定の順は BOM → JSON 構文 → 重複キー → キーの検査（PS 版と同じ）。構文が先なので、
 #    壊れた JSON は重複があっても「不正な JSON」になる（PS 版は ConvertFrom-Json が構文を通したかで同じ順にしている）。
-# axScreenReader は v2.1.305 から User or managed（--settings も可。それまでは Any file）。sandbox.allowNestedUserNamespaces は
-# v2.1.305 で新設（User or managed。--settings も可。true にするとサンドボックスの境界を外す）
-_U_KEYS=(skipDangerousModePermissionPrompt useAutoModeDuringPlan autoMode skipAutoPermissionPrompt
-         processWrapper pluginConfigs syncClaudeAiSkills syncClaudeAiPlugins axScreenReader
-         sandbox.allowAppleEvents sandbox.allowNestedUserNamespaces sandbox.ripgrep sandbox.filesystem.disabled
-         sandbox.network.strictAllowlist sandbox.network.tlsTerminate
-         sandbox.credentials.allowPlaintextInject sandbox.credentials.awsPairs sandbox.credentials.sigv4)
-# prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く
-_M_KEYS=(prependPlugins appendPlugins
-         allowManagedPermissionRulesOnly allowManagedHooksOnly allowManagedMcpServersOnly managedMcpServers
-         strictKnownMarketplaces allowedMarketplaces blockedMarketplaces strictPluginOnlyCustomization
-         disableSideloadFlags disableCommandPluginSources claudeMd policyHelper allowedProviders
-         deniedModels availableModelsMatch requiredMinimumVersion requiredMaximumVersion sshHostAllowlist
-         channelsEnabled allowedChannelPlugins
-         sandbox.bwrapPath sandbox.socatPath sandbox.filesystem.allowManagedReadPathsOnly
-         sandbox.network.allowManagedDomainsOnly)
-# ⚠ 二段階目は _ENV_RE 自体も A〜Z を畳んで照合する。畳めるのは \D \S \W \B 等の「大文字で意味が変わるエスケープ」を
-#    含まないから。追加するときもリテラルと . * ( ) | ? だけで書くこと（PS 版の $envRe も同じ）。
-# ⚠ CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS は v2.1.310 の docs から消えた（どのページにも無い。changelog に廃止の記載は無い）が、
-#    project の env に書いても効かない事実は変わらないので残す（外すと、効かない変数が黙って PASS になる）。
-# CLAUDE_AX_.* は v2.1.305 から project / local では無視（screen reader 等）。CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB は
-# どの settings ファイルからも読まれない（起動環境だけ。MOUNTED_DRIVE_RM_PROMPT と WARN_* は v2.1.304 以降の docs で追加）。
-# ホスティング環境・Claude Code 自身が設定する変数（CLAUDE_CODE_REMOTE / CLAUDE_CODE_ACCOUNT_UUID / CLAUDE_CODE_MESSAGING_* 等）は、
-# 利用者が settings に書く動機が無いので含めない。
-_ENV_RE='^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_TMPDIR|HOME|TMPDIR|TMP|TEMP|XDG_.*|SystemRoot|ComSpec|ProgramData|LOCALAPPDATA|PATHEXT|PSModulePath|ProgramFiles.*|CommonProgramFiles.*|ALLUSERSPROFILE|SystemDrive|CLAUDE_CODE_ENABLE_TELEMETRY|CLAUDE_CODE_ENHANCED_TELEMETRY_BETA|ENABLE_ENHANCED_TELEMETRY_BETA|OTEL_(LOGS|METRICS|TRACES)_EXPORTER|OTEL_LOG_.*|OTEL_EXPORTER_OTLP_(.*_)?(ENDPOINT|HEADERS|PROTOCOL|CERTIFICATE|CLIENT_KEY|INSECURE)|OTEL_EXPORTER_PROMETHEUS_(HOST|PORT)|ENABLE_BETA_TRACING_DETAILED|BETA_TRACING_ENDPOINT|CLAUDE_CODE_PROCESS_WRAPPER|CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)|CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR|CLAUDE_AX_.*|CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS|CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS|CLAUDE_CODE_DISABLE_(ATTACHMENTS|FILE_MENTIONS)|CLAUDE_CODE_PROJECT_DIR_NAME|CLAUDE_CODE_RESTRICTED|CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY|CLAUDE_CODE_DISABLE_(DANGEROUS_RM_TIMEOUT|SUBSTITUTION_RM_PROMPT|INLINE_SHELL_RM_PROMPT|MOUNTED_DRIVE_RM_PROMPT)|CLAUDE_CODE_WARN_(DISK|MEMORY)_FREE_GIB)$'
-# 照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob）。( ) の中が 1 文字以上あるものだけ（ツール名だけ・
-# 空の ( ) は対象外）。. の代わりに [\s\S] を使う（python の . は既定で改行に一致せず、PS 版の .NET も同じだが、両版で同じ意味に
-# するため明示する）。大文字小文字を区別する（ツール名は区別される）。PS 版の $wRuleRe と同じ式
-_W_RULE_RE='(Write|NotebookEdit|MultiEdit|Glob)\([\s\S]+\)'
+# ---- 表の読み手（PS 版の Read-SettingsScope と同じ規則・同じ文言。書式は表のファイルの冒頭）----
+#   1 行ずつ読み、行末の CR と 1 行目の BOM を剥がす（LF が既定だが、手で保存されたファイルに備える）。1 文字目が # の行と空行は
+#   飛ばす（行頭の空白は剥がさない）。列はパラメータ展開で TAB ちょうどで分ける（IFS=$'\t' の read は連続する TAB を 1 個に潰す）。
+#   行番号は物理行（コメント・空行も数える）。最初の誤りで止め、理由を _SS_ERR に入れて 1 を返す。成功なら _U_KEYS / _M_KEYS
+#   （表の順。WARN に並ぶ順になる）と、組み立てた _ENV_RE（e 行を | で結んで ^( )$ で包む）・_W_RULE_RE（wtool 行を | で結んで
+#   ( ) で包み、( ) の中が 1 文字以上の部分を付ける）を設定して 0 を返す。
+#   ⚠ タグだけでなく値の形も検査する。U / M は空白区切りの 1 本の引数にして python へ渡すので、空白を含む値は黙って 2 個のキーになる
+#      （PS 版は 1 個のまま）。E / W は正規表現へそのまま埋め込むので、組み立てられない式は python の失敗＝「キー検査に失敗した
+#      （未検査）」の WARN に化ける（PS 版は .NET の例外）。どちらも両版の判定を割るので、読み手の段で書式の誤りにする。E の選択肢は
+#      文字を英数字・_ と . * ( ) | ? に限り、括弧の釣り合い・括弧の外の | が無いこと・* と ? の直前が英数字・_・.・) であることを
+#      見る（python の re と .NET の双方で組み立てられ、A〜Z を畳んでも意味が変わらない形に限る）。
+#   ⚠ 文字の集合は範囲（A-Z）でなく列挙した文字列との照合で調べる（ブラケットの範囲はロケールに依存しうる）。値は 1 文字ずつ見る
+#      （非 ASCII はどの位置でも許されないので、UTF-8 として不正なバイトでも PS 版と同じ行・同じ理由で止まる）。
+#   ⚠ read は NUL を黙って捨てる（PS 版は文字として残し、判定が割れる）ので、先に数えて書式の誤りにする（UTF-16 で保存したものもここで止まる）。
+_SS_AN='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
+ss_load(){ # $1=表のファイル
+  local f="$1" line tag val ln=0 fmt=0 i c prev depth x seen=$'\n' nu=0 nm=0 ne=0 nw=0
+  local -a su=() sm=() se=() sw=()
+  _SS_ERR=""
+  [[ -f "$f" ]] || { _SS_ERR="ファイルが無い"; return 1; }
+  [[ -r "$f" ]] || { _SS_ERR="読めない"; return 1; }
+  [[ "$(LC_ALL=C tr -cd '\000' < "$f" | wc -c)" -eq 0 ]] || { _SS_ERR="NUL バイトを含む"; return 1; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    ln=$((ln + 1))
+    line="${line%$'\r'}"
+    [[ $ln -eq 1 ]] && line="${line#$'\357\273\277'}"
+    case "$line" in ''|'#'*) continue;; esac
+    tag="${line%%$'\t'*}"; val="${line#*$'\t'}"
+    if [[ "$tag" == "$line" || "$val" == *$'\t'* ]]; then _SS_ERR="${ln} 行目: 列の数が 2 でない（タグ<TAB>値）"; return 1; fi
+    if [[ "$tag" == format ]]; then
+      if [[ $fmt -eq 1 ]]; then _SS_ERR="${ln} 行目: format 行が重複している"; return 1; fi
+      if [[ "$val" != 1 ]]; then _SS_ERR="${ln} 行目: format の版が 1 でない"; return 1; fi
+      fmt=1; continue
+    fi
+    if [[ $fmt -eq 0 ]]; then _SS_ERR="${ln} 行目: format 行より前にデータ行がある"; return 1; fi
+    case "$tag" in u|m|e|wtool) ;; *) _SS_ERR="${ln} 行目: 未知のタグ"; return 1;; esac
+    if [[ -z "$val" ]]; then _SS_ERR="${ln} 行目: 値が空"; return 1; fi
+    depth=0; prev=""; x=""
+    for ((i = 0; i < ${#val}; i++)); do
+      c="${val:i:1}"
+      case "$tag" in
+        u|m)
+          if [[ "$c" == "." ]]; then
+            [[ -n "$prev" && "$prev" != "." ]] || x="キーパスの形でない（英数字と _ の名前を . でつないだもの）"
+          elif [[ "$_SS_AN" != *"$c"* ]]; then x="キーパスの形でない（英数字と _ の名前を . でつないだもの）"; fi;;
+        wtool) [[ "$_SS_AN" == *"$c"* ]] || x="ツール名の形でない（英数字と _ だけ）";;
+        e)
+          case "$c" in
+            "(") depth=$((depth + 1));;
+            ")") depth=$((depth - 1)); [[ $depth -ge 0 ]] || x="括弧が釣り合っていない";;
+            "|") [[ $depth -gt 0 ]] || x="括弧の外に | がある（1 行に選択肢は 1 個）";;
+            "*"|"?") case "$prev" in ""|"("|"|"|"*"|"?") x="* と ? の直前が英数字・_・.・) でない";; esac;;
+            ".") ;;
+            *) [[ "$_SS_AN" == *"$c"* ]] || x="使えない文字がある（英数字・_ と . * ( ) | ? だけ）";;
+          esac;;
+      esac
+      [[ -z "$x" ]] || { _SS_ERR="${ln} 行目: ${x}"; return 1; }
+      prev="$c"
+    done
+    case "$tag" in
+      u|m) [[ "$prev" != "." ]] || { _SS_ERR="${ln} 行目: キーパスの形でない（英数字と _ の名前を . でつないだもの）"; return 1; };;
+      e) [[ $depth -eq 0 ]] || { _SS_ERR="${ln} 行目: 括弧が釣り合っていない"; return 1; };;
+    esac
+    if [[ "$seen" == *$'\n'"$tag"$'\t'"$val"$'\n'* ]]; then _SS_ERR="${ln} 行目: 同じタグの中で重複している"; return 1; fi
+    seen+="$tag"$'\t'"$val"$'\n'
+    case "$tag" in
+      u) su+=("$val"); nu=$((nu + 1));;
+      m) sm+=("$val"); nm=$((nm + 1));;
+      e) se+=("$val"); ne=$((ne + 1));;
+      wtool) sw+=("$val"); nw=$((nw + 1));;
+    esac
+  done < "$f"
+  [[ $fmt -eq 1 ]] || { _SS_ERR="format 行が無い"; return 1; }
+  [[ $nu -gt 0 ]] || { _SS_ERR="タグ u の行が無い"; return 1; }
+  [[ $nm -gt 0 ]] || { _SS_ERR="タグ m の行が無い"; return 1; }
+  [[ $ne -gt 0 ]] || { _SS_ERR="タグ e の行が無い"; return 1; }
+  [[ $nw -gt 0 ]] || { _SS_ERR="タグ wtool の行が無い"; return 1; }
+  _U_KEYS=("${su[@]}"); _M_KEYS=("${sm[@]}")
+  x=""; for c in "${se[@]}"; do x+="${x:+|}$c"; done
+  _ENV_RE='^('"$x"')$'
+  # 照合されない権限ルール（パス付きの Write / NotebookEdit / MultiEdit / Glob 等。ツール名は表の wtool 行）。( ) の中が 1 文字以上
+  # あるものだけ（ツール名だけ・空の ( ) は対象外）。. の代わりに [\s\S] を使う（python の . は既定で改行に一致せず、PS 版の .NET も
+  # 同じだが、両版で同じ意味にするため明示する）。大文字小文字を区別する（ツール名は区別される）。PS 版の $wRuleRe と同じ式
+  x=""; for c in "${sw[@]}"; do x+="${x:+|}$c"; done
+  _W_RULE_RE='('"$x"')\([\s\S]+\)'
+  return 0
+}
+_U_KEYS=(); _M_KEYS=(); _ENV_RE=""; _W_RULE_RE=""
+if ss_load "$_SELF_DIR/check-assets.d/settings-scope.txt"; then
+  _SS_OK=1
+else
+  _SS_OK=0
+  bad "check-assets 自身の表 scripts/check-assets.d/settings-scope.txt を読めない（${_SS_ERR}）。settings.json のキー（U / M / E）と照合されない権限ルールは検査しない（表の書式はそのファイルの冒頭）"
+fi
 SETTINGS="$SHARE/.claude/settings.json"
 # ⚠ 先頭の UTF-8 BOM は専用メッセージで FAIL にする（JSON 構文・キーの検査には進まない）。Claude Code が BOM 付きの
 #    settings.json を読める保証が無い（RFC 8259 §8.1 は BOM を付けないよう求め、無視するかはパーサ次第）。かつては
@@ -604,8 +677,11 @@ PYEOF
       bad "settings.json の同じオブジェクト内でキーが重複している（大文字小文字だけが違うものを含む）: ${_dupj}（どの値が効くかは読み手によって変わる。Windows の環境変数名のように大文字小文字を区別しない読み手では同じキーになる。1 つにまとめること。キーの検査は重複を解消してから行う）"
     elif [[ $_jrc -eq 0 ]]; then
       pass "settings.json は valid JSON"
+      # 表を読めなかったときはキーの検査をしない（FAIL は 3. の冒頭で出した。PS 版と同じ）
+      if [[ $_SS_OK -ne 1 ]]; then
+        :
       # ⚠ python の失敗を PASS に化けさせない（出力が空でも成功扱いにすると fail-open になる。実測）
-      if _res="$("$PY" - "$SETTINGS" "${_U_KEYS[*]}" "${_M_KEYS[*]}" "$_ENV_RE" "$_W_RULE_RE" 2>/dev/null <<'PYEOF'
+      elif _res="$("$PY" - "$SETTINGS" "${_U_KEYS[*]}" "${_M_KEYS[*]}" "$_ENV_RE" "$_W_RULE_RE" 2>/dev/null <<'PYEOF'
 import json, re, sys
 d = json.load(open(sys.argv[1], encoding='utf-8'))
 if not isinstance(d, dict):

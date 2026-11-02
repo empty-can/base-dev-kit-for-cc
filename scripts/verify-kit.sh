@@ -24,8 +24,8 @@
 #   検査しない系統、（項目, 系統）の重複、項目の全系統の凍結）が 1 行でもあれば、項目「凍結 fixture frozen.txt」が FAIL し、
 #   凍結は一切適用しない（誤記で黙って緩まない）。
 #   項目キー（出力の順）: frozen syntax-bash syntax-pwsh syntax-ps51 format version launcher launcher-stalerc launcher-streams
-#     optset setupenv internal-keys ca-root ca-fixture ca-links cleanenv cleanenv-badmode cleanenv-badshare pubname pubcase
-#     pubmanifest pubargs left
+#     optset setupenv internal-keys ca-root ca-fixture ca-links ca-data cleanenv cleanenv-badmode cleanenv-badshare pubname
+#     pubcase pubmanifest pubargs left
 #   凍結できない項目: frozen（fixture の検証）・syntax-*（系統ごとの構文検査）・format・left（比較でない）・internal-keys
 #     （sh / ps1 / docs の名前の集合の突き合わせ。凍結中もデータとして追随を続ける）。凍結できる項目が検査する系統は
 #     frozen.txt の冒頭に一覧がある（launcher-stalerc は pwsh / ps51、pub* は bash / pwsh、ほかは 3 系統）。
@@ -596,6 +596,51 @@ probe_checkassets(){
   done
 }
 
+# ---- check-assets の表（scripts/check-assets.d/settings-scope.txt）の欠損・破損・版違い ---------------------------
+# check-assets は表をスクリプト自身の位置から読むので、一時ツリー（<ケース>/tree/scripts/）に check-assets.sh と表を複製し、表を
+# 消す・壊す・版を変えてから、最小の payload（<ケース>/share。settings は settings-ume.json）を --payload で検査する。実物の表は
+# 書き換えない。ケースと期待（verify-kit.ps1 の $CaDataCases / Item-CaData と同じ。期待は item_ca_data）:
+#   ok      … 複製のまま（対照。表の FAIL が出ず、U / M / E の WARN が出る。複製の置き方の誤りで missing 等が通るのを防ぐ）
+#   missing … 表を消す（実物の表はあるので、検査対象やリポジトリではなくスクリプトの位置から読んでいることも分かる）
+#   tag     … 末尾に未知のタグの行（x<TAB>y）を足す
+#   paren   … 末尾に括弧の釣り合わない e の行（e<TAB>VK_(A）を足す
+#   version … format<TAB>1 の行を format<TAB>2 に変える（その行がちょうど 1 行でなければ ASSERT ng）
+#   notool  … wtool の行をすべて消す
+CA_DATA_CASES=(ok missing tag paren version notool)
+probe_checkassets_data(){
+  local c d t s f l n rc
+  for c in "${CA_DATA_CASES[@]}"; do
+    sec "checkassets-data $c"
+    if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+      put SKIP "python が無い（check-assets.sh の settings.json 検査が動かない）"; continue
+    fi
+    d="$VK_TMP/ca-data-$c"; t="$d/tree/scripts"; s="$d/share"; f="$t/check-assets.d/settings-scope.txt"
+    mkdir -p "$t/check-assets.d" "$s/.claude"
+    cp "$VK_ROOT/scripts/check-assets.sh" "$t/"
+    cp "$VK_ROOT/scripts/check-assets.d/settings-scope.txt" "$f"
+    cp "$VK_ROOT/.claude/.gitignore" "$VK_ROOT/.claude/.gitattributes" "$s/.claude/"
+    printf '# verify-kit fixture\n' > "$s/.claude/CLAUDE.md"
+    cp "$VK_FIX/settings-ume.json" "$s/.claude/settings.json"
+    case "$c" in
+      missing) rm -f "$f";;
+      tag) printf 'x\ty\n' >> "$f";;
+      paren) printf 'e\tVK_(A\n' >> "$f";;
+      version)
+        n="$(grep -cxF -- $'format\t1' "$f")"
+        if [ "${n:-0}" -ne 1 ]; then put ASSERT "ng format<TAB>1 の行が ${n:-0} 行（1 行のはず）"; continue; fi
+        while IFS= read -r l || [ -n "$l" ]; do
+          [ "$l" = $'format\t1' ] && l=$'format\t2'
+          printf '%s\n' "$l"
+        done < "$f" > "$f.new" && mv "$f.new" "$f";;
+      notool) grep -v -- $'^wtool\t' "$f" > "$f.new"; mv "$f.new" "$f";;
+    esac
+    put ASSERT ok
+    "$BASH" "$t/check-assets.sh" --payload "$s" > "$d/out" 2> "$d/err"; rc=$?
+    put RC "$rc"
+    while IFS= read -r l; do put O "$l"; done < <(vk_norm "$s" "<SHARE>" < "$d/out")
+  done
+}
+
 # ---- clean-test-env（スタブ・KEEP=1。一時ディレクトリは TMPDIR で自分の一時領域の中へ作らせる）------
 vk_cte_run(){ # $1=作業領域。PRE を置いた呼び出し元として clean-test-env.sh を呼び、実行後の環境を AFTER に残す
   local d="$1" tag kv k v rc
@@ -954,6 +999,7 @@ probe_main(){
   probe_launcher_streams
   probe_version
   probe_checkassets
+  probe_checkassets_data
   probe_cleanenv
   probe_cleanenv_badmode
   probe_cleanenv_badshare
@@ -981,10 +1027,11 @@ declare -A SYS_NAME=([bash]="bash" [pwsh]="pwsh" [ps51]="Windows PowerShell")
 # 項目キー（compare_main の呼び出し順）と、凍結できる項目が検査する系統（verify-kit.ps1 の $ItemKeys / $FrzPart と同じ。
 # frozen.txt の冒頭の一覧とも揃える）。VK_FRZ_PART に無い項目は凍結できない
 VK_ITEM_KEYS=(frozen syntax-bash syntax-pwsh syntax-ps51 format version launcher launcher-stalerc launcher-streams optset setupenv
-              internal-keys ca-root ca-fixture ca-links cleanenv cleanenv-badmode cleanenv-badshare pubname pubcase pubmanifest pubargs left)
+              internal-keys ca-root ca-fixture ca-links ca-data cleanenv cleanenv-badmode cleanenv-badshare pubname pubcase pubmanifest
+              pubargs left)
 declare -A VK_FRZ_PART=([version]="bash pwsh ps51" [launcher]="bash pwsh ps51" [launcher-stalerc]="pwsh ps51"
   [launcher-streams]="bash pwsh ps51" [optset]="bash pwsh ps51" [setupenv]="bash pwsh ps51" [ca-root]="bash pwsh ps51"
-  [ca-fixture]="bash pwsh ps51" [ca-links]="bash pwsh ps51" [cleanenv]="bash pwsh ps51" [cleanenv-badmode]="bash pwsh ps51"
+  [ca-fixture]="bash pwsh ps51" [ca-links]="bash pwsh ps51" [ca-data]="bash pwsh ps51" [cleanenv]="bash pwsh ps51" [cleanenv-badmode]="bash pwsh ps51"
   [cleanenv-badshare]="bash pwsh ps51" [pubname]="bash pwsh" [pubcase]="bash pwsh" [pubmanifest]="bash pwsh" [pubargs]="bash pwsh")
 # 検証を通った frozen.txt の内容（項目キー → 凍結する系統 / FROZEN の行に添える説明）。item_frozen が埋める
 declare -A FRZ_SYS=() FRZ_NOTE=()
@@ -1211,7 +1258,7 @@ item_syntax(){ # $1=系統 $2=項目名
 
 fmt_class(){ # 保存形式の区分: ps（BOM + CRLF）/ lfnobom（CR 0・BOM なし）/ lf（CR 0）/ none（対象外）
   case "$1" in
-    scripts/verify-kit.d/*) echo lfnobom; return;;
+    scripts/verify-kit.d/*|scripts/check-assets.d/*) echo lfnobom; return;;
   esac
   case "${1##*/}" in
     *.ps1|*.psm1|*.psd1|*.ps1.template) echo ps;;
@@ -1585,6 +1632,62 @@ item_ca_links(){
     "${CA_LINK_CASES[@]}"
 }
 
+# check-assets の表の欠損・破損・版違い（probe_checkassets_data のケース。判定・文言は verify-kit.ps1 の Item-CaData と同じ）。
+# 全系統の出力の一致に加え、ok 以外は終了コード 1・表の FAIL 行がちょうど 1 行でケースの理由を含む・キーの検査をしない（U の WARN が
+# 無い）・他の検査は続く（settings.json の構文の PASS がある）こと、ok は終了コード 0・表の FAIL 行が無い・U の WARN があることを見る
+CA_DATA_FAIL='[FAIL] check-assets 自身の表 scripts/check-assets.d/settings-scope.txt を読めない（'
+ca_data_reason(){
+  case "$1" in
+    missing) printf '%s' 'ファイルが無い）';;
+    tag) printf '%s' '行目: 未知のタグ）';;
+    paren) printf '%s' '行目: 括弧が釣り合っていない）';;
+    version) printf '%s' '行目: format の版が 1 でない）';;
+    notool) printf '%s' 'タグ wtool の行が無い）';;
+  esac
+}
+item_ca_data(){
+  local t="check-assets 表の欠損・破損・版違い（scripts/check-assets.d/settings-scope.txt）" s c cs a rc nf nr nu nj why
+  local -a S secs=()
+  mapfile -t S < <(usable "${SYS_ALL[@]}")
+  if [ "${#S[@]}" -eq 0 ]; then verdict SKIP "$t" "実行できる系統が無い"; return; fi
+  if c="$(crashed_in "${S[@]}")"; then verdict FAIL "$t" "${SYS_LABEL[$c]} の probe が異常終了した"; return; fi
+  drop_frozen ca-data -- "${S[@]}" || { verdict SKIP "$t" "$FROZEN_NONE"; return; }; S=("${KEPT[@]}")
+  for cs in "${CA_DATA_CASES[@]}"; do secs+=("checkassets-data $cs"); done
+  drop_skipping "${secs[@]}" -- "${S[@]}"
+  if [ "${#KEPT[@]}" -eq 0 ]; then verdict SKIP "$t" "$SKIP_NOTE"; return; fi
+  S=("${KEPT[@]}")
+  for cs in "${CA_DATA_CASES[@]}"; do
+    for s in "${S[@]}"; do
+      a="$(getsec "$s" "checkassets-data $cs" | sed -n 's/^ASSERT\t//p')"
+      if [ "$a" != ok ]; then verdict FAIL "$t" "${cs}: ${SYS_LABEL[$s]}: ${a:-結果が無い}"; return; fi
+    done
+    if ! same_all "checkassets-data $cs" "" "${S[@]}"; then
+      fail_diff "$t" "${cs}: 出力が ${SYS_LABEL[$SAME_A]} と ${SYS_LABEL[$SAME_B]} で違う"; return
+    fi
+    getsec "${S[0]}" "checkassets-data $cs" > "$VK_TMP/i-cd"
+    rc="$(sed -n 's/^RC\t//p' "$VK_TMP/i-cd" | head -n 1)"
+    sed -n 's/^O\t[[:space:]]*//p' "$VK_TMP/i-cd" > "$VK_TMP/i-cdo"
+    # grep -q は SIGPIPE を招くので件数で受ける
+    nf="$(grep -cF -- "$CA_DATA_FAIL" "$VK_TMP/i-cdo")"
+    nu="$(grep -cF -- '[WARN] 方法 A（' "$VK_TMP/i-cdo")"
+    nj="$(grep -cxF -- '[PASS] settings.json は valid JSON' "$VK_TMP/i-cdo")"
+    why=""
+    if [ "$cs" = ok ]; then
+      if [ "$rc" != 0 ]; then why="終了コードが期待（0）と違う（${rc}）"
+      elif [ "${nf:-0}" -ne 0 ]; then why="表の FAIL 行がある（複製のままの表は読めるはず）"
+      elif [ "${nu:-0}" -ne 1 ]; then why="U の WARN が無い（キーの検査が走っていない）"; fi
+    else
+      nr="$(grep -F -- "$CA_DATA_FAIL" "$VK_TMP/i-cdo" | grep -cF -- "$(ca_data_reason "$cs")")"
+      if [ "$rc" != 1 ]; then why="終了コードが期待（1）と違う（${rc}）"
+      elif [ "${nf:-0}" -ne 1 ] || [ "${nr:-0}" -ne 1 ]; then why="表の FAIL 行（…$(ca_data_reason "$cs")）がちょうど 1 行でない（FAIL 行 ${nf:-0}・理由の一致 ${nr:-0}）"
+      elif [ "${nu:-0}" -ne 0 ]; then why="表を読めないのにキーの検査が走った（U の WARN がある）"
+      elif [ "${nj:-0}" -ne 1 ]; then why="表を使わない検査が続いていない（settings.json の構文の PASS が無い）"; fi
+    fi
+    if [ -n "$why" ]; then verdict FAIL "$t" "${cs}: ${why}"; return; fi
+  done
+  verdict PASS "$t" "${#CA_DATA_CASES[@]} ケース × $(labels "${S[@]}") で同一出力・期待どおり（表を消す・未知のタグ・括弧の釣り合わない e・format の版違い・wtool の行が無い は表の FAIL〔終了コード 1〕でキーの検査をせず、他の検査は続く。複製のままの対照は表の FAIL なしで U の WARN が出る）$(missing_note "${SYS_ALL[@]}")${SKIP_NOTE:+（${SKIP_NOTE}）}"
+}
+
 item_cleanenv(){
   local t="clean-test-env（スタブ）" s c a frag first="" bad
   local -a S
@@ -1927,6 +2030,7 @@ compare_main(){
   item_ca_root
   item_ca_fixture
   item_ca_links
+  item_ca_data
   item_cleanenv
   item_cleanenv_badmode
   item_cleanenv_badshare

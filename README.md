@@ -259,7 +259,10 @@ PowerShell では `scripts\check-assets.ps1 -Share .` / `scripts\clean-test-env.
   でのみ有効〔上の「方法 A と方法 B では効く settings キーが違う」〕、M = managed 専用、E = `env` のうち project / local
   から設定できない変数）と、照合されない権限ルール（パス付きの `Write` / `NotebookEdit` / `MultiEdit` / `Glob`。
   ファイルの権限は `Edit(...)` / `Read(...)` ルールでしか照合されない）は **WARN**。不正な JSON と、同じオブジェクト内の
-  重複キー（大文字小文字だけの違いを含む。下記）は **FAIL**（bash 版は python で検査し、無ければ WARN〔未検査〕）
+  重複キー（大文字小文字だけの違いを含む。下記）は **FAIL**（bash 版は python で検査し、無ければ WARN〔未検査〕）。
+  U / M のキー・E の選択肢・権限ルールのツール名の表は `scripts/check-assets.d/settings-scope.txt`（TAB 区切りのタグ型。
+  書式と各行の根拠はファイルの冒頭）にあり、両版がスクリプト自身の位置から読む。更新はこのファイルだけを直す（コードに表は無い）。
+  表が無い・書式の誤り・`format` の版違いは **FAIL** で、キーの検査はしない
 
 **名前は二段階で照合する**（セッション成果物 2-c / 2-c' と、`settings.json` の `env` のうち project / local から
 設定できない変数名 ＝ 3. の E 区分）。まず完全一致（大文字小文字を区別）で比べ、一致しなければ ASCII（A〜Z）だけを
