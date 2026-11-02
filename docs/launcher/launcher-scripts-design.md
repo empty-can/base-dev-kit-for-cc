@@ -60,15 +60,15 @@
 
 #### 3.1.2 利用者向役割
 
-利用者のユースケースは、ランチャーから `claude` を起動する **foreground 起動** と、起動済みのセッションから supervisor（background service）が起動し直す **background 起動** の 2 つに分かれ、ランチャーの効き方が違う。
+利用者のユースケースは、ランチャーから `claude` を起動する **foreground 起動** と、ランチャーを通らずに別のプロセスとして起動される **background 起動** の 2 つに分かれ、ランチャーの効き方が違う。
 
 - **foreground 起動**（ランチャースクリプトから `claude` を起動する通常の使い方）
     - ワンクリックで、適切な値が設定された環境変数と必要な起動時オプションが指定された状態で Claude Code が起動する。
     - 環境変数はプロセス単位（ローカルスコープ）なので、他のアプリケーションや **別途起動した** Claude Code プロセスには影響しない。
-    - 起動前の検出（§5.4。ネットワークパスの `--add-dir`・キットの前提が崩れる起動オプション）が効くのはこの経路だけ。
-- **background 起動**（`/bg`・`/fork`・`claude --bg`・agent view からの dispatch など。supervisor が別プロセスとして起動し直すセッション）
-    - ランチャーは通らない。ランチャーの設定のうち background に届くのは §5 の表の経路だけ ―― 引き継がれる起動時の構成フラグ（`--add-dir`・`--setting-sources` 等。§5 に列挙）、dispatch 元シェルの環境変数のうち列挙されたもの、そして supervisor が最初に起動されたときの環境（このランチャーで起動したセッションが最初に supervisor を起動した場合に限り、service がその環境を継承して後続の background セッション〔別の端末から dispatch したものを含む〕へ波及する。起動順次第で確実ではない。ゲートウェイ変数は転送対象から外される ―― 2026-10-20 実測）。
-    - background にも効かせたい値は、settings の `env` ではなく OS の環境変数で設定する（§3.6.2・§5）。
+    - 起動前の検出（§5.5。ネットワークパスの `--add-dir`・キットの前提が崩れる起動オプション）が効くのはこの経路だけ。
+- **background 起動**（`/bg`・`←`・`/fork`・`claude --bg`・agent view からの dispatch・agent teams の teammate など。ランチャーを通らずに別のプロセスとして起動されるセッション。§5.1）
+    - ランチャーは通らない。ランチャーの設定のうち background に届くのは §5.1.3 の表の経路だけ ―― 引き継がれる起動時の構成フラグ（`--add-dir`・`--setting-sources` 等。§5.1.3 に列挙）、dispatch 元シェルの環境変数のうち列挙されたもの、そして supervisor が最初に起動されたときの環境（このランチャーで起動したセッションが最初に supervisor を起動した場合に限り、service がその環境を継承して後続の background セッション〔別の端末から dispatch したものを含む〕へ波及する。起動順次第で確実ではない ―― 2026-10-20 実測。ゲートウェイ変数が届く条件は §5.1.3 の表のとおり）。
+    - background にも効かせたい値は、settings の `env` ではなく OS の環境変数で設定する（§3.6.2・§5.1.3）。
     - background 起動に関わる制約の網羅的な整理・検証・方針は §5。
 
 ### 3.2 `setup-environment.sh/.ps1`
@@ -125,7 +125,7 @@
 #### 3.6.2 利用者向役割
 
 - 特にリポジトリでの作業の切り替えに合わせて都度変更するような環境変数について、OSの環境変数を設定してプロンプトを再起動する手間を踏まなくて済むようにする（claudeの再起動だけで反映される）
-- `settings.json`系ファイルに`env`要素を設定しない習慣を根付かせる（うっかりcommit/pushしたり、`settings.local.json`に置いてClaude Codeから読めてしまう状態を作らない）。※ background セッションにも効かせたい値は、settings の `env` ではなく OS の環境変数（永続的なユーザー環境変数）で設定する（§5）。組織で固定する値だけは managed settings の `env`（管理者の経路）
+- `settings.json`系ファイルに`env`要素を設定しない習慣を根付かせる（うっかりcommit/pushしたり、`settings.local.json`に置いてClaude Codeから読めてしまう状態を作らない）。※ background セッションにも効かせたい値は、settings の `env` ではなく OS の環境変数（永続的なユーザー環境変数）で設定する（§5.1.3）。組織で固定する値だけは managed settings の `env`（管理者の経路）
 - **機微情報（分類A: APIキー / 認証トークン / パスワード / 組織外秘URL）はこのファイルにも書かない**。OSの環境変数として設定する。`setup-environment`は分類Aの既知キーを検出すると**読み込まずに警告**する（実装計画 §5 / §6-bis）
 
 ## 4. 配布レール（publish の実態）
@@ -139,9 +139,47 @@
 
 `.claude/.gitignore` と `.claude/.gitattributes` を `.claude/` 配下に置くのは、**配布先でも個人実体の除外と改行固定を効かせる**ため。C-BDK ルートの同名ファイルは payload に乗らず、配布先には届かない（Fable クロスレビュー CR-1）。
 
-## 5. background セッションとランチャーの関係（Claude Code v2.1.302 時点。v2.1.310 の docs で再確認）
+## 5. background 起動・foreground 起動とランチャーの関係
 
-ランチャーが効くのは**自分が起動した foreground の `claude` プロセス**まで。background セッション（`/bg`・`←`・`/fork`・`claude --bg`・agent view からの dispatch）は background service（supervisor）配下の別プロセスとして起動し直され、構成を次の経路から読む（公式: [agent view「Settings and provider」](https://code.claude.com/docs/en/agent-view#settings-and-provider)、[network-config「Apply network settings to background agents」](https://code.claude.com/docs/en/network-config)）。
+本節は、§3.1.2 の 2 つのユースケース ―― ランチャーから `claude` を起動する foreground 起動と、ランチャーを通らずに別のプロセスとして起動される background 起動 ―― について、ランチャーの効果がどこまで届くかと、それに伴う制約を整理し、ランチャーの方針を決める。5.1 で、どの起動がどちらに属するかと background 起動に届く経路を整理し、5.2 で、background 起動のセッションまで起動装置に通す公式の経路（企業ランチャー）との関係を判定する。5.3〜5.5 は foreground 起動でランチャーが行うこと（引数の組み立て・出力・起動前の検出）とその制約である。本節の Claude Code の事実は v2.1.302 時点で調べ、v2.1.310 の docs で再確認したもの（小節ごとの確認時点は 5.1・5.2 の末尾・5.4.2・5.4.5 に書く）。決定の経緯は別紙（変更履歴）にまとめる。
+
+ランチャーが効くのは、**foreground 起動で自分が起動した `claude` プロセスと、そのプロセスから生成される SubAgent** まで（5.1.1）。
+
+### 5.1 foreground 起動と background 起動の整理
+
+本小節は、Claude Code のセッションや SubAgent を起動するそれぞれのしかたが、§3.1.2 の foreground 起動と background 起動のどちらに属するか（ランチャーの効果が届くか）を整理し（5.1.1・5.1.2）、background 起動に届く経路を示す（5.1.3）。
+
+#### 5.1.1 判定の原則
+
+- **foreground 起動の側**: ランチャーが起動した `claude` プロセスと、そのプロセスから生成されるもの。ランチャーが設定した環境変数と起動オプションがそのまま効く。
+- **background 起動の側**: ランチャーを通らずに別のプロセスとして起動されるセッションと、その中で動くもの。ランチャーの効果は 5.1.3 の経路で届くものに限られ、確実には届かない。
+- **セッションの中で動くものは、そのセッションと同じ側に属する**。Agent ツールで起動する SubAgent は、foreground 実行か background 実行か（既定では主会話から起動した SubAgent は background で動く）、入れ子（既定で主会話の下 3 層まで）か、会話を引き継ぐ fork か、dynamic workflow の `agent()` が起動するものかを問わず、起動したセッションの中で動き、別のセッションにはならない（公式: [sub-agents](https://code.claude.com/docs/en/sub-agents)「Subagents work within a single session」、[agent view](https://code.claude.com/docs/en/agent-view#monitor-sessions-with-agent-view)「Subagents and teammates a session spawns aren't listed as separate rows」）。
+  - ランチャーから foreground 起動したセッションがオーケストレータとして起動した SubAgent と、その SubAgent がさらに起動した SubAgent は、foreground 起動の側にあり、セッションが受け取ったランチャーの環境変数と起動オプションのもとで動く（主会話が読む CLAUDE.md の階層・`--add-dir` のディレクトリ・`CLAUDE_CODE_SUBAGENT_MODEL` や `CLAUDE_CODE_AUTO_COMPACT_WINDOW` などの環境変数が SubAgent にも効くと公式が記す）。
+  - background セッションの中で起動した SubAgent は background 起動の側で、5.1.3 の経路で届いたものだけが効く。
+- SubAgent と違って**別のセッションになるものは、background 起動の側**に置く。`/fork`（agent view が有効なとき）は会話を複製した background セッションを起動する。agent teams（実験的機能。既定で無効）の teammate は、lead のセッションが自分の binary から起動する別の Claude Code インスタンスで、supervisor は介さない。lead の `--setting-sources` は引き継がれるが、環境変数の引き継ぎは公式に記載が無く未確認のため、5.1.3 の表の対象にしていない。
+
+#### 5.1.2 起動のしかたごとの分類
+
+| 起動のしかた | 側 | 根拠・補足 |
+|---|---|---|
+| ランチャー（`start_claude_code.*`）から `claude` を起動する（対話起動・`-p`・スクリプトからの起動） | foreground 起動 | ランチャーが起動したプロセスそのもの |
+| そのセッションが Agent ツールで起動する SubAgent（foreground 実行・background 実行） | foreground 起動（セッションと同じ側） | セッションの中で動く。既定では background 実行 |
+| SubAgent が起動する SubAgent（入れ子。既定で主会話の下 3 層まで） | 同上 | 同上 |
+| fork（`/subtask`・fork モードで Claude が起動するもの。agent view が無効なときの `/fork` も同じ） | 同上 | 会話を引き継ぐ SubAgent |
+| dynamic workflow（`ultracode`・`/deep-research` 等）の `agent()` が起動する SubAgent | 同上 | 公式: 「orchestrates many subagents」。セッションを終了すると run は続かない |
+| `/bg`・`←`（今のセッションを background へ送る） | background 起動 | supervisor（background service）配下の別プロセスとして起動し直される |
+| `/fork`（agent view が有効なとき） | background 起動 | 会話を複製した background セッションを起動する |
+| `claude --bg`・agent view からの dispatch | background 起動 | supervisor 配下の別プロセス |
+| background セッションの中で起動する SubAgent | background 起動（セッションと同じ側） | — |
+| agent teams の teammate（実験的機能。既定で無効） | background 起動 | lead が自分の binary から起動する別の Claude Code インスタンス。supervisor は介さない。lead の `--setting-sources` は引き継ぐ。環境変数の引き継ぎは公式に記載が無く未確認 |
+| Desktop の `/resume` で開いた CLI セッション | background 起動（ランチャーを通らない） | ランチャーの env は無い（5.1.3 の表） |
+| `CLAUDE_CODE_PROCESS_WRAPPER` で起動装置に通す | 本ランチャーの対象外 | Windows では無視される（5.2） |
+
+確認時点: 5.1.1〜5.1.2 の SubAgent・fork・teammate の記述は、2026-11-03 に docs（v2.1.316 時点）で確かめた。
+
+#### 5.1.3 background 起動に届く経路
+
+background 起動のうち supervisor 配下のセッション（`/bg`・`←`・`/fork`・`claude --bg`・agent view からの dispatch）は、supervisor（background service）配下の別プロセスとして起動し直され、構成を次の経路から読む（公式: [agent view「Settings and provider」](https://code.claude.com/docs/en/agent-view#settings-and-provider)、[network-config「Apply network settings to background agents」](https://code.claude.com/docs/en/network-config)）。agent teams の teammate は supervisor を介さないので、この表の対象ではない（5.1.1）。
 
 | 経路 | background に届くか | 備考 |
 |---|---|---|
@@ -157,9 +195,15 @@
 
 **起動環境からしか読まれない変数**もある（公式: [settings-reference「Variables Claude Code ignores in `env`」](https://code.claude.com/docs/en/settings-reference#variables-claude-code-ignores-in-env)）。`CLAUDE_CODE_RESTRICTED`・`CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY`・`CLAUDE_CODE_DISABLE_{DANGEROUS_RM_TIMEOUT,SUBSTITUTION_RM_PROMPT,INLINE_SHELL_RM_PROMPT,MOUNTED_DRIVE_RM_PROMPT}`・`CLAUDE_CODE_WARN_{DISK,MEMORY}_FREE_GIB`（v2.1.304〜）などは、managed を含む**どの settings ファイルの `env` でも無視される**。これらは custom.env / setup-environment（foreground のみ）か OS の環境変数（background を含む）でしか効かず、将来 managed settings の `env` へ移す対象にもならない。`CLAUDE_AX_SCREEN_READER` と `CLAUDE_AX_*` は project / local の settings でだけ無視される（v2.1.305〜。user / managed / `--settings` では効く）。
 
-### 5.1 企業ランチャー（`CLAUDE_CODE_PROCESS_WRAPPER`）との関係
+### 5.2 企業ランチャー（`CLAUDE_CODE_PROCESS_WRAPPER`）との関係
 
-**本ランチャーは利用者が端末から起動するスクリプトであって、`CLAUDE_CODE_PROCESS_WRAPPER` に登録するランチャーではない**（2026-10-24、v2.1.310 の docs で再判定）。公式の分類では「自分で端末から起動したセッション」に当たり、起動したとおりに動いて `CLAUDE_CODE_PROCESS_WRAPPER` の対象外になる（corporate-launcher「Processes that start outside the launcher」）。
+本小節は、background 起動のセッションまで起動装置に通す公式の経路（`CLAUDE_CODE_PROCESS_WRAPPER`）が本キットで使えるかを判定し、本ランチャーの位置づけを決める。
+
+#### 5.2.1 本ランチャーの位置づけ
+
+**本ランチャーは利用者が端末から起動するスクリプトであって、`CLAUDE_CODE_PROCESS_WRAPPER` に登録するランチャーではない**。公式の分類では「自分で端末から起動したセッション」に当たり、起動したとおりに動いて `CLAUDE_CODE_PROCESS_WRAPPER` の対象外になる（corporate-launcher「Processes that start outside the launcher」）。
+
+#### 5.2.2 `CLAUDE_CODE_PROCESS_WRAPPER` を使えない理由
 
 background service と agent view の全セッションを起動装置に通す公式経路は `CLAUDE_CODE_PROCESS_WRAPPER`（v2.1.208〜。同等の `processWrapper` 設定は v2.1.210〜）だが、**本ランチャーの代替にも、本ランチャーをそこへ差し込む用途にも使えない**:
 
@@ -169,33 +213,43 @@ background service と agent view の全セッションを起動装置に通す�
 - macOS / Linux で必要になったら、本ランチャーとは**別の**薄いスクリプトとして作る。その際は契約に加えて値の書式に従う: 値はシェルのコマンドではなく引数列として読まれる（変数展開・glob なし。引用していない `;` `|` `&` `$(` は設定エラー）。空白で区切り、二重引用符でまとめる（単一引用符は普通の文字なので `'a b'` は 2 トークン）。`[` で始まる値は JSON 文字列配列で、settings ファイルに書くときは JSON 文字列の中に入れて `"[\"/opt/corp/launcher\", \"--profile\", \"cc\"]"` のようにエスケープする。ランチャー自身の引数は値のパスの後ろに書き、Claude Code のコマンドより先に届くので `exec` の前に `shift` で除く
 - 参照: https://code.claude.com/docs/en/corporate-launcher
 
-契約（v2.1.310 時点。v2.1.302 からの追加・変更は太字）と本ランチャーの関係:
+#### 5.2.3 契約との対照
+
+契約と本ランチャーの関係:
 
 | 契約 | 本ランチャー | 扱い |
 |---|---|---|
 | `exec "$@"` で終わる | bash 版は `exec`、PS 版は子プロセスとして `& claude` を呼んで終了コードを返す | 不適用（登録用途ではない） |
-| Claude Code の引数を並べ替え・取り込み・**追加**しない（**ランチャー自身の引数は先頭に届くので、除いてから残りをそのまま渡す**） | OPTS / TEAM_OPTS を足すのが役割。ランチャー自身の引数は持たない | 不適用 |
+| Claude Code の引数を並べ替え・取り込み・追加しない（ランチャー自身の引数は先頭に届くので、除いてから残りをそのまま渡す） | OPTS / TEAM_OPTS を足すのが役割。ランチャー自身の引数は持たない | 不適用 |
 | 受け継いだ env をすべて `exec` へ渡す（足すのは可） | 足すだけで削らない | 満たす |
-| 毎回約 3 秒以内に `exec` する（**background セッションは最初の出力までに最大 3 回続けて呼ぶ。ネットワーク待ちには個別の時間制限を付ける**） | Claude Code からは呼ばれない | 不適用 |
+| 毎回約 3 秒以内に `exec` する（background セッションは最初の出力までに最大 3 回続けて呼ぶ。ネットワーク待ちには個別の時間制限を付ける） | Claude Code からは呼ばれない | 不適用 |
 | 自分の中から呼ばれても耐える | 同上 | 不適用 |
-| 起動前に端末**にも標準出力にも**書かない（**標準出力は `claude -p` の結果を読むプログラムにも届く**） | 警告・エラーを出しうる。**出力先はすべて stderr**（§5.4） | 端末への表示は役割上残す。stdout には書かない（PS 版は 2026-10-24 に修正） |
-| 引数の綴り（`--flag value` / `--flag=value`）に依存しない | `--` の補完は「`-` で始まるか」だけで判定する（§5.3） | 満たす |
+| 起動前に端末にも標準出力にも書かない（標準出力は `claude -p` の結果を読むプログラムにも届く） | 警告・エラーを出しうる。**出力先はすべて stderr**（§5.5.1） | 端末への表示は役割上残す。stdout には書かない |
+| 引数の綴り（`--flag value` / `--flag=value`）に依存しない | `--` の補完は「`-` で始まるか」だけで判定する（§5.4） | 満たす |
 | 起動したディレクトリから `exec` する | `cd` しない（ルートの解決はサブシェル／`$PSScriptRoot`） | 満たす |
-| **標準入力を読まない**（読む命令は `/dev/null` から与える） | 読まない（custom.env はファイルとして読む） | 満たす。**`claude` の標準入力を `/dev/null` へ向けることはしない**（対話起動は標準入力が端末でないと Windows では exit 1 で終わり、`… \| start_claude_code -p` の入力も失う） |
-| **他のプログラムは絶対パスで呼ぶ**（シェルのプロファイルが足す `PATH` が無い状態で起動されうる） | `claude` を `PATH` から探す（利用者のシェルの `PATH` で起動されるため。見つからなければ案内して終了） | 不適用 |
+| 標準入力を読まない（読む命令は `/dev/null` から与える） | 読まない（custom.env はファイルとして読む） | 満たす。**`claude` の標準入力を `/dev/null` へ向けることはしない**（対話起動は標準入力が端末でないと Windows では exit 1 で終わり、`… \| start_claude_code -p` の入力も失う） |
+| 他のプログラムは絶対パスで呼ぶ（シェルのプロファイルが足す `PATH` が無い状態で起動されうる） | `claude` を `PATH` から探す（利用者のシェルの `PATH` で起動されるため。見つからなければ案内して終了） | 不適用 |
 
-### 5.2 サブコマンドの委譲
+確認時点: 5.2.1 の判定と 5.2.3 の契約（v2.1.310 時点の契約）は、2026-10-24 に v2.1.310 の docs で確かめた。
+
+### 5.3 サブコマンドの委譲
 
 ランチャーは組み立てたオプションを利用者の追加引数（`"$@"` / `@args`）の前に置く。`remote-control` / `agents` を追加引数で渡すと verb の前に `--settings` 等が付き、remote-control は起動を拒否し、agents は `--add-dir` / `--mcp-config` が前にあると `--json` が失敗する。サブコマンドは `claude` を直接使う（フラグ形式の `claude --bg "<prompt>"` は問題ない）。
 
-### 5.3 位置引数（プロンプト）の取り込みと `--` の補完（2026-10-19 実測・v2.1.302）
+### 5.4 位置引数（プロンプト）の取り込みと `--` の補完
+
+本小節は、ランチャーが組み立てたオプションの後ろに利用者の追加引数を付けるとき、プロンプトがフラグの値として取り込まれて消える問題と、その対策（`--` の補完）・限界を定める。
+
+#### 5.4.1 取り込みの仕組み
 
 ランチャーは `claude <OPTS> <TEAM_OPTS> <追加引数>` の順に組み立てる。`claude --help`（2.1.302）で値を複数取る（`<x...>`）フラグと値を省略できる（`[x]`）フラグは、直後の非フラグ引数を値として取り込む。組み立てたオプションの最後がこの型だと、追加引数の先頭にあるプロンプトが消える。
 
 - 値を複数取る: `--add-dir` / `--mcp-config` / `--tools` / `--betas` / `--allowedTools` / `--disallowedTools` / `--file`
 - 値を省略できる: `--debug` / `--resume` / `--from-pr` / `--worktree` / `--cloud` / `--prompt-suggestions` / `--remote-control` / `--teleport`
 
-実測（2026-10-19。`-p`・無効な API キー・空の `CLAUDE_CONFIG_DIR`・一時 cwd・`timeout 60`。結果は下の表のとおり）:
+#### 5.4.2 実測
+
+実測（2026-10-19。v2.1.302。`-p`・無効な API キー・空の `CLAUDE_CONFIG_DIR`・一時 cwd・`timeout 60`。結果は下の表のとおり）:
 
 | 引数（`claude -p …`） | 出力 | 判定 |
 |---|---|---|
@@ -212,47 +266,219 @@ background service と agent view の全セッションを起動装置に通す�
 
 `--add-dir` は存在しないパス（プロンプト文字列）でもエラーを出さないので、対話起動では REPL が開いてプロンプトだけが黙って消えると推定される（未実測）。`--worktree` は worktree を作る副作用があるため実行せず、`[name]` 表記から同型と推定した。
 
-**対策（`start_claude_code.{sh,ps1}`。両版対称）**:
+#### 5.4.3 対策
+
+対策は `start_claude_code.{sh,ps1}` の両版に対称に入れてある。
 
 1. 組み立てたオプションが 1 個以上あり、追加引数が 1 個以上で、そのどれも `-` で始まらない（＝プロンプトだけ）ときに限り、間に `--` を挿入する。フラグを含むとき（混在を含む）は挿入しない（素の claude と同じ責任分界）。組み立てたオプションが無いときも挿入しない（既定構成の引数列を素の claude と同一に保つ）。
-2. bash 版は連想配列のキーを C ロケールでソートして列挙する。従来はハッシュ順で、書いた順とも一致しなかった（実測: 書いた順 `--tools --add-dir --model` → 列挙 `--add-dir --tools --model`）。PS 版は `[ordered]` の記述順のまま。**両版の組立順が一致するのは、記述順がソート順と同じときだけ**。
+2. bash 版は連想配列のキーを C ロケールでソートして列挙する。bash の連想配列の列挙はハッシュ順で、書いた順とも一致しないため（実測: 書いた順 `--tools --add-dir --model` → 列挙 `--add-dir --tools --model`）。PS 版は `[ordered]` の記述順のまま。**両版の組立順が一致するのは、記述順がソート順と同じときだけ**。
 3. PS 版は `--` を `$cliArgs` の要素として足す。コマンド行に裸の `--` を書くと、`claude` が `.ps1`（npm のシム等）に解決されたときパラメータバインダに消される。配列要素の `'--'` は pwsh 7.4 / 5.1 とも残る（実測）。
 
-**限界**:
+#### 5.4.4 限界
 
 - `"<prompt>" -p` のような混在と、`-` で始まるプロンプトには `--` を補わない。フラグはプロンプトより前に置くか、利用者が自分で `--` を書く。PowerShell では裸の `--` はランチャーに届く前に消えるので `'--'` と引用する（裸の `--` ＋プロンプトだけなら、ランチャーが補うので結果は同じ）。
-- `--` はサブコマンドの dispatch を止めない。`-p`（`--print`）なしの構成では、プロンプトが 1 語でサブコマンド名（`mcp` / `doctor` / `update` 等）と一致すると、素の claude と同じくサブコマンドとして実行される（サブコマンドは §5.2 のとおり `claude` を直接使う）。前にオプションがあっても同じ（`claude --add-dir <dir> -- mcp` で実測）。旧ランチャーでは、最後が可変長フラグの構成だとこの 1 語がフラグの値として黙って取り込まれていた。新版ではサブコマンドとして動く（素の claude に近づいた）。
+- `--` はサブコマンドの dispatch を止めない。`-p`（`--print`）なしの構成では、プロンプトが 1 語でサブコマンド名（`mcp` / `doctor` / `update` 等）と一致すると、素の claude と同じくサブコマンドとして実行される（サブコマンドは §5.3 のとおり `claude` を直接使う）。前にオプションがあっても同じ（`claude --add-dir <dir> -- mcp` で実測）。
 - `-p` を含む構成（OPTS に `--print` を置く等）では、その 1 語はサブコマンドとして dispatch されず、プロンプトとして送られる（`claude -p --add-dir <dir> -- mcp`・`claude -p -- mcp`・`claude -p mcp` で実測。`--` の有無に関係せず、素の claude と同じ）。
 - 判定は「`-` で始まるか」だけで、claude 側のフラグ型を見ない。そのためフラグが増えても追随は不要だが、利用者自身が並べた引数（`--add-dir X "prompt"` を追加引数で渡す等）は守らない。
 
-補足（v2.1.310 の docs で確認）: `--bg` / `--background` は裸の `--` より前でだけフラグとして読まれ、`--` の後ろでは文字列になる（v2.1.299〜。[agent view](https://code.claude.com/docs/en/agent-view) の「Prompts that contain `--bg`」）。ランチャーが `--` を補うのは起動時引数に `-` で始まるものが 1 つも無いときだけなので、`start_claude_code --bg "<prompt>"` の `--bg` は従来どおりフラグとして届く。
+#### 5.4.5 `--bg` との関係
 
-### 5.4 ランチャーの出力と Claude Code の起動時警告（v2.1.305〜）
+`--bg` / `--background` は裸の `--` より前でだけフラグとして読まれ、`--` の後ろでは文字列になる（v2.1.299〜。[agent view](https://code.claude.com/docs/en/agent-view) の「Prompts that contain `--bg`」）。ランチャーが `--` を補うのは起動時引数に `-` で始まるものが 1 つも無いときだけなので、`start_claude_code --bg "<prompt>"` の `--bg` は従来どおりフラグとして届く（v2.1.310 の docs で確認）。
 
-- ランチャー（`start_claude_code.*`・`setup-environment.*`）自身の警告・エラーは **stderr にだけ**書き、stdout は `claude` の出力だけにする。`start_claude_code -p "…" > out.txt` のように結果を読むスクリプトへ警告が混ざらないようにするため（§5.1 表の「標準出力に書かない」と同じ理由）。bash 版は当初からすべて `>&2`。PS 版は `Write-Warning` が別のプログラムから起動されたとき stdout に出ていた（pwsh 7.x・Windows PowerShell 5.1 とも 2026-10-24 に実測。pwsh 7 では色付けのエスケープ列ごと出る）ため、`start_claude_code.ps1` が `setup-environment.ps1` を dot-source するパイプラインで warning ストリームを受け、`[Console]::Error` へ「警告: 」付きで書き直すようにした。`setup-environment.ps1` 単体は `Write-Warning` のまま（verify-kit が warning ストリームで受けて bash 版と比べている）。
-- Claude Code 自身の起動時警告は、**v2.1.305 以降の対話起動ではデバッグログにしか出ない**（それまでは stderr。権限ルールの一部の警告だけはバナー下の行に出る）。デバッグログはデバッグモードのときだけ残るので、読むには起動時引数に `--debug-file <path>` を足す（option-settings テンプレにも 2026-10-27 に `--debug-file` のキーを足した。W42-F-01）。`-p`（text 出力・background でない）では従来どおり stderr に出る。
-- 帰結: `--add-dir` に UNC（`\\server\share`）などのネットワークパスを渡すと、Claude Code はそのディレクトリを外して起動し、対話起動では画面に何も出さない。`<Share>` を UNC で指定すると**キット（CLAUDE.md・rules・skills）が読まれないまま黙って起動する**。Windows ではドライブ文字に割り当ててから渡す（`net use Z: \\server\share` の後に `--add-dir Z:\`）。option-settings テンプレの `--add-dir` の注記にも同旨がある。
-- ランチャー側の事前検出は **2026-10-27 決定: 最小範囲で警告**（W42-C-08 の判断。反映は W42-F-05）。option-settings（`OPTS` / `$Opts`）の `--add-dir` の値を見て、`\\` または `//` で始まれば stderr に 1 行警告し、起動は止めない（**2026-11-01 の B-5 で、区分 1 と同じ中断モードの対象になり、PS 版の既定では起動を中止する**。下の中断モードの箇条書き）。**同日のレビューで派生した判断 J-3（2026-10-27。反映は K-01）で、チーム統制の `TEAM_OPTS` / `$TeamOpts` の `--add-dir` も同じ判定で見るように広げた**（チームが `<Share>` を固定するのはそこで、UNC を書くと全員がキット無しで黙って起動するため）。警告文の先頭で値の出どころを示す（`option-settings の --add-dir …` / `start_claude_code のチーム統制（TEAM_OPTS / $TeamOpts） の --add-dir …`。出どころの表記も両版同じ）。両方に UNC があれば option-settings → チーム統制の順に 1 行ずつ出る。文言は両版で同じだった（前置きは bash 版が `⚠ `、PS 版が `警告: `。§5.4 冒頭の出力の約束どおり stderr）が、B-5 で PS 版の文はモードに依存しない形（「… はネットワークパスの形です。ネットワークパスは v2.1.257 以降拒否され、Claude Code はこのディレクトリを黙って外して起動するため、ドライブ文字に割り当てて指定してください。」）に変わり、凍結中の bash 版とは食い違っている（SH-DEFER-02）。ランチャーの警告は v2.1.305 以降も起動前に画面に出るので、デバッグログを開かなくても気づける（`--debug-file` を付けていない利用者には唯一の警告点になる）。範囲を絞った理由:
-  - **起動時引数の `--add-dir` は見ない**。利用者が並べた引数は守らない（§5.3 の責任分界と同じ）。
-  - **判定は綴りだけ**。シンボリックリンク・ジャンクション経由のネットワークパスや `/net/<host>` は検出しない。解決するとランチャー自身がネットワークへ触れてしまう（Claude Code もそれを避けるために見ないで拒否している）。逆に `\\wsl$` は Claude Code ではネットワークパスとみなされない（errors の同節）が、綴りが `\\` 始まりなので警告が出る（止めないので害は小さい）。ローカルの長いパスやデバイスのパス（`\\?\C:\…`・`\\.\…`）も同じく `\\` 始まりなので警告が出る（2026-10-27 のレビューで確認。ローカルのパスなので警告文の「黙って外して起動します」は当たらないと考えられるが、docs に `\\?\` / `\\.\` の扱いの記載は無く、未実測）。**B-5 以後の既知の帰結**: これらのローカルのパスも、PS 版の既定（`abort`）では起動が止まる。該当する利用者はパスの書き方を変えるか、`$TeamKitCheck` を `'warn'` にする（launcher README 付録 B に記載）。
-  - （絞るのをやめたもの）チーム統制の `TEAM_OPTS` / `$TeamOpts` は、W42-F-05 の時点では対象外だった（判断 #6 の範囲が option-settings の値だけだったため）が、2026-10-27 の判断 J-3 で対象に加えた（上記）。
-  - `[--add-dir=<パス>]` / `'--add-dir=<パス>'` のような「=」形のキーも見ない（テンプレで案内していない書き方。キーが `--add-dir` そのものの値だけを見る。option-settings・チーム統制とも）。
-  - verify-kit は「ランチャー stdout / stderr の振り分け（スタブ）」の一時ツリーに UNC の `--add-dir` を置き、警告が stderr に 1 行・stdout は空であることを見る（fixture `scripts/verify-kit.d/launcher-streams.txt` の `opt` 行。当初は bash / pwsh 7 / 5.1 とも exit 0 で見ていた。B-5 以後の 2 回の実行は下の中断モードの箇条書き）。チーム統制の側は、同じ一時ツリーに複製したランチャーの `TEAM_OPTS` / `$TeamOpts` の定義の行の直後へ probe が `team` 行（別のホスト名の UNC）を差し込み、警告がもう 1 行（option-settings の行の後）出ることを見る（当初は 3 系統。2026-10-30 以後、bash 系統はこの項目ごと凍結中。J-3。実物のランチャーは書き換えない。定義の行〔`declare -A TEAM_OPTS=(` / `$TeamOpts = [ordered]@{`〕がちょうど 1 行でなければ差し込めないので FAIL にする）。断片は ASCII だけなので、出どころの表記（日本語）そのものは verify-kit では照合していない（スタブを使った 2026-10-27 の手元の実測で 3 系統の本文の一致を確認した）。
-- ランチャー側の「載せていないオプション」の扱いは **2026-10-30 決定: キットの前提が黙って崩れるもの（区分 1）だけ警告**（2026-10-30 の作業指示者の決定）。対象は、option-settings（`OPTS` / `$Opts`）とチーム統制（`TEAM_OPTS` / `$TeamOpts`）のキーが `--restricted`・`--bare`・`--safe-mode`・`--system-prompt`・`--system-prompt-file` のどれかであるもの（launcher README 付録 A で載せない理由を示したもの。settings・hooks・CLAUDE.md / rules の一部が読まれないまま起動する）と、`--setting-sources` が設定されていて、その値をカンマで分け前後の空白を除いた要素に `project`（大文字小文字を区別した完全一致）が無いもの（キットの `.claude/settings.json` の permissions.deny・hooks と、`--add-dir` で足したディレクトリの skill 等が読まれない）。`--setting-sources` の未設定は既定で全ソースを読むので対象外。値は文字列にしてから見る（PS 版で `$true` を書くと `True` になり、`project` が無いので警告する）。1 件につき stderr に 1 行、UNC の警告と同じ前置き（`警告: `）と出どころの表記で出し、**起動は止めず、キーも捨てない**（そのまま `claude` へ渡す。2026-11-01 の B-5 で中断モードに改めた。下の中断モードの箇条書き）。出力順は UNC の警告の後に、出どころ順（option-settings → チーム統制）、各出どころの中は上の 5 キーの順、最後に `--setting-sources`。文は理由（README 付録 A・付録 B「--setting-sources の影響範囲」に揃える）を述べる（当初は「そのまま渡して起動する（止めない）」「チームで禁じるなら managed settings で固定する」も各行に含めたが、B-5 でモードに依存する部分をまとめ行へ移した）。範囲の決め方:
-  - **出どころごとに独立に判定する**。option-settings とチーム統制を合成した実効値（`--setting-sources` はチーム値が後勝ち）は見ない。UNC 検査と同じ責任分界で、書いた場所ごとに直せるようにする（両方に書けば両方に出る）。2026-11-01 に維持と裁定（issue #4 の B-1）。中断モードの既定 `abort` では、option-settings に `user`、チーム統制に `project,user` と書くと、実効値は `project` を含むのに option-settings 側の検出で起動が止まるが、メッセージが出どころとキーを示すので 1 回の修正（option-settings から外す）で済み、チーム値に上書きされて効いていない設定の掃除にもなる。
-  - **起動時引数と「=」形のキー（`'--bare=…'` 等）は見ない**（UNC 検査と同じ。§5.3）。判定はキーの綴りだけで、値の正しさは `claude` に任せる。PS 版のキーの照合は `[ordered]` の `Contains` なので大文字小文字を区別しない（`'--Bare'` も警告する。UNC 検査と同じ形。2026-11-01 に維持と裁定〔B-2〕。`claude` 自身が綴りの違うキーをエラーにするので、既定の `abort` でランチャーが先に止まるほうが早く気づける）。
-  - ランチャーは統制の境界ではない。チームとして禁じるなら managed settings で固定する（ランチャーの統制には強制力が無い。launcher README §3-1・付録 A）。
-  - **対象外にしたもの**: `--allowedTools` / `--disallowedTools`（権限の付け外しで、deny が allow に勝つのでキットの deny は崩れない。方針の話として settings 側で管理する）、`--desktop` / `--environment` / `--ref` とサブコマンド専用のオプション（`claude` 自身が、他の起動オプションとの併用やサブコマンドの外での使用を目に見える形で拒否する）。
-  - verify-kit は「ランチャー stdout / stderr の振り分け（スタブ）」の fixture（`launcher-streams.txt`）に `opt` 行（`--restricted`・`--setting-sources user,local`）と `team` 行（`--bare`・警告しない対照の `--setting-sources project,user`）を足し、stderr の行数で対照の行も検証する（2026-10-30 時点は UNC の 2 行を含めて 8 行・exit 0。B-5 以後は下の中断モードの箇条書き）。bash 系統はこの項目を `scripts/verify-kit.d/frozen.txt` で凍結し、FROZEN として集計する（pwsh 7 と 5.1 の 2 系統で判定）。
-  - **bash 版は凍結中で未追随**（`docs/launcher/sh-freeze-backlog.md` の SH-DEFER-01）。
-- 区分 1 と UNC の `--add-dir` の検出の扱いは **2026-11-01 決定: 中断モード（チーム定数 `$TeamKitCheck`。既定 `abort`）**（作業指示者の裁定。GitHub issue #4 の B-5）。`start_claude_code.ps1` の `$TeamOpts` の直後に `$TeamKitCheck = 'abort'` を置く。UNC の検出と区分 1 の検出（上の 2 つの箇条書き。順も同じ）を配列に溜め、1 件以上あれば、`abort` では前置き `エラー: ` で各行（出どころ付きの理由。本文はモードで変えない）とまとめ 1 行（「エラー: キットの前提が崩れる起動オプションが N 件あるため起動を中止します。該当のキーを外すか、start_claude_code の TEAM_KIT_CHECK / $TeamKitCheck を 'warn' にすると警告だけで起動します。」）を出し、`claude` を起こさずに `exit 1`（既存のエラー終了と同じ終了コード）。`warn` では前置き `警告: ` で各行とまとめ 1 行（「警告: キットの前提が崩れる起動オプションが N 件あります。TEAM_KIT_CHECK / $TeamKitCheck が 'warn' のため、そのまま渡して起動します。」）を出し、キーを捨てずに起動する。粒度は全体の一括切り替え（キーごとの設定は見送り）。決め方:
-  - **既定を `abort` にした根拠**: 警告はランチャーが stderr に書いた直後に `claude` の画面が始まるので、目を離すと見逃す。`warn` で見逃しを防ぐには起動前の入力待ちが要るが、`-p`・スクリプトからの起動・background セッションを壊す。中断なら入力待ちなしでメッセージがプロンプトと一緒に残る。多くの利用者は前提が崩れた状態で起動しても終了して設定を直すので、最初から止めたほうが時間を食わない。ただし全員がそう考えるとは限らず、確実な強制は managed settings の仕事なので、切り替えられるようにした。
-  - **スイッチの置き場はランチャー本体のチーム定数**（`$TeamOpts` と同じく利用者は触らない。設計 v2 でチーム統制の置き場が外部ファイルに移るなら一緒に移る）。強制力は無く、起動時引数で渡した `--bare` 等は止まらない（§5.3 の責任分界。誤設定の防護柵であって強制ではない）。値が `abort` / `warn` 以外（序数比較。空・大文字小文字の違い・行を消した場合を含む）なら fail-closed で `abort` として扱い、検出の有無にかかわらず `エラー: ` でその旨を 1 行出す（チーム定数の誤りは毎回知らせる。検出が無ければ中止する理由も無いので起動する）。
-  - **前置きの使い分け**: `abort` で出す行はログレベル ERROR に当たるので `エラー: `（`abort` はログレベルではないので出力のログレベルを ERROR にする、という作業指示者の補足の指示。別立てにすると「警告: 」で止まる状態が一度できるため B-5 に含めた）。`warn` は従来どおり `警告: `。setup-environment の警告と誤配置の option-settings の警告は、モードに関係なく `警告: ` のまま。stderr の順は setup-environment の警告 → 誤配置の option-settings の警告 →（`$TeamKitCheck` の不正値の 1 行）→ UNC の検出 → 区分 1 の検出 → まとめ行。
-  - **読み込みの順序は変えない**: 環境変数の設定（1) setup-environment）→ option-settings の読み込み（3)）→ 検出 → 中止、の順のまま（option-settings の読み込みと検出を setup-environment より前に出せば環境変数の設定より前に止まるが、採らなかった）。理由: 中止は `claude` を起こす前なので、設定済みの環境変数が残っても `claude` の動作には関わらない。option-settings は実行される（dot-source する）スクリプトで、setup-environment が設定した環境変数を参照しうるため、前に出すと結果が変わりうる。setup-environment の警告が先に出る出力の順と節の構成も保てる。帰結: 対話セッションで `.\start_claude_code.ps1` と実行して中止した場合、setup-environment が設定した環境変数（`$env:`。プロセス単位）はそのセッションに残る。これは `claude` が終了した後と同じ状態で、中止で新たに生じる状態ではない（`-File` で起動したときや bash 版は子プロセスなので残らない）。フェーズ 3 で区分 1 の表を共有データにするときは、必須データの読み込みを副作用の前に済ませる方式（issue #4 の C-3）に合わせて順序を改めて検討する。→ §6.4 で整理した（2026-11-02。同日裁定）。
-  - **既知の帰結**: UNC の判定は綴りだけなので、`\\wsl$\…`・`\\?\C:\…`・`\\.\…` のようなローカルのパスも既定では起動が止まる（上の UNC の箇条書き。launcher README 付録 B に、パスの書き方を変えるか `$TeamKitCheck` を `'warn'` にすると記載）。
-  - verify-kit は「ランチャー stdout / stderr の振り分け（スタブ）」で、同じ一時ツリーのランチャーを 2 回実行する（項目キーは 1 つのまま。結果は節 `launcher-streams abort` / `launcher-streams warn` に分けて書く）。1 回目は複製のまま（既定の `abort`）で、終了コード 0 以外・`claude` スタブ未起動・stdout 空・stderr 9 行（前段の警告 3 行・検出 5 行・まとめ行）を見る。2 回目は probe が複製の `$TeamKitCheck = 'abort'` の行を `'warn'` に書き換えて（実物は書き換えない。定数の行がちょうど 1 行でなければ FAIL）、exit 0・`claude` スタブ起動・stdout 空・stderr 9 行を見る。fixture `launcher-streams.txt` の行頭タグは `stderr-abort` / `stderr-warn`（旧 `stderr` は廃止。断片は ASCII だけで、まとめ行は bash 版と共通にする断片 `TEAM_KIT_CHECK / $TeamKitCheck`。前置きの日本語は照合できないので、モードの違いは終了コードとスタブの起動で見る）。bash 系統は引き続き `frozen.txt` で凍結する（bash 版の probe は `TEAM_KIT_CHECK=abort` の行を `warn` に書き換える形で、その行が無い今は 2 回目が FAIL になる。凍結解除で移植されるまで FAIL になるのが正しい）。
-  - **bash 版は凍結中で未追随**（`docs/launcher/sh-freeze-backlog.md` の SH-DEFER-02。bash 版は UNC の `--add-dir` を警告するだけで止めず、区分 1 は検出しない）。
+### 5.5 ランチャーの出力と起動前の検出
+
+Claude Code は v2.1.257 以降、`--add-dir` に渡されたネットワークパスを拒否し、そのディレクトリを黙って外して起動する。さらに v2.1.305 以降は、対話起動での自身の起動時警告をデバッグログにしか出さないので、`<Share>` を UNC で指定してキットが読まれなくなっても、利用者の画面には何も出ない（出典は本小節の末尾の参照）。キットの settings・hooks・CLAUDE.md を読ませない起動オプション（区分 1）も、同じく黙ってキットの前提を崩す。`claude` が起動する前に画面へ知らせを出せるのはランチャーだけで、本小節はそのために設けた。本小節で設計するのは、ランチャー自身の出力の約束（stderr）と、起動前の検出（UNC・区分 1）、および検出したときの扱いを決める中断モードである。
+
+本小節は foreground 起動だけに関わる（§3.1.2）。background 起動はランチャーを通らないので、出力の約束も検出も background セッションには及ばない（5.1.1。ランチャーは Claude Code からは呼ばれない ―― §5.2.3 の表）。
+
+まずランチャーが何をどこへ出すかの約束を決め（5.5.1）、次にその約束が要る理由である Claude Code 側の事実を置き（5.5.2）、そのうえで検出の規則に進む（5.5.3 以降）。5.5.1 と 5.5.2 は両版に共通し（出力の約束は両版の約束で、Claude Code 側の事実は版に依らない）、5.5.3〜5.5.8 は PowerShell 版の現行の仕様で、bash 版は凍結中のため一部に追随していない（5.5.9）。
+
+#### 5.5.1 出力の約束（stderr）
+
+- ランチャー（`start_claude_code.*`・`setup-environment.*`）自身の警告・エラーは、両版とも stderr にだけ書く。stdout には `claude` の出力だけを流す。5.5.3〜5.5.5 の検出の行・まとめ行・不正値の行も、この約束に従って stderr に出す。
+- 理由: `start_claude_code -p "…" > out.txt` のように `claude -p` の結果を読むスクリプトへ、警告が混ざらないようにするため（§5.2.3 の契約の表「標準出力に書かない」と同じ理由）。
+- bash 版はすべて `>&2` で書く。
+- PS 版のランチャーは、自身の警告・エラーを `[Console]::Error` へ直接書く。`setup-environment.ps1` を dot-source するときは、パイプラインで warning（3）と information（6）のストリームを受けて `[Console]::Error` へ書き直す（warning には前置き `警告: ` を付ける）。
+  - 理由: PowerShell は別のプログラムから起動されると、warning / information のストリームを stdout に書く（pwsh 7.x と Windows PowerShell 5.1 の両方で 2026-10-24 に実測。pwsh 7 では色付けのエスケープ列ごと出る）。
+  - `setup-environment.ps1` を単体で動かしたときは `Write-Warning` のままにしている。verify-kit が warning ストリームで受けて bash 版と比べているため。
+
+#### 5.5.2 Claude Code の起動時警告とデバッグログ
+
+この小節は Claude Code 側の事実で、ランチャーの版に依らない。
+
+- **ネットワークパスの `--add-dir` を黙って外す（v2.1.257〜）**: `--add-dir` に UNC（`\\server\share`）などのネットワークパスを渡すと、Claude Code はそれを拒否し、そのディレクトリを外して起動する（参照: errors の「working directory is a network path」の節）。
+- **対話起動の起動時警告はデバッグログにだけ出る（v2.1.305〜）**: 対話起動での Claude Code 自身の起動時警告は、上の `--add-dir` を外した警告も含めてデバッグログにしか出ない（それより前は stderr に出ていた）。例外として、権限ルールの一部の警告だけはバナーの下の行に出る。`-p`（text 出力で background でないとき）では stderr に出る（参照: errors の「configuration warnings」の節）。
+  - デバッグログはデバッグモードのときだけ残る。読むには起動時引数に `--debug-file <path>` を足す。option-settings テンプレにも `--debug-file` のキーがある。
+- 帰結: 対話起動で `<Share>` を UNC で指定すると、**キット（CLAUDE.md・rules・skills）が読まれないまま、画面に何も出さずに起動する**。Claude Code 側の知らせは、デバッグログの中にしか無い。
+- 回避: Windows ではドライブ文字に割り当ててから渡す（`net use Z: \\server\share` の後に `--add-dir Z:\`）。option-settings テンプレの `--add-dir` の注記にも同じ趣旨が書いてある。
+- そこでランチャーは、`claude` を起こす前に option-settings とチーム統制を確かめ、キットの前提が崩れる設定を画面に出す（5.5.3）。この知らせは起動前に出るので、デバッグログを開かなくても気づける。`--debug-file` を付けていない利用者には、これが唯一の知らせになる。
+
+#### 5.5.3 起動前の検出の規則
+
+option-settings（`OPTS` / `$Opts`。3) で読み込む）とチーム統制（`TEAM_OPTS` / `$TeamOpts`。2) で定義する）に、キットの前提が黙って崩れる起動オプションがあれば、`claude` を起こす前に知らせる。検出は次の 2 種類で、見つけたあとの扱い（中止するか警告するか）は 5.5.4 で決まる。
+
+- **UNC**: ネットワークパスの形をした `--add-dir`
+- **区分 1**: キットの前提が黙って崩れる起動オプション。launcher README 付録 A に「載せない理由」を示したオプションのうち、settings・hooks・CLAUDE.md / rules の一部が読まれないまま起動してしまう 5 キーと、値に `project` を含まない `--setting-sources`（テンプレに載っているキーで、値によって区分 1 になる）を指す。区分 2 以降は定義していない
+
+| 検出名 | 見る出どころ | キー | 判定 | 見ないもの | 理由文の出典 |
+|---|---|---|---|---|---|
+| UNC | option-settings → チーム統制 | `--add-dir` | 値を文字列にして、`\\` か `//` で始まる（序数比較） | 起動時引数・「=」形のキー・シンボリックリンクやジャンクションの解決・`/net/<host>` | README 付録 B「--add-dir とネットワークパス」。文はコードに固定 |
+| 区分 1 | option-settings → チーム統制 | `--restricted` | キーがある | 起動時引数・「=」形のキー・値 | README 付録 A の表 |
+| 区分 1 | 同上 | `--bare` | 同上 | 同上 | 同上 |
+| 区分 1 | 同上 | `--safe-mode` | 同上（文は `--bare` と同じ） | 同上 | 同上 |
+| 区分 1 | 同上 | `--system-prompt` | 同上 | 同上 | 同上 |
+| 区分 1 | 同上 | `--system-prompt-file` | 同上（文は `--system-prompt` と同じ） | 同上 | 同上 |
+| 区分 1 | 同上 | `--setting-sources` | キーがあり、値を文字列にしてカンマで分け、前後の空白を除いた要素に `project`（大文字小文字を区別する完全一致）が無い | 起動時引数・「=」形のキー・未設定（既定で全ソースを読むので対象外） | README 付録 B「--setting-sources の影響範囲」 |
+
+共通の規則:
+
+- **出どころごとに独立に判定する**。option-settings とチーム統制を合成した実効値（`--setting-sources` はチーム値が後勝ち）は見ない。両方に書けば両方を検出する。
+  - 理由: UNC と区分 1 で同じ責任分界にし、書いた場所ごとに直せるようにするため。
+- **キーの照合は大文字小文字を区別しない**。`[ordered]` の `Contains` を使うので、`'--Bare'` も検出する。
+  - 理由: `claude` 自身が綴りの違うキーをエラーにするので、既定の `abort` でランチャーが先に止まったほうが早く気づける。
+- 判定はキーの綴りと表の値の条件だけで行い、値の正しさは `claude` に任せる。値は文字列にしてから見る（PS 版で `$true` と書くと `True` になり、`project` が無いので検出する）。
+- option-settings とチーム統制には、キーごとに値を 1 つしか書けない（同じキーを 2 回書けない。README §3-2）。`--add-dir` の 2 個目以降は起動時引数で渡すので、検出の対象にならない。
+- **起動時引数と「=」形のキー（`'--add-dir=<パス>'`・`'--bare=…'` 等。テンプレで案内していない書き方）は見ない**。
+  - 理由: 利用者が自分で並べた引数は守らない（§5.4 の責任分界）。
+- UNC の判定は綴りだけで行う。
+  - 理由: パスを解決するとランチャー自身がネットワークへ触れてしまう。Claude Code もそれを避けるため、パスを解決せずに拒否している。
+- UNC をチーム統制でも見る。
+  - 理由: チームが `<Share>` を固定するのはチーム統制であり、そこに UNC を書くと全員がキット無しで黙って起動するため。
+- 対象外にしたもの:
+  - `--allowedTools` / `--disallowedTools`: 権限の付け外しであり、deny が allow に勝つのでキットの deny は崩れない。方針の話として settings 側で管理する。
+  - `--desktop` / `--environment` / `--ref` とサブコマンド専用のオプション: 他の起動オプションとの併用や、サブコマンドの外での使用を、`claude` 自身が目に見える形で拒否する。
+- ランチャーは統制の境界ではない。チームとして禁じたいなら managed settings で固定する（ランチャーの統制には強制力が無い。launcher README §3-1・付録 A）。
+
+文の形（1 件につき 1 行。前置きは 5.5.4 で決まる）:
+
+| 検出 | 文の形 |
+|---|---|
+| UNC | `<出どころ> の --add-dir <値> はネットワークパスの形です。ネットワークパスは v2.1.257 以降拒否され、Claude Code はこのディレクトリを黙って外して起動するため、ドライブ文字に割り当てて指定してください。` |
+| 区分 1（5 キー） | `<出どころ> の <キー> は、<理由>。`（理由はキーごとの表で、`start_claude_code.ps1` の `$kitBreakingOpts` にある。README 付録 A の載せない理由に揃えてある） |
+| 区分 1（`--setting-sources`） | `<出どころ> の --setting-sources <値> に project が含まれません。キットの .claude/settings.json（permissions.deny・hooks）と、--add-dir で足したディレクトリの skill 等が読まれません。` |
+
+- `<出どころ>` は `option-settings` か `start_claude_code のチーム統制（TEAM_OPTS / $TeamOpts）` のどちらか。表記は bash 版と同じ。
+- 文はモードに依存しない。中止するか起動するかは、まとめ行で伝える（5.5.4）。
+
+#### 5.5.4 中断モード（`$TeamKitCheck`）
+
+- `$TeamKitCheck` は、`start_claude_code.ps1` の 2) で `$TeamOpts` の直後に置くチーム定数で、既定値は `'abort'`。5.5.3 の検出（UNC と区分 1 の両方）の扱いを全体で一括して切り替える。キーごとに切り替える設定は無い（見送った）。
+- 検出したものは配列に溜める（順は 5.5.5）。1 件以上あれば各行に前置きを付けて出し、最後にまとめ 1 行を出す。0 件ならまとめ行も出さない。
+
+| 値 | 各行の前置き | まとめ行 | `claude` | 終了コード |
+|---|---|---|---|---|
+| `'abort'`（既定） | `エラー: ` | `エラー: キットの前提が崩れる起動オプションが N 件あるため起動を中止します。該当のキーを外すか、start_claude_code の TEAM_KIT_CHECK / $TeamKitCheck を 'warn' にすると警告だけで起動します。` | 起こさない | 1（0) の実行要件のエラーと同じ） |
+| `'warn'` | `警告: ` | `警告: キットの前提が崩れる起動オプションが N 件あります。TEAM_KIT_CHECK / $TeamKitCheck が 'warn' のため、そのまま渡して起動します。` | キーを捨てずにそのまま渡して起動する | 通常の起動と同じ（`claude` の終了コード） |
+
+- **不正な値**: `'abort'` / `'warn'` 以外の値は fail-closed で `'abort'` として扱う。比較は序数で行い、空の値・大文字小文字の違い・定数の行を消した場合も不正とみなす。検出の有無にかかわらず、次の 1 行を出す。
+  - `エラー: start_claude_code のチーム定数 TEAM_KIT_CHECK / $TeamKitCheck の値「<値>」は 'abort' / 'warn' のどちらでもないため、'abort' として扱います。`
+  - チーム定数の誤りは毎回知らせる。検出が無ければ中止する理由も無いので、そのまま起動する。
+- まとめ行に含まれる `TEAM_KIT_CHECK / $TeamKitCheck` は、bash 版と共通にする ASCII の断片（verify-kit が照合する。5.5.8）。
+- 置き場はランチャー本体のチーム定数で、`$TeamOpts` と同じく利用者は触らない。設計 v2 でチーム統制の置き場が外部ファイルに移るなら、一緒に移す。
+- 強制力は無い。起動時引数で渡した `--bare` 等は止まらない（§5.4 の責任分界）。誤設定に対する防護柵であって強制ではなく、確実な強制は managed settings の仕事（5.5.3）。
+- 既定を `abort` にした理由:
+  - 警告はランチャーが stderr に書いた直後に `claude` の画面が始まるので、目を離すと見逃す。
+  - `warn` のまま見逃しを防ぐには起動前の入力待ちが要るが、それは `-p`・スクリプトからの起動・background セッションを壊す。中断なら入力待ちなしで、メッセージがプロンプトと一緒に画面に残る。
+  - 多くの利用者は、前提が崩れた状態で起動しても終了して設定を直すので、最初から止めたほうが時間を食わない。
+  - ただし全員がそう考えるとは限らず、確実な強制は managed settings の仕事なので、切り替えられるようにした。
+- 前置きの使い分け:
+  - `abort` で出す行はログレベル ERROR に当たるので `エラー: `（作業指示者の補足の指示）。
+  - `warn` で出す行は `警告: `。
+  - setup-environment の警告と、誤配置の option-settings の警告は、モードに関係なく `警告: `。
+
+#### 5.5.5 stderr の出力順
+
+1. setup-environment の警告（1)）
+2. 誤配置の option-settings の警告（3)）
+3. `$TeamKitCheck` が不正な値のときの 1 行（不正なときだけ）
+4. UNC の検出（option-settings → チーム統制）
+5. 区分 1 の検出（option-settings → チーム統制の出どころ順。各出どころの中は 5.5.3 の表の 5 キーの順で、最後に `--setting-sources`）
+6. まとめ行（検出が 1 件以上のときだけ）
+
+- 区分 1 の表の行の順が、そのまま出力の順になる。§6.1.2 で表を共有データにするときも、この性質を保つ。
+
+#### 5.5.6 処理の順序と中止したときの状態
+
+- ランチャーは節の番号順に処理する。
+  - 0) 実行要件の確認 → 1) 環境変数の設定（setup-environment）→ 2) チーム統制（`$TeamOpts` と `$TeamKitCheck` の定義）→ 3) option-settings の読み込みと検出 → 4) 引数の組み立て → 5) 起動
+  - 中止（5.5.4）は 3) の最後で行い、`claude` を起こす前に終わる。
+- **読み込みの順序は変えない**。option-settings の読み込みと検出を setup-environment より前に出せば、環境変数を設定する前に止められるが、その案は採らなかった。理由は次の 3 つ。
+  - 中止は `claude` を起こす前なので、設定済みの環境変数が残っても `claude` の動作には関わらない。
+  - option-settings は dot-source して実行するスクリプトで、setup-environment が設定した環境変数を参照しうる。前に出すと結果が変わりうる。
+  - setup-environment の警告が先に出る出力の順（5.5.5）と、節の構成を保てる。
+- 中止したときの状態:
+  - 対話セッションで `.\start_claude_code.ps1` と実行して中止すると、setup-environment が設定した環境変数（`$env:`。プロセス単位）はそのセッションに残る。これは `claude` が終了した後と同じ状態であり、中止によって新たに生じる状態ではない。
+  - `-File` で起動したときと bash 版は子プロセスで動くので、環境変数は残らない。
+- 共有データ（区分 1 の表など。§6）を足しても、この順序は変えない（§6.4）。
+  - 必須のデータのパースは副作用の前（0) の続き）に置く。検出は従来どおり 3) の option-settings の読み込みの後に置く。
+  - データが読めないときの扱いは §6.3 で決めている（区分 1 の表はモードに依らず必須）。
+
+#### 5.5.7 既知の帰結と限界
+
+- UNC の判定は綴りだけなので、ネットワークパスではない次のパスも検出し、既定の `abort` では起動が止まる。
+  - `\\wsl$\…`（Claude Code はネットワークパスとみなさない。本小節の末尾の参照の errors の network path の節）
+  - ローカルの長いパスやデバイスのパス（`\\?\C:\…`・`\\.\…`）
+  - 該当する利用者は、パスの書き方を変える（`\\?\C:\…` なら `C:\…` と書く等）か、`$TeamKitCheck` を `'warn'` にする（launcher README 付録 B に記載）。
+  - `\\?\` / `\\.\` に対しては、文の「黙って外して起動する」は当たらないと考えられる。ただし docs に扱いの記載は無く、未実測（2026-10-27 のレビューで確認した点）。
+- シンボリックリンク・ジャンクション経由のネットワークパスや `/net/<host>` は検出しない（5.5.3 の「見ないもの」）。
+- 出どころごとに独立に判定する（5.5.3）ため、option-settings に `--setting-sources user`、チーム統制に `project,user` と書くと、既定の `abort` では option-settings 側の検出で起動が止まる。実効値は `project` を含むが、止まる。
+  - メッセージが出どころとキーを示すので、1 回の修正（option-settings から外す）で済む。チーム値に上書きされて効いていない設定の掃除にもなる。
+- 起動時引数で渡したオプションは検査しないので、中断モードでも止まらない（5.5.4）。
+
+#### 5.5.8 verify-kit の検証
+
+- 項目は「ランチャー stdout / stderr の振り分け（スタブ）」（項目キー `launcher-streams`）、fixture は `scripts/verify-kit.d/launcher-streams.txt`。
+  - 一時ツリーに複製したランチャーと `claude` スタブで実行し、実物のランチャーは書き換えない。
+  - PowerShell 系統はランチャーを `-File` で起動する。
+- probe が置く警告・検出のもと:
+
+| fixture のタグ | 置き場 | 現行の中身 |
+|---|---|---|
+| `env` | `.claude/custom.env` | 分類A のキー `ANTHROPIC_API_KEY` を含む |
+| （probe が固定で置く） | 誤配置の `.claude/launcher/custom.env` と `.claude/launcher/option-settings.ps1`（bash 系統は `.sh`） | 前段の警告のもと |
+| `opt` | `.claude/option-settings` | UNC の `--add-dir`（`\\vk-unc-host\share`）・`--restricted`・`--setting-sources user,local` |
+| `team` | 複製したランチャーの `TEAM_OPTS` / `$TeamOpts` の定義の行の直後 | UNC の `--add-dir`（別のホスト名 `\\vk-unc-team\share`）・`--bare`・検出しない対照の `--setting-sources project,user` |
+| `in` | 起動時引数 | `verify-kit prompt` |
+
+- 同じ一時ツリーで 2 回実行する。項目キーは 1 つのままで、結果は節 `launcher-streams abort` / `launcher-streams warn` に分けて書く。
+
+| 回 | 準備 | 照合するタグ | 終了コード | `claude` スタブ | stdout | stderr |
+|---|---|---|---|---|---|---|
+| 1 | 複製のまま（`abort`） | `stderr-abort` | 0 以外 | 起動しない | 空 | 9 行 |
+| 2 | probe が複製の `$TeamKitCheck = 'abort'` の行（bash 系統では `TEAM_KIT_CHECK=abort`）を `warn` に書き換える | `stderr-warn` | 0 | 起動する | 空 | 9 行 |
+
+- stderr 9 行の内訳:
+  - 前段の警告 3 行: 誤配置の custom.env、custom.env 中の分類A のキー、誤配置の option-settings
+  - 検出 5 行: UNC 2 行（option-settings → チーム統制）・`--restricted`・`--setting-sources user,local`・`--bare`
+  - まとめ 1 行
+  - 対照の `--setting-sources project,user` が出ないことは、行数で確かめる。
+- 次のどちらかがちょうど 1 行でなければ FAIL にする: 差し込み先の定義の行（`declare -A TEAM_OPTS=(` / `$TeamOpts = [ordered]@{`）、書き換える定数の行。
+- 照合に使う断片は ASCII だけで書く。PowerShell 系統の stderr はコンソールのコードページで書かれ、日本語が化けるため。
+  - そのため、前置き（`⚠ ` / `警告: ` / `エラー: `）と出どころの表記（日本語）は照合しない。モードの違いは、終了コードとスタブが起動したかどうかで見る。
+  - まとめ行は断片 `TEAM_KIT_CHECK / $TeamKitCheck` で照合する。
+  - stderr は `\` を `/` に揃えてから比べる。
+- 出どころの表記が 3 系統で一致することは、スタブを使った 2026-10-27 の手元の実測で確かめた（verify-kit の照合の外）。
+- bash 系統は `scripts/verify-kit.d/frozen.txt` の行（項目 `launcher-streams`・系統 `bash`）で凍結している。判定は pwsh 7 と 5.1 の 2 系統で行い、結果は FROZEN として集計する。
+  - bash 版の probe は `TEAM_KIT_CHECK=abort` の行を書き換える形なので、その行が無い今は 2 回目が FAIL になる。凍結解除で移植されるまでは、FAIL になるのが正しい。
+
+#### 5.5.9 bash 版との差（凍結中）
+
+bash 版の 3 本は 2026-10-30 から凍結している。範囲・終了条件・移植の手順は `docs/launcher/sh-freeze-backlog.md` にある。
+
+| 項目 | PS 版（現行） | bash 版（凍結中） | バックログ |
+|---|---|---|---|
+| 区分 1 の検出 | あり（5.5.3） | なし | SH-DEFER-01 |
+| 中断モード | `$TeamKitCheck`（既定 `abort`。5.5.4） | なし（`TEAM_KIT_CHECK` の行も無い）。UNC は警告するだけで、起動は止めない | SH-DEFER-02 |
+| UNC の文 | モードに依存しない文（5.5.3） | B-5 より前の文のまま（`<出どころ> の --add-dir <値> はネットワークパスの形です。ネットワークパスは v2.1.257 以降拒否され、v2.1.305 以降は警告がデバッグログにしか出ないため、Claude Code はこのディレクトリを黙って外して起動します。ドライブ文字に割り当てて指定してください。`） | SH-DEFER-02 |
+| 前置き | `警告: ` / `エラー: `（5.5.4） | `⚠ `（移植後は、`warn` を `⚠ `、`abort` を既存のエラーと同じ `エラー: ` にする予定） | SH-DEFER-02 |
+| キーの照合 | 大文字小文字を区別しない（5.5.3） | 区分 1 は未実装（移植のときに PS 版の扱いに揃える） | SH-DEFER-01 |
+| UNC の検出の範囲と出どころの表記 | option-settings とチーム統制 | 同じ（K-01 で両版に入れた） | — |
+| verify-kit の `launcher-streams` | pwsh 7・5.1 で判定 | 凍結（FROZEN） | SH-DEFER-01・02 |
+
+- 凍結とは関係なく、設計として次の差もある。
+  - 中止した後に環境変数が残るのは、PS 版を対話セッションで実行した場合だけ（5.5.6）。
+  - setup-environment の警告は、PS 版では単体で動かしたとき `Write-Warning`、bash 版では `>&2` で出る（5.5.1）。
+
 - 参照: https://code.claude.com/docs/en/errors#configuration-warnings 、https://code.claude.com/docs/en/errors#working-directory-is-a-network-path
 
 ## 6. 両版が読む共有データ（フェーズ 3 設計。2026-11-02 裁定済み）
@@ -308,17 +534,17 @@ background service と agent view の全セッションを起動装置に通す�
 |---|---|---|---|
 | 機微情報の既知キー | 必須 | エラー 1 行 ＋ 起動中止 | 欠けると、名前の形で拾えない 3 個（`ANTHROPIC_CUSTOM_HEADERS`・`AWS_BEARER_TOKEN_BEDROCK`・`AWS_ACCESS_KEY_ID`）が環境変数として渡る |
 | 内部変数名 | 必須 | エラー 1 行 ＋ 起動中止 | bash 版では custom.env が内部変数を書き換えないためのガードそのもの。PS 版ではキットの部品の欠落として扱う |
-| 区分 1 の表 | 必須（`$TeamKitCheck` のモードに依らない。C-6 (b)） | エラー 1 行 ＋ 起動中止（`warn` でも止める） | 暫定案「B-5 のモードに従う」は採らなかった。モードを決める `$TeamKitCheck` は 2) で定義され、1) の環境変数の設定より後にある。モードに従わせたうえで副作用の前に止めるには定数を 1) より前へ動かすことになる。パースだけを前に置き、中止か警告かの判断を 2) の後に回せば定数は動かさずに済む（`abort` の中止が環境変数の設定の後になるが、§5.4 が B-5 で許容している状態と同じで、C-3 (a) の「読み込みは副作用の前」は満たす）。常に必須にした理由は、データの欠落はキットの部品の欠落で、0) が setup-environment の欠落で止めるのと同じ扱いにできること |
+| 区分 1 の表 | 必須（`$TeamKitCheck` のモードに依らない。C-6 (b)） | エラー 1 行 ＋ 起動中止（`warn` でも止める） | 暫定案「B-5 のモードに従う」は採らなかった。モードを決める `$TeamKitCheck` は 2) で定義され、1) の環境変数の設定より後にある。モードに従わせたうえで副作用の前に止めるには定数を 1) より前へ動かすことになる。パースだけを前に置き、中止か警告かの判断を 2) の後に回せば定数は動かさずに済む（`abort` の中止が環境変数の設定の後になるが、§5.5 が B-5 で許容している状態と同じで、C-3 (a) の「読み込みは副作用の前」は満たす）。常に必須にした理由は、データの欠落はキットの部品の欠落で、0) が setup-environment の欠落で止めるのと同じ扱いにできること |
 | check-assets の U / M / E | 対象外（ランチャーは読まない） | check-assets が FAIL | 検査器自身の表が欠けた状態を PASS にしない（2-g の「未検査」の WARN は検査対象の一時的な読み取りの失敗で、ほかの検査は続く） |
 
 - 出力は stderr に 1 行。必須のデータは `エラー: <ファイルのパス> を読めないため起動を中止します（<無い / 書式: N 行目 …>）。` の形で、`claude` を起こさずに終了コード 0 以外で終わる。任意のデータは無い（どのデータも必須か対象外のどちらか）。
 - verify-kit は、一時ツリーのデータファイルを消す・壊す・版を変える probe で、終了コード・`claude` スタブが起動しないこと・stderr の行数とファイル名の断片を見る（bash 系統は凍結中なので `frozen.txt` に行を足す）。
 
-### 6.4 §5.4 の「読み込みの順序は変えない」との関係（2026-11-02 決定）
+### 6.4 §5.5 の「読み込みの順序は変えない」との関係（2026-11-02 決定）
 
-- §5.4 の判断（setup-environment → option-settings → 検出 → 中止の順を変えない）は、共有データを足しても変えない。そのために「データを読む（パースと書式の検査）」と「検出（option-settings / `$TeamOpts` との照合）」を分け、必須のデータのパースは副作用の前に置き（ランチャーの表は 0) 実行要件の確認の続き、setup-environment の表は custom.env の行ループの前）、検出は従来どおり option-settings の読み込みの後に置く。
-- §5.4 が順序を変えなかった理由（option-settings は dot-source して実行するスクリプトで、setup-environment が設定した環境変数を参照しうる）は、静的なデータファイルのパースには当たらない（データは実行されず、環境変数も参照しない）。順序を見直した結果、変えない。
-- §5.4 の順序のまま凍結解除で bash 版へ移すときは、`start_claude_code.sh` が setup-environment を source する前に代入して後で読む変数（パースした表など）を内部変数名の一覧に入れる（今の `_ROOT_DIR` と同じ扱い。custom.env の行が export でその変数を書き換えないように）。
+- §5.5 の判断（setup-environment → option-settings → 検出 → 中止の順を変えない）は、共有データを足しても変えない。そのために「データを読む（パースと書式の検査）」と「検出（option-settings / `$TeamOpts` との照合）」を分け、必須のデータのパースは副作用の前に置き（ランチャーの表は 0) 実行要件の確認の続き、setup-environment の表は custom.env の行ループの前）、検出は従来どおり option-settings の読み込みの後に置く。
+- §5.5 が順序を変えなかった理由（option-settings は dot-source して実行するスクリプトで、setup-environment が設定した環境変数を参照しうる）は、静的なデータファイルのパースには当たらない（データは実行されず、環境変数も参照しない）。順序を見直した結果、変えない。
+- §5.5 の順序のまま凍結解除で bash 版へ移すときは、`start_claude_code.sh` が setup-environment を source する前に代入して後で読む変数（パースした表など）を内部変数名の一覧に入れる（今の `_ROOT_DIR` と同じ扱い。custom.env の行が export でその変数を書き換えないように）。
 
 ### 6.5 配布レールのずれ（C-9 (a)。2026-11-02 決定）
 
