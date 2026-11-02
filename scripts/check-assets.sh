@@ -649,7 +649,7 @@ elif [[ -f "$SETTINGS" ]]; then
     #    UTF-8 の JSON を「不正な JSON」と誤判定する（実測）。
     # 構文と重複キーを 1 回で調べる。終了コード 0 = 正しい JSON で重複なし / 3 = 正しい JSON だが重複キーあり（1 組 1 行）/
     # それ以外 = 不正な JSON。重複は object_pairs_hook で拾うが、読み終えられなければ 1 なので構文の誤りが先に勝つ。
-    _dup="$("$PY" - "$SETTINGS" 2>/dev/null <<'PYEOF'
+    _dup="$("$PY" -I - "$SETTINGS" 2>/dev/null <<'PYEOF'
 import json, sys
 # 1 組 = 同じオブジェクト内で完全一致または A〜Z だけ畳んで一致するキーを、文書順に ' / ' で結んだもの（PS 版の Get-JsonDupKeys
 # と同じ）。str.lower() / casefold() は非 ASCII も畳むので使わない（2-c の name_class と同じ規則）
@@ -681,7 +681,7 @@ PYEOF
       if [[ $_SS_OK -ne 1 ]]; then
         :
       # ⚠ python の失敗を PASS に化けさせない（出力が空でも成功扱いにすると fail-open になる。実測）
-      elif _res="$("$PY" - "$SETTINGS" "${_U_KEYS[*]}" "${_M_KEYS[*]}" "$_ENV_RE" "$_W_RULE_RE" 2>/dev/null <<'PYEOF'
+      elif _res="$("$PY" -I - "$SETTINGS" "${_U_KEYS[*]}" "${_M_KEYS[*]}" "$_ENV_RE" "$_W_RULE_RE" 2>/dev/null <<'PYEOF'
 import json, re, sys
 d = json.load(open(sys.argv[1], encoding='utf-8'))
 if not isinstance(d, dict):
