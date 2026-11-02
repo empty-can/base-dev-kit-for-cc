@@ -517,7 +517,8 @@ done < <(ref_files)
 #          完全一致 → 従来の WARN、大文字小文字だけ違う（systemroot 等）→ 「Windows でのみ同一視される」旨の別の WARN。
 #          環境変数名の大文字小文字を区別しないのは Windows だけなので、区別する OS では別の変数でありうる。
 #          どの settings ファイルからも読まれず起動環境からしか読まれない変数（CLAUDE_CODE_RESTRICTED 等）も E に含める
-#          （settings-reference「Variables Claude Code ignores in `env`」の各項目。v2.1.310 の docs で照合）。
+#          （settings-reference「Variables Claude Code ignores in `env`」の各項目。確認時点は表のファイル
+#          scripts/check-assets.d/settings-scope.txt の各節のコメント）。
 #    加えて、どこに置いても照合されない権限ルール（permissions.allow / deny / ask のうち、パス付きの Write / NotebookEdit /
 #    MultiEdit / Glob。ファイルの権限は Edit(path) / Read(path) ルールだけで照合される。permissions「`Write(path)`,
 #    `NotebookEdit(path)`, and `Glob(path)` rules never match」）を別の WARN で報告する。ツール名だけのルール（Write 等）は

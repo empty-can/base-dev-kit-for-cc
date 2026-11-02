@@ -141,7 +141,7 @@
 
 ## 5. background 起動・foreground 起動とランチャーの関係
 
-本節は、§3.1.2 の 2 つのユースケース ―― ランチャーから `claude` を起動する foreground 起動と、ランチャーを通らずに別のプロセスとして起動される background 起動 ―― について、ランチャーの効果がどこまで届くかと、それに伴う制約を整理し、ランチャーの方針を決める。5.1 で、どの起動がどちらに属するかと background 起動に届く経路を整理し、5.2 で、background 起動のセッションまで起動装置に通す公式の経路（企業ランチャー）との関係を判定する。5.3〜5.5 は foreground 起動でランチャーが行うこと（引数の組み立て・出力・起動前の検出）とその制約である。本節の Claude Code の事実は v2.1.302 時点で調べ、v2.1.310 の docs で再確認したもの（小節ごとの確認時点は 5.1・5.2 の末尾・5.4.2・5.4.5 に書く）。決定の経緯は別紙（変更履歴）にまとめる。
+本節は、§3.1.2 の 2 つのユースケース ―― ランチャーから `claude` を起動する foreground 起動と、ランチャーを通らずに別のプロセスとして起動される background 起動 ―― について、ランチャーの効果がどこまで届くかと、それに伴う制約を整理し、ランチャーの方針を決める。5.1 で、どの起動がどちらに属するかと background 起動に届く経路を整理し、5.2 で、background 起動のセッションまで起動装置に通す公式の経路（企業ランチャー）との関係を判定する。5.3〜5.5 は foreground 起動でランチャーが行うこと（引数の組み立て・出力・起動前の検出）とその制約である。確認時点（何をいつ、どの版の docs で確かめたか）は各小節の末尾に書く。決定の経緯は別紙（変更履歴）にまとめる。
 
 ランチャーが効くのは、**foreground 起動で自分が起動した `claude` プロセスと、そのプロセスから生成される SubAgent** まで（5.1.1）。
 
@@ -195,6 +195,8 @@ background 起動のうち supervisor 配下のセッション（`/bg`・`←`�
 
 **起動環境からしか読まれない変数**もある（公式: [settings-reference「Variables Claude Code ignores in `env`」](https://code.claude.com/docs/en/settings-reference#variables-claude-code-ignores-in-env)）。`CLAUDE_CODE_RESTRICTED`・`CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY`・`CLAUDE_CODE_DISABLE_{DANGEROUS_RM_TIMEOUT,SUBSTITUTION_RM_PROMPT,INLINE_SHELL_RM_PROMPT,MOUNTED_DRIVE_RM_PROMPT}`・`CLAUDE_CODE_WARN_{DISK,MEMORY}_FREE_GIB`（v2.1.304〜）などは、managed を含む**どの settings ファイルの `env` でも無視される**。これらは custom.env / setup-environment（foreground のみ）か OS の環境変数（background を含む）でしか効かず、将来 managed settings の `env` へ移す対象にもならない。`CLAUDE_AX_SCREEN_READER` と `CLAUDE_AX_*` は project / local の settings でだけ無視される（v2.1.305〜。user / managed / `--settings` では効く）。
 
+確認時点: 5.1.3 の経路の表と起動環境からしか読まれない変数は、2026-10-24 に v2.1.310 の docs で確かめた（supervisor を最初に起動したシェルの env の継承は 2026-10-20 の実測）。
+
 ### 5.2 企業ランチャー（`CLAUDE_CODE_PROCESS_WRAPPER`）との関係
 
 本小節は、background 起動のセッションまで起動装置に通す公式の経路（`CLAUDE_CODE_PROCESS_WRAPPER`）が本キットで使えるかを判定し、本ランチャーの位置づけを決める。
@@ -235,6 +237,8 @@ background service と agent view の全セッションを起動装置に通す�
 ### 5.3 サブコマンドの委譲
 
 ランチャーは組み立てたオプションを利用者の追加引数（`"$@"` / `@args`）の前に置く。`remote-control` / `agents` を追加引数で渡すと verb の前に `--settings` 等が付き、remote-control は起動を拒否し、agents は `--add-dir` / `--mcp-config` が前にあると `--json` が失敗する。サブコマンドは `claude` を直接使う（フラグ形式の `claude --bg "<prompt>"` は問題ない）。
+
+確認時点: 2026-10-18 に v2.1.302 の docs（cli-reference・agent-view）で確かめた。
 
 ### 5.4 位置引数（プロンプト）の取り込みと `--` の補完
 
@@ -283,7 +287,9 @@ background service と agent view の全セッションを起動装置に通す�
 
 #### 5.4.5 `--bg` との関係
 
-`--bg` / `--background` は裸の `--` より前でだけフラグとして読まれ、`--` の後ろでは文字列になる（v2.1.299〜。[agent view](https://code.claude.com/docs/en/agent-view) の「Prompts that contain `--bg`」）。ランチャーが `--` を補うのは起動時引数に `-` で始まるものが 1 つも無いときだけなので、`start_claude_code --bg "<prompt>"` の `--bg` は従来どおりフラグとして届く（v2.1.310 の docs で確認）。
+`--bg` / `--background` は裸の `--` より前でだけフラグとして読まれ、`--` の後ろでは文字列になる（v2.1.299〜。[agent view](https://code.claude.com/docs/en/agent-view) の「Prompts that contain `--bg`」）。ランチャーが `--` を補うのは起動時引数に `-` で始まるものが 1 つも無いときだけなので、`start_claude_code --bg "<prompt>"` の `--bg` は従来どおりフラグとして届く。
+
+確認時点: 5.4.1〜5.4.4 の事実は 2026-10-19 に v2.1.302 で実測した（条件は 5.4.2）。5.4.5 は 2026-10-24 に v2.1.310 の docs（agent-view）で確かめた。
 
 ### 5.5 ランチャーの出力と起動前の検出
 
@@ -478,6 +484,8 @@ bash 版の 3 本は 2026-10-30 から凍結している。範囲・終了条件
 - 凍結とは関係なく、設計として次の差もある。
   - 中止した後に環境変数が残るのは、PS 版を対話セッションで実行した場合だけ（5.5.6）。
   - setup-environment の警告は、PS 版では単体で動かしたとき `Write-Warning`、bash 版では `>&2` で出る（5.5.1）。
+
+確認時点: 5.5.2 の事実は 2026-10-24 に v2.1.310 の docs（errors）で確かめた。5.5.3 以降の仕様は 2026-11-01（issue #4 の B-5）時点の実装を記したもの。
 
 - 参照: https://code.claude.com/docs/en/errors#configuration-warnings 、https://code.claude.com/docs/en/errors#working-directory-is-a-network-path
 

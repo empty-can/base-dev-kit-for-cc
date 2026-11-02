@@ -16,6 +16,9 @@
 #                      照合する（大文字小文字を区別する）
 #   キーパスは英数字と _ の名前を . でつないだもの（a.b.c。各段の名前を大文字小文字を区別して照合する。値は見ない）。ツール名は
 #   英数字と _ だけ。u / m の行の順が、WARN に並ぶキーの順になる。
+#   u / m に載せるキーの基準は settings-reference の表の Scope 列（`Any file` / `Global config` 以外のキー）。全量にするかは
+#   裁定中（issue #4 の I-2）。入れ子のキーは親が載っていれば親で拾われる（check-assets の照合はキーパスの前方一致。表の
+#   キーパスを settings.json で 1 段ずつたどれれば該当とする）。
 #   書式の誤り（未知のタグ・列の数が 2 でない・空の値・値に使えない文字・同じタグの中での重複・format 行の欠落 / 重複 / 版の違い・
 #   format 行より前のデータ行・u / m / e / wtool のどれかの行が 1 つも無い・NUL バイト）が 1 つでもあれば、check-assets は FAIL に
 #   して settings.json のキーの検査をしない（検査器自身の表が欠けた状態を PASS にしない）。
@@ -33,6 +36,7 @@ format	1
 
 # U。axScreenReader は v2.1.305 から User or managed（--settings も可。それまでは Any file）。sandbox.allowNestedUserNamespaces は
 # v2.1.305 で新設（User or managed。--settings も可。true にするとサンドボックスの境界を外す）
+# 確認時点: 2026-10-24、docs v2.1.310 時点
 u	skipDangerousModePermissionPrompt
 u	useAutoModeDuringPlan
 u	autoMode
@@ -53,6 +57,7 @@ u	sandbox.credentials.awsPairs
 u	sandbox.credentials.sigv4
 
 # M。prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く
+# 確認時点: 2026-10-24、docs v2.1.310 時点
 m	prependPlugins
 m	appendPlugins
 m	allowManagedPermissionRulesOnly
@@ -60,6 +65,7 @@ m	allowManagedHooksOnly
 m	allowManagedMcpServersOnly
 m	managedMcpServers
 m	strictKnownMarketplaces
+# allowedMarketplaces は strictKnownMarketplaces の別名（settings-reference の本文）
 m	allowedMarketplaces
 m	blockedMarketplaces
 m	strictPluginOnlyCustomization
@@ -81,13 +87,14 @@ m	sandbox.filesystem.allowManagedReadPathsOnly
 m	sandbox.network.allowManagedDomainsOnly
 
 # E。どの settings ファイルからも読まれず起動環境からしか読まれない変数（CLAUDE_CODE_RESTRICTED 等。settings-reference
-# 「Variables Claude Code ignores in `env`」の各項目。v2.1.310 の docs で照合）も含める。
+# 「Variables Claude Code ignores in `env`」の各項目）も含める。
 # CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS は v2.1.310 の docs から消えた（どのページにも無い。changelog に廃止の記載は無い）が、project の
 # env に書いても効かない事実は変わらないので残す（外すと、効かない変数が黙って PASS になる）。
 # CLAUDE_AX_.* は v2.1.305 から project / local では無視（screen reader 等）。CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB は
 # どの settings ファイルからも読まれない（起動環境だけ。MOUNTED_DRIVE_RM_PROMPT と WARN_* は v2.1.304 以降の docs で追加）。
 # ホスティング環境・Claude Code 自身が設定する変数（CLAUDE_CODE_REMOTE / CLAUDE_CODE_ACCOUNT_UUID / CLAUDE_CODE_MESSAGING_* 等）は、
 # 利用者が settings に書く動機が無いので含めない。
+# 確認時点: 2026-10-24、docs v2.1.310 時点
 e	CLAUDE_CONFIG_DIR
 e	CLAUDE_CODE_TMPDIR
 e	HOME
@@ -130,6 +137,7 @@ e	CLAUDE_CODE_WARN_(DISK|MEMORY)_FREE_GIB
 # W。ファイルの権限は Edit(path) / Read(path) ルールだけで照合され、パス付きの Write / NotebookEdit / MultiEdit / Glob はどこに置いても
 # 効かない（permissions「`Write(path)`, `NotebookEdit(path)`, and `Glob(path)` rules never match」）。ツール名だけのルールはツール単位で
 # 効くので対象外（コードの「( ) の中が 1 文字以上」で外れる）
+# 確認時点: 2026-10-24、docs v2.1.310 時点
 wtool	Write
 wtool	NotebookEdit
 wtool	MultiEdit
