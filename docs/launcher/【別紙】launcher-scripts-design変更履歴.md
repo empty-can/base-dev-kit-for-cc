@@ -1,5 +1,7 @@
 # 変更履歴:launcher-scripts-design
 
+**2026-11-03**: §3.1.2「利用者向役割」を、foreground 起動と background 起動の 2 ユースケースを並列に記す形に改めた（作業指示者の提案。background の例外注記を括弧書きから独立した項目にし、§5 が background 起動の制約を整理・検証・決定する節であることを示した。事実は §5 の表のとおりで不変）。  
+
 **2026-11-02**: §6 の実装に着手 ―― §6.2.1 の PowerShell 版の読み方を実装に合わせて改め（`Get-Content` ではなくバイト列を UTF-8 に復号）、書式の誤りに値の形の検査を足せることを記した。6.6 のステップ ①（check-assets の U / M / E と W のツール名を `scripts/check-assets.d/settings-scope.txt` へ移し、両版がスクリプト自身の位置から読む。表が読めないときは FAIL。verify-kit に項目 `ca-data` と `format` の区分を追加）。本文は不変。  
 
 **2026-11-02**: 文書構成の整理  
