@@ -26,7 +26,7 @@
 #    公式 docs は settings の env を勧めるが、キットは利用者に settings 系ファイルの env を使わせない（誤って commit / push する、Claude から読める場所に値が残る、を避けるため）。
 #    組織で固定する値だけは managed settings の env に置く。機微（分類A）も OS 環境変数。
 #    ※ supervisor ごとラップする公式手段（CLAUDE_CODE_PROCESS_WRAPPER / processWrapper）は Windows では無視される。
-#      macOS / Linux でも start_claude_code はその契約を満たさないので登録しない（base-dev-kit の launcher 設計 §5-1）。
+#      macOS / Linux でも start_claude_code はその契約を満たさないので登録しない（base-dev-kit の launcher 設計 §5.2）。
 #    ※ 本ファイルの警告は Write-Warning で出し、start_claude_code.ps1 が stderr へ回す（PowerShell は別のプログラムから
 #      起動されると warning ストリームを stdout に書くため。stdout は claude の出力だけにする）。
 # =============================================================================

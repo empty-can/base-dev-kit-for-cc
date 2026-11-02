@@ -118,7 +118,7 @@ $TeamOpts = [ordered]@{
 #   'warn'  … 警告を出して、そのまま claude を起動する
 # $TeamOpts と同じく既定値をチームで揃える仕組みで、強制力は無い（起動時引数で渡したオプションは検査しない）。
 # 'abort' / 'warn' 以外の値（空や大文字小文字の違いを含む）は 'abort' として扱い、その旨をエラーとして 1 行出す（fail-closed）。
-# 2026-11-01 の作業指示者決定（設計 §5-4）。bash 版は凍結中で未追随（SH-DEFER-02）。
+# 2026-11-01 の作業指示者決定（設計 §5.5）。bash 版は凍結中で未追随（SH-DEFER-02）。
 $TeamKitCheck = 'abort'
 
 # ---- 3) 利用者可変の起動オプション（分類D・option-settings.ps1）------------
@@ -141,12 +141,12 @@ if (Test-Path $OptsFile) {
 # option-settings（$Opts）と $TeamOpts に、キットの前提が崩れる起動オプションがあれば、claude を起こす前に知らせる。見つけたものは
 # 下の (a)・(b) の検査で $kitCheckFound に溜め（1 件 = 出どころ付きの理由 1 行。理由の本文はモードで変えない）、最後にまとめて出す。
 # 前置きは $TeamKitCheck が 'abort' なら「エラー: 」、'warn' なら「警告: 」。続けてまとめ 1 行を出し、'abort' なら claude を起こさずに
-# exit 1、'warn' ならそのまま起動する（2026-11-01 の作業指示者決定。設計 §5-4。それまでは警告だけで止めなかった）。
+# exit 1、'warn' ならそのまま起動する（2026-11-01 の作業指示者決定。設計 §5.5。それまでは警告だけで止めなかった）。
 # 中止しても 1) の setup-environment が設定した環境変数は戻さない（対話セッションで .\start_claude_code.ps1 と実行した場合は、claude の
-# 終了後と同じくセッションに残る）。読み込みの順（1) → 3)）は変えない（設計 §5-4）。
+# 終了後と同じくセッションに残る）。読み込みの順（1) → 3)）は変えない（設計 §5.5）。
 # 出どころの表記と順（$Opts → $TeamOpts）は (a)・(b) で共通で、出力は (a) の分が先、(b) の分が後。出どころごとに独立に判定する
 # （$Opts と $TeamOpts を合成した実効値は見ない）。起動時引数と '--add-dir=<パス>' / '--bare=…' のような = 形のキーは見ない（利用者が
-# 並べた引数は守らない。設計 §5-3 の責任分界・§5-4）。キーの照合は [ordered] の Contains で、大文字小文字を区別しない（'--Bare' も
+# 並べた引数は守らない。設計 §5.4 の責任分界・§5.5）。キーの照合は [ordered] の Contains で、大文字小文字を区別しない（'--Bare' も
 # 対象）。チームとして禁じるなら managed settings で固定する（ランチャーの統制には強制力が無い）。出どころの表記は単一引用符なので
 # $TeamOpts は展開されない。bash 版は凍結中で未追随（警告だけで止めない旧版のまま。SH-DEFER-01・02。docs/launcher/sh-freeze-backlog.md）。
 $kitCheckFound = [System.Collections.Generic.List[string]]::new()
@@ -159,7 +159,7 @@ $uncSources = [ordered]@{
 # v2.1.305 以降の対話起動ではその警告がデバッグログにしか出ない。<Share> を UNC で書くとキット無しで黙って起動するので、画面に
 # 出せるランチャーが知らせる。チームが <Share> を固定するのは $TeamOpts なので、そこも同じ判定で見る（2026-10-27 の判断 J-3。
 # それまでは option-settings だけ）。判定は綴りだけ（\\ か // で始まるか。解決するとネットワークへ触れてしまう）なので、\\wsl$ や
-# \\?\C:\… のようなローカルのパスも対象になる（'abort' では止まる。書き方を変えるか 'warn' にする。設計 §5-4）。
+# \\?\C:\… のようなローカルのパスも対象になる（'abort' では止まる。書き方を変えるか 'warn' にする。設計 §5.5）。
 foreach ($uncFrom in $uncSources.Keys) {
     $uncMap = $uncSources[$uncFrom]
     if (-not $uncMap.Contains('--add-dir')) { continue }
@@ -169,7 +169,7 @@ foreach ($uncFrom in $uncSources.Keys) {
     }
 }
 
-# (b) 区分 1: キットの前提が黙って崩れる起動オプション（2026-10-30 の作業指示者決定。設計 §5-4）。対象は下の表のキー（キットの
+# (b) 区分 1: キットの前提が黙って崩れる起動オプション（2026-10-30 の作業指示者決定。設計 §5.5）。対象は下の表のキー（キットの
 # settings.json の permissions.deny・hooks や CLAUDE.md / rules が読まれないまま起動する）と、--setting-sources の値に project が無い
 # 場合（キットの .claude/settings.json が読まれない）。--setting-sources は値を [string] にしてカンマで分け、前後の空白を除いた要素に
 # project（大文字小文字を区別した完全一致）が無ければ対象（$true は 'True' になり、project が無いので対象）。未設定は既定で全ソースを
