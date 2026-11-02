@@ -14,7 +14,7 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
 
 ## 2. 入力
 
-- **前回の基準点**: 実装計画の追随記録（§8 以降）の範囲にある head の SHA（`<LLMs>` リポのコミット）と changelog の版。範囲は、7. の型で書いた記録では本文の 1 行目に、それより前の記録（§8-ter・§8-quater）では導入文の括弧の中（「LLMs リポ `<base>`→`<head>`、changelog 2.1.X〜2.1.Y」）にある。
+- **前回の基準点**: 実装計画の追随記録（§8 以降）の範囲にある head の SHA（`<LLMs>` リポのコミット）と changelog の版。範囲は、7. の型で書いた記録では本文の 1 行目に、それより前の記録（§8-ter・§8-quater）では導入文の括弧の中（「LLMs リポ `<base>`→`<head>`、changelog 2.1.X〜2.1.Y」）にある。実装計画 §4・§5 のインベントリ（現行の一覧）の差分は、前回の head ではなく、インベントリを最後に書き直した時点の head（§4・§5 の「基準:」の行にある版の追随記録の head）と比べる。
 - **公式 docs の複製**: `<LLMs>` は、公式 docs を定期的に取り込んでいるローカルのリポジトリ。
   - `<LLMs>/official-llms-txts/code.claude.com/docs/llms-full.txt`: 全文。各ページは `# <title>` の行の次の行が `Source: <URL>`。
   - `<LLMs>/official-llms-txts/code.claude.com/docs/llms.txt`: 索引。
@@ -43,6 +43,13 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
   diff base.txt head.txt
   ```
 
+  シェルごとの例がタブ表記（`[tab] 名前` の行と `> ` の字下げ）に変わった v2.1.316 以降の docs では、書式だけの差分が多いページがある。素の `diff` で実質の差分を探しにくいときは、`> ` の字下げを外し、`[tab] …` の行・`**名前**` だけの行・空行を落としてから比べる。
+
+  ```bash
+  norm() { sed -E 's/^> ?//; s/^> ?//' "$1" | grep -v -E '^\[tab\] |^\*\*[^*]+\*\*$|^\s*$'; }
+  diff <(norm base.txt) <(norm head.txt)
+  ```
+
 - ④ **レールごとに反映する**。設計書の本文を変えたら、別紙にも項を足す。
   - A = option-settings テンプレ（依存する docs: cli-reference）
   - B = custom.env.template と setup-environment（env-vars・各プロバイダのページ・llm-gateway）
@@ -60,12 +67,13 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
 
 - 番号は、月曜始まりの通し週番号（`date +%W`。年の最初の月曜から数え、それより前の日は 00）。例: 2026-10-18 = W41、2026-10-24 = W42、2026-11-03 = W44。
 - レールは A〜E（3. の ④）、連番は 01 から。
+- 実装計画 §4・§5 のインベントリの書き直しは、その依存先のレールの ID にする（§4 = A、§5 = B）。
 - 判断の結果を反映した項目は、同じ番号で F（反映）・G・H のレールを使ってきた（実装計画 §8-quater）。
 - SH-DEFER の「出所」には、この ID を書く（`docs/launcher/sh-freeze-backlog.md`）。
 
 ## 5. 判断の既定
 
-- **既定で対象外**: `[VSCode]`・`[Cloud sessions]`・`[Claude Tag]`・`[Code Review]`・`[Remote Control]` の札の付いた項目、Claude apps gateway と Self-hosted runner の項目、端末の表示だけの修正。ただし付表 A の語（`--add-dir`・`--setting-sources`・`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`・background / supervisor / agent view・`ANTHROPIC_BASE_URL` 等のゲートウェイ・hooks・権限ルール・Windows / PowerShell・テンプレのキー名）を含む項目は、札にかかわらず読む。
+- **既定で対象外**: `[VSCode]`・`[Cloud sessions]`・`[Claude Tag]`・`[Code Review]`・`[Remote Control]` の札の付いた項目、Claude apps gateway と Self-hosted runner の項目（`self-hosted-runner` サブコマンドの変更を含む）、端末の表示だけの修正。ただし付表 A の語（`--add-dir`・`--setting-sources`・`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`・background / supervisor / agent view・LLM ゲートウェイ〔`ANTHROPIC_BASE_URL`・`*_BASE_URL`。Claude apps gateway は含まない〕・hooks・権限ルール・Windows / PowerShell・テンプレのキー名）を含む項目は、札にかかわらず読む。語を機械的に拾うと、「gateway」は Claude apps gateway に、「settings」は Claude Tag やクラウドの管理画面の settings にも掛かるので、拾った項目は読んで当たりを確かめる。
 - **changelog にあって docs に無い**: 本文には入れず、「docs 掲載後に再評価」として追随記録に書いて閉じる。
 - **changelog と docs が食い違う**: 本文は docs に従い、食い違いを要確認として追随記録に書く（要実測にするかは作業指示者の判断）。
 - **docs だけの変更**: changelog の仕分けでは拾えないので、3. の ③ の docs の差分で拾う。
@@ -76,7 +84,7 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
 
 - **check-assets 両版**（`bash scripts/check-assets.sh .` と `pwsh -NoProfile -File scripts/check-assets.ps1 -Share .`）: FAIL 0。WARN は既知の件数（ルート `CLAUDE.md` の追跡、作業ツリーにある未追跡の個人ファイルなど）と一致すること。2-h（追跡文書から非追跡の成果物ファイルへのパス参照）が PASS。両版の出力が一致すること。
   - 2-h は `git ls-files` の `.md` を検査するので、まだ追跡していない新しい `.md` は対象にならない。コミットの前に確かめるなら `git add -N <file>` で載せてから走らせ、`git reset -- <file>` で戻す。
-- **verify-kit 両版**（`bash scripts/verify-kit.sh` と `pwsh -NoProfile -File scripts/verify-kit.ps1`。各 5 分程度。実物の `claude --version` を呼ぶが、セッションは起動しない）: FAIL 0 / SKIP 0、FROZEN = `scripts/verify-kit.d/frozen.txt` のデータ行数、PASS = 項目数 − FROZEN。`.ps1` の検証は pwsh 7 と Windows PowerShell 5.1 の 2 系統で行う（verify-kit が行う）。
+- **verify-kit 両版**（`bash scripts/verify-kit.sh` と `pwsh -NoProfile -File scripts/verify-kit.ps1`。各 5 分程度。実物の `claude --version` を呼ぶが、セッションは起動しない）: FAIL 0 / SKIP 0、FROZEN = `scripts/verify-kit.d/frozen.txt` のデータ行数、PASS = 項目数 − FROZEN。`.ps1` の検証は pwsh 7 と Windows PowerShell 5.1 の 2 系統で行う（verify-kit が行う）。1 回 5 分程度かかるので、Claude に実行させるときは background で走らせ、完了の通知を待つ。
 - **現在の値**（確認時点: 2026-11-03）: check-assets FAIL 0 / WARN 5、verify-kit PASS 23 / FAIL 0 / SKIP 0 / FROZEN 1。
 - **保存形式**: `.ps1` は UTF-8 + BOM + CRLF、`.sh`・`.txt`・`.md` は LF・BOM なし。CR は `tr -cd '\r' < <file> | wc -c` で数える（Git Bash の `grep` / `awk` で数えない。ルート `CLAUDE.md`「開発時の約束」）。
 
@@ -93,6 +101,7 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
   - 未決（作業指示者の判断待ち。issue 番号）
   - changelog にあって docs に無いもの（docs 掲載後に再評価）
 - 設計書の本文を変えたら、別紙にも項を足す。
+- 実装計画 §4・§5 のインベントリを現行の一覧に書き直すときは、一覧を表にし、従来の一覧・注記・追補は「過去の追補（記録。原文のまま）」の小見出しの下に原文のまま残す（消さない）。「基準:」の行の版と日付を上げる。
 
 ## 付表 A. 依存の地図
 
@@ -102,15 +111,15 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
 | `--permission-mode` | [permission-modes](https://code.claude.com/docs/en/permission-modes)「Which mode a session starts in」 | permission mode | 同上 |
 | `--model`・`--effort` | [model-config](https://code.claude.com/docs/en/model-config)（「Adjust effort level」「Send no effort level」） | model, effort | 同上 |
 | custom.env.template の全キー | [env-vars](https://code.claude.com/docs/en/env-vars)「Variables」 | 変数名 | README 付録 A の版の行 |
-| setup-environment の分類B（3P・ゲートウェイ・テレメトリ） | env-vars、[llm-gateway](https://code.claude.com/docs/en/llm-gateway)、[monitoring-usage](https://code.claude.com/docs/en/monitoring-usage)、各プロバイダのページ | 変数名、gateway, OpenTelemetry | `setup-environment.ps1` の冒頭コメント |
-| `settings-scope.txt` の u / m | [settings-reference](https://code.claude.com/docs/en/settings-reference) の表の Scope 列 | キー名、settings | `settings-scope.txt` の各節のコメント |
+| setup-environment の分類B（3P・ゲートウェイ・テレメトリ） | env-vars、[llm-gateway](https://code.claude.com/docs/en/llm-gateway)、[monitoring-usage](https://code.claude.com/docs/en/monitoring-usage)、各プロバイダのページ、[feature-availability](https://code.claude.com/docs/en/feature-availability)（3P で使えない機能の注記の典拠） | 変数名、gateway, OpenTelemetry | 実装計画 §5 の「基準:」の行 |
+| `settings-scope.txt` の u / m | [settings-reference](https://code.claude.com/docs/en/settings-reference) の表の Scope 列 | キー名、settings（settings ファイルのキーの話に限る） | `settings-scope.txt` の各節のコメント |
 | `settings-scope.txt` の e | settings-reference「[Variables Claude Code ignores in `env`](https://code.claude.com/docs/en/settings-reference#variables-claude-code-ignores-in-env)」 | 変数名 | 同上 |
 | `settings-scope.txt` の wtool | [permissions](https://code.claude.com/docs/en/permissions)「`Write(path)`, `NotebookEdit(path)`, and `Glob(path)` rules never match」 | permission rules | 同上 |
-| 設計書 §5.1.1〜5.1.2 | [sub-agents](https://code.claude.com/docs/en/sub-agents)、[agent-view](https://code.claude.com/docs/en/agent-view)「Monitor sessions with agent view」、[agent-teams](https://code.claude.com/docs/en/agent-teams)、[workflows](https://code.claude.com/docs/en/workflows) | subagent, teammate, background | 5.1.2 の末尾（5.1.3 の前） |
-| 設計書 §5.1.3 | agent-view「[Settings and provider](https://code.claude.com/docs/en/agent-view#settings-and-provider)」、[network-config](https://code.claude.com/docs/en/network-config)「Apply network settings to background agents」、settings-reference「Variables Claude Code ignores in `env`」 | background, supervisor, env | 5.1 の末尾 |
+| 設計書 §5.1.1〜5.1.2 | [sub-agents](https://code.claude.com/docs/en/sub-agents)、[agent-view](https://code.claude.com/docs/en/agent-view)「Monitor sessions with agent view」、[agent-teams](https://code.claude.com/docs/en/agent-teams)、[workflows](https://code.claude.com/docs/en/workflows)、corporate-launcher「Processes that start outside the launcher」と [deep-links](https://code.claude.com/docs/en/deep-links)（deep link で開いたセッションの行） | subagent, teammate, background, deep link | 5.1.2 の末尾（5.1.3 の前） |
+| 設計書 §5.1.3 | agent-view「[Settings and provider](https://code.claude.com/docs/en/agent-view#settings-and-provider)」、[network-config](https://code.claude.com/docs/en/network-config)「Apply network settings to background agents」、settings-reference「Variables Claude Code ignores in `env`」、[permission-modes](https://code.claude.com/docs/en/permission-modes)「Why the critical-path removal prompt stays on」（background セッションが持たずに始まる変数。列挙に載せるかの判断） | background, supervisor, env | 5.1 の末尾 |
 | 設計書 §5.2 | [corporate-launcher](https://code.claude.com/docs/en/corporate-launcher)（「What the launcher covers」「The launcher contract」） | CLAUDE_CODE_PROCESS_WRAPPER, launcher | 5.2 の末尾 |
-| 設計書 §5.3 | cli-reference（サブコマンド）、agent-view | remote-control, agents | 5.3 の末尾 |
-| 設計書 §5.4 | cli-reference の `<x...>`・`[x]` の型、agent-view「Prompts that contain `--bg`」 | `--`, positional, `--bg` | 5.4 の末尾 |
+| 設計書 §5.3 | agent-view「Settings, plugins, and MCP servers」（`agents` の前に置けないフラグ）、errors「`<flag>` before `remote-control` is not carried over to the sessions Remote Control starts」、[remote-control](https://code.claude.com/docs/en/remote-control)、cli-reference（サブコマンド） | remote-control, agents | 5.3 の末尾 |
+| 設計書 §5.4 | `claude --help` の型の表記（`<x...>`・`[x]`。cli-reference の表には型の表記が無く、`--file` は行も無い。確かめた版を書く。追随で `claude --help` を実行してよいかは issue #4 の U-07）、agent-view「Prompts that contain `--bg`」 | `--`, positional, `--bg` | 5.4 の末尾 |
 | 設計書 §5.5 | [errors](https://code.claude.com/docs/en/errors)「[Configuration warnings](https://code.claude.com/docs/en/errors#configuration-warnings)」「[Working directory is a network path](https://code.claude.com/docs/en/errors#working-directory-is-a-network-path)」 | warning, network path, `--add-dir`, debug log | 5.5 の末尾 |
 | README 付録 B の各項目 | 項目ごと: `--model` → model-config／`--add-dir` → errors「Working directory is a network path」、[skills](https://code.claude.com/docs/en/skills)「Load skills from a directory outside the project」／`--setting-sources` → cli-reference「CLI flags」の行、skills「Load skills from a directory outside the project」、agent-view「What carries over when you background」／`--permission-mode` → permission-modes／`--tools` → [tools-reference](https://code.claude.com/docs/en/tools-reference)／`--worktree` → [worktrees](https://code.claude.com/docs/en/worktrees)／`--teammate-mode` → agent-teams／`--debug-file` → errors「Configuration warnings」 | 同左（項目のフラグ名） | README 付録 A の版の行 |
 | `start_claude_code.ps1` の冒頭コメント | corporate-launcher「[The launcher contract](https://code.claude.com/docs/en/corporate-launcher#the-launcher-contract)」、agent-view「Settings and provider」 | launcher, background | コメント内の版・実測の札（「v2.1.302 で実測」等） |
@@ -122,7 +131,7 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
 
 | 事実 | 書いてある場所 |
 |---|---|
-| 起動環境からしか読まれない変数（どの settings の `env` でも無視される） | 設計書 §5.1.3、実装計画 §6-bis の分類B の注記、`settings-scope.txt` の E 節のコメント、`check-assets.sh` の 3. の冒頭コメント、`.claude/launcher/README.md` §2-4「空き容量の警告」 |
+| 起動環境からしか読まれない変数（どの settings の `env` でも無視される） | 設計書 §5.1.3、実装計画 §6-bis の分類B の注記と §5 の表、`settings-scope.txt` の E 節のコメント、`check-assets.sh`・`check-assets.ps1` の 3. の冒頭コメント、check-assets 両版の E の WARN の文言（変数を「等」なしで列挙している。両版同文に保つ）、`.claude/launcher/README.md` §2-4「空き容量の警告」 |
 | v2.1.305 以降、対話起動の起動時警告はデバッグログにだけ出る | 設計書 §5.5.2、`.claude/launcher/README.md` 付録 B「起動時の警告を読む」「--add-dir とネットワークパス」、option-settings テンプレの `--debug-file` のコメント、`start_claude_code.ps1` の (a)（UNC の検査）のコメント、`check-assets.sh` の 3. の冒頭コメント、ルート README の方法 B |
 | background に引き継がれる構成フラグ | 設計書 §5.1.3、`.claude/launcher/README.md` §5、`start_claude_code.ps1` の冒頭コメント、実装計画 §3 (1) |
 | `CLAUDE_CODE_PROCESS_WRAPPER` は Windows で無視される | 設計書 §5.2.2、実装計画 §3 (1)・§5、`start_claude_code.ps1` の冒頭コメント、`setup-environment.ps1` の冒頭コメント（supervisor ごとラップする公式手段の注記） |
