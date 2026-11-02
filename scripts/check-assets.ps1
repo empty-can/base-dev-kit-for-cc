@@ -775,7 +775,7 @@ if ($settingsBom) {
     # 判定（E 区分は 完全一致 → 従来の WARN／大文字小文字だけ違う → 別文言の WARN）
     if ($uHits.Count -gt 0) { Warn ("方法 A（.claude\ を project として配置）では無視されるキー: " + ($uHits -join ' ') + "（方法 B / clean-test-env の --settings 結合では有効になり、配布方式で挙動が割れる。各自に効かせるなら ~/.claude/settings.json へ）") }
     if ($mHits.Count -gt 0) { Warn ("project でも --settings でも無視されるキー: " + ($mHits -join ' ') + "（managed 専用。prependPlugins / appendPlugins だけは条件付きで user も可。組織の managed settings で配る）") }
-    if ($eHits.Count -gt 0) { Warn ("env で project / local からは設定できない変数: " + ($eHits -join ' ') + "（シェル（OS の環境変数）か、組織で固定するなら managed settings で設定する。テレメトリの off 値 none / 0 だけは例外。CLAUDE_CODE_PROJECT_DIR_NAME / CLAUDE_CODE_RESTRICTED / CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_WARN_*_FREE_GIB はどの settings ファイルからも読まれず、起動環境からしか読まれない）") }
+    if ($eHits.Count -gt 0) { Warn ("env で project / local からは設定できない変数: " + ($eHits -join ' ') + "（シェル（OS の環境変数）か、組織で固定するなら managed settings で設定する。テレメトリの off 値 none / 0 だけは例外。CLAUDE_CODE_PROJECT_DIR_NAME / CLAUDE_CODE_RESTRICTED / CLAUDE_CODE_DISABLE_*_RM_* / CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS / CLAUDE_CODE_WARN_*_FREE_GIB はどの settings ファイルからも読まれず、起動環境からしか読まれない）") }
     if ($eCase.Count -gt 0) { Warn ("env で project / local からは設定できない変数と大文字小文字だけが違う変数: " + ($eCase -join ' ') + "（Windows でのみ同一視される。環境変数名の大文字小文字を区別しないのは Windows だけで、Windows では設定できない変数と同じ扱いになりうる。意図したものか確認すること）") }
     if (($uHits.Count + $mHits.Count + $eHits.Count + $eCase.Count) -eq 0) { Pass "project で効かないキーなし（settings.json）" }
     if ($wHits.Count -gt 0) {

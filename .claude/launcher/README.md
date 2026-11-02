@@ -200,7 +200,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 
 ## 付録 A. 収録範囲と、意図的に載せていないオプション
 
-テンプレートは、対話起動で使う Claude Code の起動オプションをほぼ全量載せ、公式の既定値を記している（公式 docs v2.1.310 時点）。この版は、テンプレート 3 本（option-settings の sh / ps1 と custom.env）と付録 B の記述の基準の版でもある。載せていないオプションには、print / stream 専用のもの（print 専用の一部はテンプレートの print 節に載せてある）、端末セッションを始めない・別のモードで動くもの、非推奨・削除済みのもの、キットの前提が黙って崩れるもの（ランチャーが起動前に検出する。理由付きで下の表に載せる）がある。次のものは意図的に載せていない。
+テンプレートは、対話起動で使う Claude Code の起動オプションをほぼ全量載せ、公式の既定値を記している（公式 docs v2.1.316 時点）。この版は、テンプレート 3 本（option-settings の sh / ps1 と custom.env）と付録 B の記述の基準の版でもある。載せていないオプションには、print / stream 専用のもの（print 専用の一部はテンプレートの print 節に載せてある）、端末セッションを始めない・別のモードで動くもの、非推奨・削除済みのもの、キットの前提が黙って崩れるもの（ランチャーが起動前に検出する。理由付きで下の表に載せる）がある。次のものは意図的に載せていない。
 
 | オプション | 載せない理由 |
 |---|---|
@@ -219,7 +219,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 
 ### --model の既定とエイリアス
 
-- 起動時の対話選択は無い。`--model` を指定しないときは、次の順に最初に見つかったものが使われる: 環境変数 `ANTHROPIC_MODEL` → settings の `model`（`/model` の保存先）→ 組織の既定モデル → 環境変数 `ANTHROPIC_DEFAULT_MODEL` → アカウント種別の既定（Pro / Max / Team / Enterprise / API・Bedrock・Agent Platform は Opus 5.5、Foundry は Sonnet 4.5）。
+- 起動時の対話選択は無い。`--model` を指定しないときは、次の順に最初に見つかったものが使われる: 環境変数 `ANTHROPIC_MODEL` → settings の `model`（`/model` の保存先）→ 組織の既定モデル → 環境変数 `ANTHROPIC_DEFAULT_MODEL` → アカウント種別の既定（Pro / Max / Ultra / Team / Enterprise / API・Bedrock・Agent Platform は Opus 5.5、Foundry は Sonnet 4.5）。
 - エイリアス（`opus` / `sonnet` / `haiku` 等）の指す先は版とプロバイダで変わる（Bedrock 等では `sonnet` / `haiku` が旧版）。版を固定するならフルモデル名を書く。
 
 ### --add-dir とネットワークパス

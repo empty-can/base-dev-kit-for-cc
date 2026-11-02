@@ -173,9 +173,10 @@
 | background セッションの中で起動する SubAgent | background 起動（セッションと同じ側） | — |
 | agent teams の teammate（実験的機能。既定で無効） | background 起動 | lead が自分の binary から起動する別の Claude Code インスタンス。supervisor は介さない。lead の `--setting-sources` は引き継ぐ。環境変数の引き継ぎは公式に記載が無く未確認 |
 | Desktop の `/resume` で開いた CLI セッション | background 起動（ランチャーを通らない） | ランチャーの env は無い（5.1.3 の表） |
+| `claude-cli://` の deep link で開いたセッション | background 起動（ランチャーを通らない） | deep link で開いたセッションは、ランチャー無しで新しい端末で始まる（公式: corporate-launcher「Processes that start outside the launcher」。登録された `claude-cli://` のハンドラが開く ―― deep-links）。ランチャーの env と起動オプションは無い |
 | `CLAUDE_CODE_PROCESS_WRAPPER` で起動装置に通す | 本ランチャーの対象外 | Windows では無視される（5.2） |
 
-確認時点: 5.1.1〜5.1.2 の SubAgent・fork・teammate の記述は、2026-11-03 に docs（v2.1.316 時点）で確かめた。
+確認時点: 5.1.1〜5.1.2 の SubAgent・fork・teammate の記述は、2026-11-03 に docs（v2.1.316 時点）で確かめた。deep link の行は、2026-11-03 に v2.1.316 の docs（corporate-launcher「Processes that start outside the launcher」）で確かめた。
 
 #### 5.1.3 background 起動に届く経路
 
@@ -195,7 +196,7 @@ background 起動のうち supervisor 配下のセッション（`/bg`・`←`�
 
 **起動環境からしか読まれない変数**もある（公式: [settings-reference「Variables Claude Code ignores in `env`」](https://code.claude.com/docs/en/settings-reference#variables-claude-code-ignores-in-env)）。`CLAUDE_CODE_RESTRICTED`・`CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY`・`CLAUDE_CODE_DISABLE_{DANGEROUS_RM_TIMEOUT,SUBSTITUTION_RM_PROMPT,INLINE_SHELL_RM_PROMPT,MOUNTED_DRIVE_RM_PROMPT}`・`CLAUDE_CODE_WARN_{DISK,MEMORY}_FREE_GIB`（v2.1.304〜）などは、managed を含む**どの settings ファイルの `env` でも無視される**。これらは custom.env / setup-environment（foreground のみ）か OS の環境変数（background を含む）でしか効かず、将来 managed settings の `env` へ移す対象にもならない。`CLAUDE_AX_SCREEN_READER` と `CLAUDE_AX_*` は project / local の settings でだけ無視される（v2.1.305〜。user / managed / `--settings` では効く）。
 
-確認時点: 5.1.3 の経路の表と起動環境からしか読まれない変数は、2026-10-24 に v2.1.310 の docs で確かめた（supervisor を最初に起動したシェルの env の継承は 2026-10-20 の実測）。
+確認時点: 5.1.3 の経路の表と起動環境からしか読まれない変数は、2026-11-03 に v2.1.316 の docs で確かめた（agent-view「Settings and provider」と network-config「Apply network settings to background agents」は v2.1.310 から差分なし。settings-reference「Variables Claude Code ignores in `env`」には `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` が加わったが、background セッションはこの変数を持たずに始まる〔permission-modes〕ので、上の列挙には載せていない。supervisor を最初に起動したシェルの env の継承は 2026-10-20 の実測）。
 
 ### 5.2 企業ランチャー（`CLAUDE_CODE_PROCESS_WRAPPER`）との関係
 
@@ -232,13 +233,13 @@ background service と agent view の全セッションを起動装置に通す�
 | 標準入力を読まない（読む命令は `/dev/null` から与える） | 読まない（custom.env はファイルとして読む） | 満たす。**`claude` の標準入力を `/dev/null` へ向けることはしない**（対話起動は標準入力が端末でないと Windows では exit 1 で終わり、`… \| start_claude_code -p` の入力も失う） |
 | 他のプログラムは絶対パスで呼ぶ（シェルのプロファイルが足す `PATH` が無い状態で起動されうる） | `claude` を `PATH` から探す（利用者のシェルの `PATH` で起動されるため。見つからなければ案内して終了） | 不適用 |
 
-確認時点: 5.2.1 の判定と 5.2.3 の契約（v2.1.310 時点の契約）は、2026-10-24 に v2.1.310 の docs で確かめた。
+確認時点: 5.2.1 の判定と 5.2.3 の契約は、2026-11-03 に v2.1.316 の docs（corporate-launcher）で確かめた（Windows では引き続き無視される。「What the launcher covers」の Windows の記述と「The launcher contract」は v2.1.310 から差分なし。変わったのは「Processes that start outside the launcher」の deep link の項だけで、5.2.1 の判定は変わらない）。
 
 ### 5.3 サブコマンドの委譲
 
 ランチャーは組み立てたオプションを利用者の追加引数（`"$@"` / `@args`）の前に置く。`remote-control` / `agents` を追加引数で渡すと verb の前に `--settings` 等が付き、remote-control は起動を拒否し、agents は `--add-dir` / `--mcp-config` が前にあると `--json` が失敗する。サブコマンドは `claude` を直接使う（フラグ形式の `claude --bg "<prompt>"` は問題ない）。
 
-確認時点: 2026-10-18 に v2.1.302 の docs（cli-reference・agent-view）で確かめた。
+確認時点: 2026-11-03 に v2.1.316 の docs で確かめた（agent-view「Settings, plugins, and MCP servers」の `--add-dir` / `--mcp-config` を `agents` の後ろに置く注意と、errors の「`<flag>` before `remote-control` is not carried over to the sessions Remote Control starts」。どちらも v2.1.310 から差分なし）。
 
 ### 5.4 位置引数（プロンプト）の取り込みと `--` の補完
 
@@ -289,7 +290,7 @@ background service と agent view の全セッションを起動装置に通す�
 
 `--bg` / `--background` は裸の `--` より前でだけフラグとして読まれ、`--` の後ろでは文字列になる（v2.1.299〜。[agent view](https://code.claude.com/docs/en/agent-view) の「Prompts that contain `--bg`」）。ランチャーが `--` を補うのは起動時引数に `-` で始まるものが 1 つも無いときだけなので、`start_claude_code --bg "<prompt>"` の `--bg` は従来どおりフラグとして届く。
 
-確認時点: 5.4.1〜5.4.4 の事実は 2026-10-19 に v2.1.302 で実測した（条件は 5.4.2）。5.4.5 は 2026-10-24 に v2.1.310 の docs（agent-view）で確かめた。
+確認時点: 5.4.1〜5.4.4 の事実は 2026-10-19 に v2.1.302 で実測した（条件は 5.4.2）。5.4.1 の型（`<x...>`・`[x]`）は `claude --help`（2.1.302）の表記で、cli-reference には型の表記が無いため docs では確かめられない（2026-11-03 には、v2.1.316 の cli-reference の CLI flags の表が v2.1.310 から差分なしであることだけを確かめた）。5.4.5 は 2026-11-03 に v2.1.316 の docs（agent-view「Prompts that contain `--bg`」）で確かめた（差分なし）。
 
 ### 5.5 ランチャーの出力と起動前の検出
 
@@ -485,7 +486,7 @@ bash 版の 3 本は 2026-10-30 から凍結している。範囲・終了条件
   - 中止した後に環境変数が残るのは、PS 版を対話セッションで実行した場合だけ（5.5.6）。
   - setup-environment の警告は、PS 版では単体で動かしたとき `Write-Warning`、bash 版では `>&2` で出る（5.5.1）。
 
-確認時点: 5.5.2 の事実は 2026-10-24 に v2.1.310 の docs（errors）で確かめた。5.5.3 以降の仕様は 2026-11-01（issue #4 の B-5）時点の実装を記したもの。
+確認時点: 5.5.2 の事実は 2026-11-03 に v2.1.316 の docs（errors の「Configuration warnings」「Working directory is a network path」）で確かめた（差分なし）。5.5.3 以降の仕様は 2026-11-01（issue #4 の B-5）時点の実装を記したもの。
 
 - 参照: https://code.claude.com/docs/en/errors#configuration-warnings 、https://code.claude.com/docs/en/errors#working-directory-is-a-network-path
 

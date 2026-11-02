@@ -43,7 +43,7 @@ start_claude_code ─┬─→ setup-environment ─→ custom.env（(4)から�
 - setup-environment を source/dot-source → option-settings を source → 連想配列の起動オプションから `claude` コマンドを組み立て → 起動。
 - **env のローカルスコープ性**: ランチャープロセス内で設定した env は、子プロセスとして起動する `claude` にのみ継承され、OS env や他アプリに影響しない（bash の export / PS の `$env:` とも本質的にプロセスローカル）。⚠ **確実に届くのは foreground 起動の `claude` だけ**。background セッション（`/bg`・`←`・`claude --bg`・agent view からの dispatch）は supervisor 配下で新しいプロセスとして起動し直され、**ディレクトリの settings（`env` ブロック含む）＋引き継がれた構成フラグ**から構成を読む。dispatch 元シェルから届く env は `PATH`・プロバイダ選択（`CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX`）・`ANTHROPIC_DEFAULT_*_MODEL`・`CLAUDE_CODE_EXTRA_BODY`（＋条件付きでゲートウェイ変数）に限られ、supervisor 自体は「最初に起動したシェル」の env を継承し、列挙外の env はこの経路で決まる（起動順次第で届くことはあるが確実ではない。§8-ter (1) で実測）。**custom.env / setup-environment の値は、この列挙に入るもの（プロバイダ選択等）を除いて確実には届かない**（公式: https://code.claude.com/docs/en/agent-view#settings-and-provider ）。
   - 帰結: `--add-dir <Share>` は background に引き継がれるが `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` は dispatch 元からは引き継がれない（ランチャー経由の `claude` が supervisor を立ち上げた場合だけ届く。§8-ter (1)）ため、**background セッションでは `<Share>` の CLAUDE.md / rules がロードされないことがある**。必要なら **OS の環境変数**（永続的なユーザー環境変数）として設定する（supervisor は最初に起動したシェルの env を継承するので、どの端末から起動されても届く。既に動いている service には、それが起動した時点の env が使われる）。公式 memory は `~/.claude/settings.json` の `env` を勧めるが、キットは design §3(6) の方針によりこの経路を使わない（組織で固定する値だけ managed settings の `env`）。
-  - background service ごと起動装置に通す公式経路 `CLAUDE_CODE_PROCESS_WRAPPER` は **Windows では無視される**ため本キットの解にならない（design §5.2）。本ランチャー自体も利用者が端末から起動するもので、そこへ登録するランチャーではない（契約を満たさない。2026-10-24 に v2.1.310 の docs で再判定。契約との対照表は design §5.2）。
+  - background service ごと起動装置に通す公式経路 `CLAUDE_CODE_PROCESS_WRAPPER` は **Windows では無視される**ため本キットの解にならない（design §5.2）。本ランチャー自体も利用者が端末から起動するもので、そこへ登録するランチャーではない（契約を満たさない。2026-10-24 に v2.1.310 の docs で再判定し、2026-11-03 に v2.1.316 の docs で再確認した。契約との対照表は design §5.2）。
   - 冒頭コメント（`start_claude_code.*`）にも同旨とサブコマンド委譲の注意（design §5.3）を明記。経路別の到達表は design §5.1.3。
   - ランチャー自身の警告・エラーは stderr にだけ書き、stdout は `claude` の出力だけにする（design §5.5。2026-10-24、PS 版の `Write-Warning` が別のプログラムから起動されたとき stdout に出ていたのを修正）。
 
@@ -64,7 +64,100 @@ start_claude_code ─┬─→ setup-environment ─→ custom.env（(4)から�
 
 ## 4. CLI 起動オプション インベントリ（option-settings.template 候補）
 
-基準: docs（cli-reference）2026-10-18 / v2.1.302 時点（反映の経緯は §8-ter、以後の変更は §8-quater 以降の追随記録）。本節の一覧の中身は基準の時点のままで、現行の一覧への書き直しは次の追随で行う。
+基準: docs の cli-reference「CLI flags」の表（https://code.claude.com/docs/en/cli-reference ）、v2.1.316 時点（2026-11-03 確認。表は v2.1.310 から差分なし）。経緯は §8-ter 以降の追随記録。
+
+### 現行の一覧
+
+cli-reference の表のトップレベルのフラグ 80（別名は同じ行。「System prompt flags」の表の再掲は数えない）と、キットでの扱い。「テンプレ」は option-settings テンプレ（sh / ps1 は同じ 45 キー）に載せているか、「付録 A の理由」は `.claude/launcher/README.md` 付録 A に載せない理由があるか（「表」= 付録 A の表に個別の理由、「種類」= 付録 A の本文が挙げる「載せていない種類」に当たる〔個別には挙げていない〕、「—」= どちらも無い）。テンプレにも付録 A の表にも無い 25 の扱いは issue #4 の I-1 で裁定中で、裁定前は「未（I-1 の裁定後）」とする（種類の当てはめは docs の表の説明による）。
+
+| フラグ（別名） | テンプレ | 付録 A の理由 | 備考 |
+|---|---|---|---|
+| `--add-dir` | ○ | — | 1 値だけ（2 個目以降は起動時引数）。background へ引き継がれる構成フラグ。ネットワークパスはランチャーが起動前に検出する（design §5.5） |
+| `--advisor` | ○ | — | サードパーティプロバイダでは使えない |
+| `--agent` | ○ | — | |
+| `--agents` | ○ | — | ファイル指定は `--print` 併用時だけ。Windows PowerShell 5.1 ではインライン JSON が壊れる（README 付録 C） |
+| `--allow-dangerously-skip-permissions` | ○（非推奨・破壊的の節） | — | background へ引き継がれる構成フラグ |
+| `--allowedTools`, `--allowed-tools` | — | 表 | 権限統制は settings.json 側で管理する |
+| `--append-subagent-system-prompt` | — | 種類（print / stream 専用） | docs では `-p` のときだけ効く。未（I-1 の裁定後） |
+| `--append-subagent-system-prompt-file` | ○（print 節） | — | `-p` のときだけ効く |
+| `--append-system-prompt` | ○ | — | |
+| `--append-system-prompt-file` | ○ | — | |
+| `--autocompact` | ○ | — | |
+| `--ax-screen-reader` | — | — | 未（I-1 の裁定後） |
+| `--bare` | — | 表 | 区分 1（design §5.5.3） |
+| `--betas` | ○ | — | API キー利用者のみ |
+| `--bg`, `--background` | — | 種類（別のモード） | background セッションを始めてすぐ戻る。未（I-1 の裁定後） |
+| `--channels` | — | — | research preview。未（I-1 の裁定後） |
+| `--chrome` | — | — | 未（I-1 の裁定後） |
+| `--cloud` | — | 種類（別のモード） | クラウドセッションを作る。未（I-1 の裁定後） |
+| `--continue`, `-c` | ○ | — | |
+| `--dangerously-load-development-channels` | — | — | 未（I-1 の裁定後） |
+| `--dangerously-skip-permissions` | ○（非推奨・破壊的の節） | — | `--permission-mode bypassPermissions` と同等（README 付録 B） |
+| `--debug` | ○ | — | カテゴリの絞り込みは `=` 形でキーに書く |
+| `--debug-file` | ○ | — | 2026-10-27 に追加（W42-F-01） |
+| `--desktop` | — | 表 | |
+| `--disable-slash-commands` | ○ | — | |
+| `--disallowedTools`, `--disallowed-tools` | — | 表 | 権限統制は settings.json 側で管理する |
+| `--effort` | ○ | — | 環境変数 `CLAUDE_CODE_EFFORT_LEVEL` が優先する |
+| `--enable-auto-mode` | — | 種類（非推奨・削除済み） | 既存の判断: v2.1.111 で削除（docs の表に「Removed」として残る） |
+| `--environment` | — | 表 | |
+| `--exclude-dynamic-system-prompt-sections` | — | — | docs は `-p` との併用を例示（`-p` 専用とは書いていない）。未（I-1 の裁定後） |
+| `--exec` | — | 種類（別のモード） | Claude のセッションを始めず、シェルのコマンドを background のジョブとして動かす。未（I-1 の裁定後） |
+| `--fallback-model` | ○ | — | background へ引き継がれる構成フラグ |
+| `--fork-session` | ○ | — | |
+| `--forward-subagent-text` | — | 種類（print / stream 専用） | 出力ストリームへの出力。未（I-1 の裁定後） |
+| `--from-pr` | ○ | — | |
+| `--ide` | ○ | — | |
+| `--init` | — | 種類（print / stream 専用） | print mode only。未（I-1 の裁定後） |
+| `--init-only` | — | 種類（別のモード） | hook を動かして会話を始めずに終了する。未（I-1 の裁定後） |
+| `--include-hook-events` | — | 種類（print / stream 専用） | 出力ストリームへの出力。未（I-1 の裁定後） |
+| `--include-partial-messages` | ○（print 節） | — | |
+| `--input-format` | ○（print 節） | — | |
+| `--json-schema` | — | 種類（print / stream 専用） | print mode only。未（I-1 の裁定後） |
+| `--maintenance` | — | 種類（print / stream 専用） | print mode only。未（I-1 の裁定後） |
+| `--max-budget-usd` | ○（print 節） | — | |
+| `--max-turns` | ○（print 節） | — | |
+| `--mcp-config` | ○ | — | background へ引き継がれる構成フラグ |
+| `--model` | ○ | — | |
+| `--name`, `-n` | ○ | — | |
+| `--no-chrome` | — | — | 未（I-1 の裁定後） |
+| `--no-session-persistence` | — | 種類（print / stream 専用） | print mode only。未（I-1 の裁定後） |
+| `--output-format` | ○（print 節） | — | |
+| `--permission-mode` | ○ | — | `bypassPermissions` は書かない（README 付録 B）。過去の注記は下の記録 |
+| `--permission-prompt-tool` | ○（print 節） | — | |
+| `--permission-prompts` | ○（print 節） | — | |
+| `--plugin-dir` | ○ | — | background へ引き継がれる構成フラグ |
+| `--plugin-url` | ○ | — | |
+| `--print`, `-p` | ○（print 節） | — | |
+| `--prompt-suggestions` | — | 種類（print / stream 専用） | `--print`・`--output-format stream-json`・`--verbose` が要る。未（I-1 の裁定後） |
+| `--ref` | — | 表 | |
+| `--remote` | — | 種類（非推奨・削除済み） | 既存の判断: `--cloud` の非推奨の別名 |
+| `--remote-control`, `--rc` | — | — | 未（I-1 の裁定後） |
+| `--remote-control-session-name-prefix` | — | — | 未（I-1 の裁定後） |
+| `--replay-user-messages` | — | 種類（print / stream 専用） | stream-json の入出力が要る。未（I-1 の裁定後） |
+| `--restricted` | — | 表 | 区分 1（design §5.5.3） |
+| `--resume`, `-r` | ○ | — | |
+| `--safe-mode` | — | 表 | 区分 1（design §5.5.3） |
+| `--session-id` | ○ | — | |
+| `--setting-sources` | ○ | — | `project` を含まない値は区分 1 として検出する。background へ引き継がれる構成フラグ |
+| `--settings` | ○ | — | background へ引き継がれる構成フラグ |
+| `--strict-mcp-config` | ○ | — | background へ引き継がれる構成フラグ |
+| `--system-prompt` | — | 表 | 区分 1（design §5.5.3） |
+| `--system-prompt-file` | — | 表 | 区分 1（design §5.5.3） |
+| `--system-prompt-snapshot` | ○ | — | |
+| `--teleport` | — | 種類（別のモード） | クラウドセッションを端末で再開する。未（I-1 の裁定後） |
+| `--teammate-mode` | ○ | — | |
+| `--tmux` | ○ | — | |
+| `--tools` | ○ | — | |
+| `--verbose` | ○ | — | |
+| `--version`, `-v` | — | 種類（別のモード） | 版を表示して終了する。未（I-1 の裁定後） |
+| `--worktree`, `-w` | ○ | — | |
+
+集計: テンプレ 45（うち print 節 9・非推奨・破壊的の節 2）、付録 A の表 10、どちらにも無い 25（種類に当たるもの: print / stream 専用 9・別のモード 6・非推奨・削除済み 2、種類に当たらないもの 8）。トップレベルのフラグではないもの: `--sso`（`claude auth login` のオプション）、`--post` / `--no-post` / `--trust-workspace`（`claude ultrareview`）、`--discard-unpushed` / `--force-remove-worktree`（`claude rm`）。後の 2 組は付録 A の表に「サブコマンド専用」として載せている。
+
+### 過去の追補（記録。原文のまま）
+
+以下は v2.1.302 時点（2026-10-18）の一覧と、その後の追補・注記の原文。現行の扱いは上の表による。
 
 **ランチャーで露出する有力候補（curated）**:
 `--model` / `--fallback-model` / `--add-dir` / `--settings` / `--setting-sources` / `--mcp-config` / `--strict-mcp-config` / `--permission-mode` / `--agents` / `--agent` / `--append-system-prompt-file` / `--effort` / `--autocompact` / `--worktree` / `--debug` / `--ide` / `--verbose`
@@ -83,7 +176,56 @@ start_claude_code ─┬─→ setup-environment ─→ custom.env（(4)から�
 
 ## 5. 環境変数 インベントリ（custom.env.template / 固定 env 候補）
 
-基準: docs の env-vars（https://code.claude.com/docs/en/env-vars ）2026-10-18 / v2.1.302 時点（反映の経緯は §8-ter、以後の変更は §8-quater 以降の追随記録）。本節の一覧の中身は基準の時点のままで、現行の一覧への書き直しは次の追随で行う。
+基準: docs の env-vars「Variables」（https://code.claude.com/docs/en/env-vars ）、v2.1.316 時点（2026-11-03 確認）。経緯は §8-ter 以降の追随記録。
+
+### 現行の一覧
+
+`custom.env.template` の全キー（26）と `setup-environment` の固定 env の候補（34。両方にあるものは 1 行にまとめた）に、v2.1.302 以降に env-vars に行が増えた変数のうちランチャーに関わりうるものを加えた表。分類は §6-bis の判定木（A〜D）。分類A の機微なキー（`ANTHROPIC_API_KEY` 等）は §6-bis の表にあり、ここには載せない。収録の基準は issue #4 の I-3 で裁定中で、裁定前の新しい変数は分類を「未（I-3 の裁定後）」とする。「docs の行」は env-vars の表に行があるか（無いものは載っているページを書く）。
+
+| 変数 | 分類 | 置き場 | docs の行 | 備考 |
+|---|---|---|---|---|
+| `ANTHROPIC_DEFAULT_MODEL` | D | custom.env | ○ | `--model` と役割が重なる（原則 option-settings） |
+| `ANTHROPIC_MODEL` | D | custom.env | ○ | 同上。`/model` の保存選択より毎回優先される |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | D（3P の版固定では B） | custom.env／setup-environment（3P のモデル版固定） | ○ | 旧名 `ANTHROPIC_SMALL_FAST_MODEL` は DEPRECATED |
+| `CLAUDE_CODE_SUBAGENT_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` | D | custom.env | ○ | 前者は v2.1.251 以降は既定値扱い |
+| `CLAUDE_CODE_EFFORT_LEVEL` | D | custom.env | ○ | `--effort`・`/effort` より優先。`auto` / `unset` は effort を送らず API の既定に任せる（W44-B-01） |
+| `MAX_THINKING_TOKENS` | D | custom.env | ○ | 現行モデルでは正の値が無視される |
+| `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` / `CLAUDE_CODE_PROMPT_CACHE_TTL` | D | custom.env | ○ | コストに影響する（チームで揃えるなら setup-environment） |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | D | custom.env | ○ | `--autocompact` より優先 |
+| `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` | D | custom.env | ○ | |
+| `CLAUDE_CODE_FORK_SUBAGENT` | D | custom.env | ○ | v2.1.302 以降は全セッションで既定オン |
+| `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | D | custom.env | ○ | background セッションは止めない（止めるのは `CLAUDE_CODE_DISABLE_AGENT_VIEW`。W44-B-02） |
+| `BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` / `MCP_TIMEOUT` / `MCP_TOOL_TIMEOUT` / `API_TIMEOUT_MS` | D | custom.env | ○ | 環境依存 |
+| `CLAUDE_CODE_WARN_DISK_FREE_GIB` / `CLAUDE_CODE_WARN_MEMORY_FREE_GIB` | D | custom.env | ○ | 起動環境からしか読まれない（settings の `env` では無視。design §5.1.3） |
+| `CLAUDE_CODE_GIT_BASH_PATH` / `CLAUDE_CODE_BS_AS_CTRL_BACKSPACE` / `CLAUDE_CODE_USE_POWERSHELL_TOOL` | D | custom.env | ○ | Windows。`CLAUDE_CODE_USE_POWERSHELL_TOOL` はチーム判断で C にしうる |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | D（既定）／B | custom.env／setup-environment（企業プロキシ前提のチーム） | ○ | 認証情報入りの URL は A |
+| `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` | C | setup-environment（`=1`。有効） | ○ | キットの動作が依存する |
+| `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS` | C（条件付き） | setup-environment（コメントアウト） | ○ | 自前の git skill を採用したときだけ |
+| `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_ANTHROPIC_AWS` / `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_FOUNDRY` | B | setup-environment（暫定 C。コメントアウト） | ○ | 1 つだけ有効にする |
+| `ANTHROPIC_AWS_WORKSPACE_ID` / `ANTHROPIC_VERTEX_PROJECT_ID` / `ANTHROPIC_FOUNDRY_RESOURCE` | B | 同上 | ○ | 識別子（資格情報ではない） |
+| `AWS_REGION` / `CLOUD_ML_REGION` | B | 同上 | 行なし（amazon-bedrock・claude-platform-on-aws／google-vertex-ai のページ） | |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL`（と上の `ANTHROPIC_DEFAULT_HAIKU_MODEL`） | B | 同上 | ○ | 3P のモデル版固定 |
+| `ANTHROPIC_BASE_URL` | A または B | 機微なら OS env／非秘匿なら setup-environment | ○ | ゲートウェイの認証は A |
+| `ENABLE_TOOL_SEARCH` | B | setup-environment（暫定 C） | ○ | ゲートウェイが転送できないときだけ `false` |
+| `ANTHROPIC_BEDROCK_BASE_URL` / `ANTHROPIC_AWS_BASE_URL` / `ANTHROPIC_VERTEX_BASE_URL` / `ANTHROPIC_FOUNDRY_BASE_URL` と対の `CLAUDE_CODE_SKIP_BEDROCK_AUTH` / `CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH` / `CLAUDE_CODE_SKIP_VERTEX_AUTH` / `CLAUDE_CODE_SKIP_FOUNDRY_AUTH` | A または B | 機微なら OS env／非秘匿なら setup-environment | ○ | プロバイダ形式のゲートウェイ |
+| `CLAUDE_CODE_ENABLE_TELEMETRY` | B | setup-environment（暫定 C） | ○ | project / local の settings では無視される |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` / `OTEL_EXPORTER_OTLP_PROTOCOL` | B | 同上 | 行なし（monitoring-usage のページ） | `OTEL_EXPORTER_OTLP_*HEADERS` は A |
+| `DISABLE_TELEMETRY` / `DISABLE_ERROR_REPORTING` | B | 同上 | ○ | `DISABLE_TELEMETRY` は feature flag の取得も止める |
+| `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` | 未（I-3 の裁定後） | — | ○（v2.1.311 以降） | 起動環境からしか読まれない（check-assets の E）。docs では、Bash / Edit / Read を対象にする deny / ask ルールがあると効かず（キットの project settings にある）、background セッションはこの変数を持たずに始まる |
+| `CLAUDE_CODE_RESUME_SHOWS_CUT_OFF_CALLS` | 未（I-3 の裁定後） | — | ○（v2.1.309 以降） | |
+| `CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT` | 未（I-3 の裁定後） | — | ○（v2.1.304 以降） | 起動環境からしか読まれない（check-assets の E） |
+| `CLAUDE_CODE_DISABLE_MCP_TASK_BACKGROUND` | 未（I-3 の裁定後） | — | ○（v2.1.304 以降） | |
+| `CLAUDE_CODE_DISABLE_ULTRAREVIEW_TRUST_CHECK` | 未（I-3 の裁定後） | — | ○（v2.1.309 以降） | docs は起動環境で設定するよう書く（settings-reference の無視の一覧には無い） |
+| `CLAUDE_CODE_ENABLE_SHARE_BUNDLE` | 未（I-3 の裁定後） | — | ○（v2.1.299 以降） | |
+| `CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS` | 未（I-3 の裁定後） | — | ○ | |
+| `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT` / `CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK` | 未（I-3 の裁定後。分類B の例示に載せるか） | — | ○（既存の行） | changelog 2.1.312 で、3P の Claude Code が知らないモデル名にも効くようになった |
+| `CLAUDE_CODE_AUTO_MODE_MODEL` | —（採用しない） | — | ○ | 2026-10-24 に閉じた（W42-B-11。下の過去の追補） |
+
+表に無い変数の過去の判断（`CLAUDE_CODE_RESTRICTED`・`CLAUDE_CODE_PLUGIN_DIRS` の不採用、`CLAUDE_CODE_PROCESS_WRAPPER` は Windows で無視、`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` を D とした等）は、下の過去の追補と §6-bis にある。
+
+### 過去の追補（記録。原文のまま）
+
+以下は v2.1.302 時点（2026-10-18）の一覧と、その後の追補の原文。現行の扱いは上の表と §6-bis による。
 
 > **⚠ 本節の分類は §6-bis の判定木で置き換わっている**。下記の「多くは秘匿＝custom.env」という
 > 初期案は**撤回済み**。機微（分類A）は custom.env に書かず OS 環境変数で供給する。
@@ -255,5 +397,23 @@ C-BDK（`C:\cc-workspace\base-dev-kit-for-cc`・branch `feat/launcher-scripts`�
 - [x] **レビューで派生した要判断のうち J-3・J-4 の反映（2026-10-27。作業指示者の判断はどちらも推奨 (b)。K-01・K-02）**: J-3 → K-01: 両ランチャーの UNC の事前検査を `TEAM_OPTS` / `$TeamOpts` の `--add-dir` にも広げた（同じ判定・同じ本文で、警告文の先頭に出どころ〔`option-settings` / `start_claude_code のチーム統制（TEAM_OPTS / $TeamOpts）`〕を出す。止めない・起動時引数と `=` 形のキーは引き続き見ない）。verify-kit の振り分け項目の fixture に `team` 行（probe が一時ツリーのランチャーの定義の行の直後へ差し込む）を足し、警告 4 → 5 行（項目数は 22 のまま）。design §5.5・README 方法 B の範囲の記述を追随。J-4 → K-02: check-assets 2-g で読み取りに失敗したファイル（ロック・権限・I/O エラー）を件数に入れず、ファイルごとに「未検査」の WARN を 1 行出す（両版同文。FAIL にはしない・終了コードは不変・他のファイルの PASS 行は読めた件数で別に出す）。fixture では再現しにくいので、Windows で実際にロック（`FileShare.None`）と ACL の読み取り拒否（`icacls /deny`）を掛けて bash / pwsh 7 / 5.1 の WARN の文言と rc 0 の一致を確かめた。README の 2-g の説明に追記
 - [ ] **レビューで派生した要判断（未決・推奨は現状維持）**: J-1 2-g の文字数の単位（推奨 (a) 現状のコードポイント）、J-2 PS 版ランチャーの警告の書き方（推奨 (a) 現状の `[Console]::Error`）、J-5 UTF-8 BOM 判定の共通化（推奨 (a) 見送り）、JS-1 check-assets の表示に出る制御文字の置き換え（推奨 (a) 現状。行うなら Week 41 の S6 と一緒に）。J-3・J-4 は 2026-10-27 に判断・反映済み（上の行）
 
+### 8-quinquies. Claude Code 追随の記録
+
+範囲: changelog 2.1.311〜2.1.316（2.1.313・2.1.315 は欠番）、LLMs リポ（公式 docs の複製）`049e3f4`（2026-10-24）→ `23292d1`（2026-11-02）、2026-11-03 に調査・反映（W44。手順は `docs/launcher/claude-code-intake.md`）。
+
+- [x] **changelog の仕分け**: 305 項目。手順書 5. の既定で対象外にしたもの 85（札〔`[VSCode]`・`[Cloud sessions]`・`[Claude Tag]`・`[Code Review]`・`[Remote Control]`〕69、Claude apps gateway・Self-hosted runner 16〔`self-hosted-runner` のオプションの追加を含む〕）。そのうち付表 A の語を含む 28 項目も読んだが、語は Claude apps gateway（LLM ゲートウェイではない）・Claude Tag やクラウドの管理画面の settings・VS Code 拡張の hooks / `DISABLE_TELEMETRY` の扱いで、キットの対象に当たらない。残る 220 項目を読み、下の反映・要確認・再評価に振り分けた。ほかは端末の表示・vim モード・MCP の認証・クラウド・Bedrock / Foundry のモデルの選び直し等で、付表 A の語に当たらない。キットの記述をより正しくする方向の修正（2.1.314 の `--setting-sources` で外した settings が一部の設定を供給していた修正、`claude -p` が起動に失敗すると exit 0 だった修正、`tool_reference` を拒否するゲートウェイでの再送の記憶）と、記述と一致する修正（2.1.311 の `claude daemon stop --any` の案内）は、記述の変更不要として記録だけにした。
+- [x] **レール A（option-settings テンプレ）**: テンプレの変更なし（cli-reference の表は差分なし。キーの追加・削除なし）。W44-A-01: 本書 §4 を v2.1.316 の cli-reference の全 80 フラグの現行の一覧に書き直し、v2.1.302 時点の一覧と追補は「過去の追補（記録。原文のまま）」に残した。
+- [x] **レール B（custom.env.template・setup-environment）**: W44-B-01: custom.env.template の effort 節の `auto` の注記を「auto か unset は effort を送らず API の既定に任せる」に改めた（env-vars の `CLAUDE_CODE_EFFORT_LEVEL`・model-config「Send no effort level」。`unset` は値としての文字列）。W44-B-02: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` に「background セッション（agent view）は止まらない。それも止めるなら `CLAUDE_CODE_DISABLE_AGENT_VIEW` も 1」の 1 行を足した（env-vars）。W44-B-03: 本書 §5 の冒頭に現行の一覧の表を置き、従来の段落は「過去の追補（記録。原文のまま）」に残した。setup-environment 両版は変更なし。
+- [x] **レール C（実行モデル）**: W44-C-01: design §5.2 の確認時点を 2026-11-03・v2.1.316 の docs（corporate-launcher）に改めた（`CLAUDE_CODE_PROCESS_WRAPPER` は Windows では引き続き無視される）。本書 §3 (1) にも再確認の日付を足した。W44-C-02: design §5.1.2 の表に「`claude-cli://` の deep link で開いたセッション」の行を background 起動（ランチャーを通らない）として足した（corporate-launcher「Processes that start outside the launcher」の deep link の項が、v2.1.316 の docs で「deep link で開いたセッションはランチャー無しで新しい端末に開く」に変わった。5.1.1 の原則どおりの分類）。W44-C-03: design §5.1.3・§5.3・§5.4・§5.5 の確認時点を 2026-11-03・v2.1.316 の docs で確かめた形に改めた（依存する節は差分なし。§5.4.1 の型は `claude --help` 由来で docs では確かめられないことを明記）。`start_claude_code.ps1` の冒頭コメントは変更なし（corporate-launcher「The launcher contract」・agent-view「Settings and provider」は差分なし）。agent-view で background へ送ったときの dynamic workflow の扱い（Claude が background セッションで再起動したときだけ続く）が変わったが、design §5.1.2 の dynamic workflow の行（セッションを終了すると run は続かない）とは矛盾しないので変更なし。
+- [x] **レール D（scripts）**: W44-D-01: `scripts/check-assets.d/settings-scope.txt` の E に `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` を足した（settings-reference「Variables Claude Code ignores in `env`」に追加。起動環境からしか読まれない。docs の並びどおり `CLAUDE_CODE_DISABLE_*_RM_*` と `CLAUDE_CODE_WARN_*_FREE_GIB` の間）。E 節のコメントと、U / M / E / W の各節の確認時点を 2026-11-03・v2.1.316 に改めた（表の Scope 列と permissions の W の節は差分なし）。W44-D-02: check-assets 両版の E の WARN の文言で「起動環境からしか読まれない」変数を列挙している部分に同じ変数を足した（両版同文。`check-assets.expect` の断片はこの部分を含まないので不変）。verify-kit の期待値は不変。
+- [x] **レール E（配布文書・ルート README）**: W44-E-01: `.claude/launcher/README.md` 付録 B「--model の既定とエイリアス」のアカウント種別に Ultra を足した（model-config・permission-modes・env-vars のプランの列挙に Ultra が加わった。Ultra は旧 Max 20x の新しい名前〔feature-availability〕）。W44-E-02: 付録 A の版の行を v2.1.316 時点に上げた（テンプレ 3 本と付録 B の依存先〔cli-reference・permission-modes・model-config・env-vars・errors・skills・agent-view・tools-reference・worktrees・agent-teams〕の v2.1.310 からの差分を確かめ、要るものは W44-B-01・B-02・E-01 で反映した）。配布文書（`.claude/CLAUDE.md`・rules・skills）は変更なし（付表 A の語に関わる差分なし。sub-agents から入れ子の旧既定の注記が消えたが、現行の既定〔主会話の下 3 層〕は同じ）。ルート README の推奨版は §8-quater の H-01 で保留中のまま。
+- [x] **SH-DEFER**: なし（凍結中の `.sh` 3 本に要る変更が出なかった。`.ps1` 側のランチャー資産も変更していない）。
+- **差分なしを確かめたページと節**: cli-reference（全体）、agent-view「Settings and provider」「LLM gateway」「Prompts that contain `--bg`」と「What carries over when you background」の構成フラグの列挙、network-config「Apply network settings to background agents」、errors「Configuration warnings」の節全体（「Working directory is a network path」を含む）、corporate-launcher「What the launcher covers」の Windows の記述と「The launcher contract」、settings-reference の表の Scope 列、permissions「`Write(path)`, `NotebookEdit(path)`, and `Glob(path)` rules never match」、permission-modes「Which mode a session starts in」（プランに Ultra が加わっただけ）、skills「Load skills from a directory outside the project」、agent-teams（teammate への環境変数の引き継ぎの記載は引き続き無い）、llm-gateway・gateways・microsoft-foundry（全体）、custom.env.template の 26 キーのうち 24 の env-vars の行。permissions の「`.claude/settings.local.json` は git リポジトリのルートから読む（Windows 等を除く）」は v2.1.310 の docs にもある記述で、v2.1.211 より前の経緯の文が消えて見出しが付いただけ（キットへの影響なし）。
+- [ ] **要実測**: R9 ゲートウェイ変数の background への到達（design §5.1.3 の「dispatch 元シェルの env」の行の条件が実機で成り立つか）。最新版と LiteLLM で別途実測する予定。
+- [ ] **要確認（changelog と docs の食い違い・docs 未反映。本文は docs のまま。要実測にするかは作業指示者の判断）**: (1) changelog 2.1.312「`claude_code.safety_event` を送らなくなった」↔ monitoring-usage は記載のまま（setup-environment 両版のテレメトリ節のコメントは docs に従い不変）。(2) changelog 2.1.312「サブエージェントの `autoCompactWindow` が `CLAUDE_CODE_AUTO_COMPACT_WINDOW` の窓を下げられる」↔ sub-agents は「環境変数を設定するとフィールドは効かない」のまま（キットの `code-reviewer` は `autoCompactWindow` を使わない）。(3) changelog 2.1.314「idle compaction をテレメトリ無効のサブスクリプションと、1 時間のプロンプトキャッシュが有効なら Bedrock・Vertex・Foundry・LLM ゲートウェイでも行う」↔ settings-reference `idleCompaction` の条件に「feature flag を取得できること」があり、env-vars は 3P と `DISABLE_TELEMETRY` では feature flag を取得しないと書く（setup-environment 両版の `DISABLE_TELEMETRY` の注記〔アイドル時コンパクションが使えなくなる〕と custom.env.template のコンテキスト節に関わる）。(4) changelog 2.1.311「設定ファイルの権限ルールの起動時警告を、ルールが変わるまで利用者ごとに 1 回だけ出す」↔ errors「Configuration warnings」は不変（design §5.5.2・README 付録 B「起動時の警告を読む」に関わる）。(5) `CLAUDE_CODE_EFFORT_LEVEL=auto` で実際の effort が変わるか（API の既定と Claude Code の既定〔Opus 5.5 は medium〕が同じか）は docs から決められない（docs は `/effort status` の表示で effort を送っていないことを確かめる方法を示す）。
+- [ ] **未決（issue #4）**: I-1〜I-3（収録基準。2026-11-03 起票。裁定待ち）。I-3 に関わる候補は §5 の表の「未（I-3 の裁定後）」の行。I-1 のデータの補正: `--append-subagent-system-prompt` は docs では `-p` のときだけ効くので、I-1 の「対話起動で使えて理由が書かれていない 9」ではなく print / stream 専用に入る（print / stream 専用 9・理由が書かれていない 8 になる。§4 の表）。W44 で出た判断事項（要確認 (1)〜(4) を要実測にするか、custom.env.template に idle compaction の条件を書くか、README 付録 B に `worktree.sparsePaths` へ `.claude` を含める注意と `--model` の既定の Claude Platform on AWS を足すか）は issue #4 に追記する。
+- [ ] **changelog にあって docs に無いもの（docs 掲載後に再評価）**: `CLAUDE_CODE_SUBAGENT_EFFORT`（2.1.316。サブエージェントの effort の既定。custom.env.template のサブエージェント節の候補）、`CLAUDE_CODE_DISABLE_ULTRATHINK`（2.1.316）、`CLAUDE_CODE_DISABLE_LOOPED_CROSS_CERT_DROP`（2.1.316。プロキシ・社内 CA まわりの候補）、`CLAUDE_CODE_MODEL_CATALOG`（2.1.311。3P で署名付きのモデル設定を downloads.claude.ai から読むのを止める。setup-environment の分類B〔3P〕の候補）、`permissions.blockWritesOutsideWorkingDirectories`（2.1.314。settings-reference に無く Scope が不明。`Any file` 以外なら settings-scope.txt の u / m の候補）。
+- [x] **検証**: check-assets 両版 FAIL 0 / WARN 5（2-h PASS。両版の出力一致）、verify-kit 両版 PASS 23 / FAIL 0 / SKIP 0 / FROZEN 1。
+
 ---
-変更履歴: 初版（実装前プレップ・2026-06-30）。design 確定版＋docs（cli-reference/env-vars v2.1 系）インベントリ反映。／2026-07-05 復帰セッションで §6-bis（判定木・再マップ・確定事項）追記、§7 を実リポ・UTF-8 BOM 方針・既存 .gitignore 実態に更新、§8 実装完了状況を追記。／同日追補: 判定木の分類ラベルを **分類C-Y→分類C、分類C-N→分類D** に改称（本文・実装スクリプト・メモリとも全置換、動作は不変）。／同日: research-by-cc（gitignore済みworkspace）からC-BDK `.claude/launcher/`へ本設計書2点をコピーし、branch `feat/launcher-scripts`（base develop）としてPR化。／同日 F1 修正: `develop` 起点でブランチを切った副作用で `.gitignore` の launcher 安全網（e233907・chore/groom-as-share のみ）が欠落していたため、同等の除外行を本ブランチへ再追加し §8 の記述を訂正。／同日 F2 修正: 本 doc と `launcher-scripts-design.md` を `.claude/launcher/` → `docs/launcher/` へ移設。`publish-share` が `.claude/` を丸ごと archive して C-BDC/C-BCP へ配布する仕様上、内部設計 doc が全消費者へ漏れるのを構造的に防ぐため（`docs/` は配布対象外・C-BDK 内では追跡継続）。／**2026-07-12（レーンB）**: Fable 5 × 3 観点クロスレビュー（2026-07-07）の指摘を実装反映。本書を**設計書の正本**として規定（IM-8）。CR-1（配布先セーフティネットの payload 搬送）・IM-1（撤回済み「custom.env＝秘匿格納」の残存）・IM-2（publish 経路誤記＝2 レール）を訂正し、§8-bis に反映状況を追加。CR-2 / IM-9 / IM-10 は PR#1（`chore/groom-as-share`）マージ後に実施する旨を明記。／**2026-07-12（Round 3 レビュー反映）**: (1) §8-bis の CR-2 を**完了**へ更新 ―― 「PR#1 マージ後に実装」としていたが PR#1 側で先行実装済みであり、**正本が存在しないタスクを指していた**（R3-H）。(2) §6 #2 に残っていた撤回済み前提の設問「秘匿系は全て custom.env でよいか」に撤回注記を追加（R3-S-3）。(3) 指摘 ID が巡回ごとに振り直される旨を注記（Round 1 の「IM-8」と Round 2 の「IM-8」は別物）。／**2026-07-12（マージ前セルフレビュー）**: 本変更履歴に Round 3 の反映が未記録だった点を補正（横断セルフレビュー F7）。／**2026-10-19**: §8-ter の要実測を 3 項目に分け、(2)（位置引数のプロンプトの取り込み）を実測して完了（design §5-3・ランチャーの `--` 補完と bash 版の組立順ソート）。／**2026-10-19（セキュリティレビュー参考所見）**: §3 (2) に、custom.env のランチャー内部変数名の読み飛ばし（bash 版だけで分類A の完全一致判定が無効化できた）と、分類A の名前パターン追加（`ANTHROPIC_CUSTOM_HEADERS`・名前全体・`SECRET_*`・`*_PASS` / `*_PASSWD` / `*_PWD` / `*_CONNECTION_STRING`）を追記。§6-bis 表に `ANTHROPIC_CUSTOM_HEADERS` を追加。／**2026-10-20**: §8-ter の要実測 (1)（supervisor 経由の env の波及）を実測して完了し、(4)（hooks の `if: "Edit(...)"` と Write）を追加して実測。(1) の結果に合わせて §3 (1) の記述、`start_claude_code.*` 冒頭と `setup-environment.*` の注記、design §3 1.・§5 表を改めた。／**2026-10-24**: §8-quater を新設（v2.1.310 追随。レール A〜C）。§3 (1) に「本ランチャーは `CLAUDE_CODE_PROCESS_WRAPPER` に登録するものではない」と「ランチャーの出力は stderr だけ」（PS 版の修正）を追記。§4 の `--permission-mode` 注記に docs の根拠と `-p` の拒否条件を追記。§5 の 2026-10-18 追補のうち fork mode の既定（v2.1.302〜全セッション）を更新し、`CLAUDE_CODE_AUTO_MODE_MODEL` の再評価を「採用しない」で閉じた。§6-bis の表にレール B が custom.env.template へ足したキーを追記し、分類B の managed 移設に「起動環境からしか読まれない変数は移せない」を補った。／**2026-10-27**: 作業指示者の判断（W42 の 14 件）を反映。§8-ter・§8-quater の「44 キー」に `--debug-file` を加えた 45 キーを併記し（W42-F-01）、§6-bis に `ENABLE_TOOL_SEARCH`（B）の行を追加して `ANTHROPIC_BASE_URL` の行に追記した（W42-F-02）。§8-quater の導入文をレール A〜H に改め、UNC の行を「決定・反映」にして範囲の限界を補い、レール D・E の結果、判断 14 件の結果、W42-F-02〜F-04・G-01〜G-04・H-01〜H-04 の反映を追記した。／**2026-10-27（レビュー工程）**: /code-review（I）・/security-review（J）の結果を反映。§6-bis の `ANTHROPIC_BASE_URL` の行と分類A の一覧の行に、`ANTHROPIC_CUSTOM_HEADERS` は値次第（認証情報・個人情報を載せるなら A）で、検知は名前で行うので値によらず読み飛ばされる、を書き足した（F-02 の確定に追随。I）。§8-quater の導入文にレビュー工程を加え、レビューの結果・F-02 の確定・未決の要判断 6 件（J-1〜J-5・JS-1）の行を追記した。／**2026-10-27（要判断 J-3・J-4 の反映）**: 作業指示者の判断（どちらも推奨 (b)）に従い、J-3（UNC の事前検査を `TEAM_OPTS` / `$TeamOpts` にも広げる。K-01）と J-4（check-assets 2-g の読み取りの失敗を「未検査」の WARN にする。K-02）を反映した。§8-quater の未決の行から J-3・J-4 を外して反映済みの行に移し、UNC の決定の行に J-3 で広げたことを注記した。／**2026-11-02**: §3 (4) の「公式推奨デフォルトを持つものは設定済み＆有効化」に、実装では採っていない（テンプレ 3 本とも全行コメントアウト）旨の注記を追加（設計書 §3 の整理で判明）。／**2026-11-02**: 設計書の小節番号の記法変更（§5-N → §5.N）に合わせ、本文の design §5-N の参照を §5.N に改めた（本行より前の履歴の原文は不変）。／**2026-11-03**: 設計書 §5 の校正（5.1 の新設と旧 5.1〜5.4 の繰り下げ）に合わせ、本文の design §5.N の参照を新しい番号に改めた（§3 (1)・§4・§5・§6-bis・§8-ter・§8-quater。履歴の原文は不変）。／**2026-11-03**: Claude Code の仕様変更の取り込み手順書 `docs/launcher/claude-code-intake.md` を新設し、冒頭の注記と §8 の直前に案内を、§8 の直前に追随記録の型（次の記録から見出しを通し番号にする）を置いた。§4・§5 の見出しから基準の版・日付と docs の出典（§4「docs 2026-10-18 / v2.1.302 時点」、§5「docs env-vars より」）を外し、本文の 1 行目に「基準: …」として移した（一覧の中身は不変。現行の一覧への書き直しは次の追随で行う）。追跡されない個人メモ・報告書の名指しを外した: §5 の bearer ゲートウェイトークンの注記にあった個人メモ 2 件の参照は、要点（専用 helper が無い・機微な値は OS の環境変数で供給する方針〔§6-bis の分類A〕）を本文に残して外し、§5 のフル一覧の参照（日本語版のファイル名）は docs の env-vars の URL に改め、§8-quater の未決の行の末尾にあった非追跡の報告書の節への参照は外した（要判断 4 件の内容は同じ行に書いてある）。
+変更履歴: 初版（実装前プレップ・2026-06-30）。design 確定版＋docs（cli-reference/env-vars v2.1 系）インベントリ反映。／2026-07-05 復帰セッションで §6-bis（判定木・再マップ・確定事項）追記、§7 を実リポ・UTF-8 BOM 方針・既存 .gitignore 実態に更新、§8 実装完了状況を追記。／同日追補: 判定木の分類ラベルを **分類C-Y→分類C、分類C-N→分類D** に改称（本文・実装スクリプト・メモリとも全置換、動作は不変）。／同日: research-by-cc（gitignore済みworkspace）からC-BDK `.claude/launcher/`へ本設計書2点をコピーし、branch `feat/launcher-scripts`（base develop）としてPR化。／同日 F1 修正: `develop` 起点でブランチを切った副作用で `.gitignore` の launcher 安全網（e233907・chore/groom-as-share のみ）が欠落していたため、同等の除外行を本ブランチへ再追加し §8 の記述を訂正。／同日 F2 修正: 本 doc と `launcher-scripts-design.md` を `.claude/launcher/` → `docs/launcher/` へ移設。`publish-share` が `.claude/` を丸ごと archive して C-BDC/C-BCP へ配布する仕様上、内部設計 doc が全消費者へ漏れるのを構造的に防ぐため（`docs/` は配布対象外・C-BDK 内では追跡継続）。／**2026-07-12（レーンB）**: Fable 5 × 3 観点クロスレビュー（2026-07-07）の指摘を実装反映。本書を**設計書の正本**として規定（IM-8）。CR-1（配布先セーフティネットの payload 搬送）・IM-1（撤回済み「custom.env＝秘匿格納」の残存）・IM-2（publish 経路誤記＝2 レール）を訂正し、§8-bis に反映状況を追加。CR-2 / IM-9 / IM-10 は PR#1（`chore/groom-as-share`）マージ後に実施する旨を明記。／**2026-07-12（Round 3 レビュー反映）**: (1) §8-bis の CR-2 を**完了**へ更新 ―― 「PR#1 マージ後に実装」としていたが PR#1 側で先行実装済みであり、**正本が存在しないタスクを指していた**（R3-H）。(2) §6 #2 に残っていた撤回済み前提の設問「秘匿系は全て custom.env でよいか」に撤回注記を追加（R3-S-3）。(3) 指摘 ID が巡回ごとに振り直される旨を注記（Round 1 の「IM-8」と Round 2 の「IM-8」は別物）。／**2026-07-12（マージ前セルフレビュー）**: 本変更履歴に Round 3 の反映が未記録だった点を補正（横断セルフレビュー F7）。／**2026-10-19**: §8-ter の要実測を 3 項目に分け、(2)（位置引数のプロンプトの取り込み）を実測して完了（design §5-3・ランチャーの `--` 補完と bash 版の組立順ソート）。／**2026-10-19（セキュリティレビュー参考所見）**: §3 (2) に、custom.env のランチャー内部変数名の読み飛ばし（bash 版だけで分類A の完全一致判定が無効化できた）と、分類A の名前パターン追加（`ANTHROPIC_CUSTOM_HEADERS`・名前全体・`SECRET_*`・`*_PASS` / `*_PASSWD` / `*_PWD` / `*_CONNECTION_STRING`）を追記。§6-bis 表に `ANTHROPIC_CUSTOM_HEADERS` を追加。／**2026-10-20**: §8-ter の要実測 (1)（supervisor 経由の env の波及）を実測して完了し、(4)（hooks の `if: "Edit(...)"` と Write）を追加して実測。(1) の結果に合わせて §3 (1) の記述、`start_claude_code.*` 冒頭と `setup-environment.*` の注記、design §3 1.・§5 表を改めた。／**2026-10-24**: §8-quater を新設（v2.1.310 追随。レール A〜C）。§3 (1) に「本ランチャーは `CLAUDE_CODE_PROCESS_WRAPPER` に登録するものではない」と「ランチャーの出力は stderr だけ」（PS 版の修正）を追記。§4 の `--permission-mode` 注記に docs の根拠と `-p` の拒否条件を追記。§5 の 2026-10-18 追補のうち fork mode の既定（v2.1.302〜全セッション）を更新し、`CLAUDE_CODE_AUTO_MODE_MODEL` の再評価を「採用しない」で閉じた。§6-bis の表にレール B が custom.env.template へ足したキーを追記し、分類B の managed 移設に「起動環境からしか読まれない変数は移せない」を補った。／**2026-10-27**: 作業指示者の判断（W42 の 14 件）を反映。§8-ter・§8-quater の「44 キー」に `--debug-file` を加えた 45 キーを併記し（W42-F-01）、§6-bis に `ENABLE_TOOL_SEARCH`（B）の行を追加して `ANTHROPIC_BASE_URL` の行に追記した（W42-F-02）。§8-quater の導入文をレール A〜H に改め、UNC の行を「決定・反映」にして範囲の限界を補い、レール D・E の結果、判断 14 件の結果、W42-F-02〜F-04・G-01〜G-04・H-01〜H-04 の反映を追記した。／**2026-10-27（レビュー工程）**: /code-review（I）・/security-review（J）の結果を反映。§6-bis の `ANTHROPIC_BASE_URL` の行と分類A の一覧の行に、`ANTHROPIC_CUSTOM_HEADERS` は値次第（認証情報・個人情報を載せるなら A）で、検知は名前で行うので値によらず読み飛ばされる、を書き足した（F-02 の確定に追随。I）。§8-quater の導入文にレビュー工程を加え、レビューの結果・F-02 の確定・未決の要判断 6 件（J-1〜J-5・JS-1）の行を追記した。／**2026-10-27（要判断 J-3・J-4 の反映）**: 作業指示者の判断（どちらも推奨 (b)）に従い、J-3（UNC の事前検査を `TEAM_OPTS` / `$TeamOpts` にも広げる。K-01）と J-4（check-assets 2-g の読み取りの失敗を「未検査」の WARN にする。K-02）を反映した。§8-quater の未決の行から J-3・J-4 を外して反映済みの行に移し、UNC の決定の行に J-3 で広げたことを注記した。／**2026-11-02**: §3 (4) の「公式推奨デフォルトを持つものは設定済み＆有効化」に、実装では採っていない（テンプレ 3 本とも全行コメントアウト）旨の注記を追加（設計書 §3 の整理で判明）。／**2026-11-02**: 設計書の小節番号の記法変更（§5-N → §5.N）に合わせ、本文の design §5-N の参照を §5.N に改めた（本行より前の履歴の原文は不変）。／**2026-11-03**: 設計書 §5 の校正（5.1 の新設と旧 5.1〜5.4 の繰り下げ）に合わせ、本文の design §5.N の参照を新しい番号に改めた（§3 (1)・§4・§5・§6-bis・§8-ter・§8-quater。履歴の原文は不変）。／**2026-11-03**: Claude Code の仕様変更の取り込み手順書 `docs/launcher/claude-code-intake.md` を新設し、冒頭の注記と §8 の直前に案内を、§8 の直前に追随記録の型（次の記録から見出しを通し番号にする）を置いた。§4・§5 の見出しから基準の版・日付と docs の出典（§4「docs 2026-10-18 / v2.1.302 時点」、§5「docs env-vars より」）を外し、本文の 1 行目に「基準: …」として移した（一覧の中身は不変。現行の一覧への書き直しは次の追随で行う）。追跡されない個人メモ・報告書の名指しを外した: §5 の bearer ゲートウェイトークンの注記にあった個人メモ 2 件の参照は、要点（専用 helper が無い・機微な値は OS の環境変数で供給する方針〔§6-bis の分類A〕）を本文に残して外し、§5 のフル一覧の参照（日本語版のファイル名）は docs の env-vars の URL に改め、§8-quater の未決の行の末尾にあった非追跡の報告書の節への参照は外した（要判断 4 件の内容は同じ行に書いてある）。／**2026-11-03（W44）**: Claude Code v2.1.311〜316 の追随を §8-quinquies として記録した（追随記録の型による最初の記録）。§4 を v2.1.316 の cli-reference の全 80 フラグの現行の一覧（テンプレ・付録 A の理由・備考）に書き直し、従来の一覧・注記・追補は「過去の追補（記録。原文のまま）」の下に残した。§5 の冒頭に現行の一覧の表（custom.env.template の全キー・setup-environment の固定 env の候補・v2.1.302 以降に env-vars に増えた変数）を置き、従来の段落は同じく「過去の追補（記録。原文のまま）」の下に残した。§4・§5 の「基準:」の行を v2.1.316 に改めた。§3 (1) の `CLAUDE_CODE_PROCESS_WRAPPER` の判定に 2026-11-03 の再確認を足した。
