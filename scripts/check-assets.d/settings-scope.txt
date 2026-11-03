@@ -17,7 +17,7 @@
 #   キーパスは英数字と _ の名前を . でつないだもの（a.b.c。各段の名前を大文字小文字を区別して照合する。値は見ない）。ツール名は
 #   英数字と _ だけ。u / m の行の順が、WARN に並ぶキーの順になる。
 #   u / m に載せるキーの基準: settings-reference の表で Scope が `Any file` / `Global config` 以外のキーは全量（issue #5 の I-2。
-#   2026-11-03 裁定。基準の正式な検討は別途）。Scope が `Managed` のキーは m、それ以外（`User or managed`・`User, local, or managed`・
+#   2026-11-03 裁定。基準の正式な検討は issue #6 の K-2）。Scope が `Managed` のキーは m、それ以外（`User or managed`・`User, local, or managed`・
 #   `User`）は u に置く（--settings でも無視されると docs が書くキーは m。M 節のコメント）。追随では表の Scope 列の差分だけを見る。
 #   入れ子のキーは親が載っていれば親で拾われる（check-assets の照合はキーパスの前方一致。表のキーパスを settings.json で 1 段ずつ
 #   たどれれば該当とする）ので、親が載っている入れ子のキー（autoMode.classifyAllShell・policyHelper.*・strictPluginOnlyCustomization.*）

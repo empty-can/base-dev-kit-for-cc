@@ -78,7 +78,7 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
 - **changelog にあって docs に無い・changelog と docs が食い違う**: changelog で挙動の変更が確定できるものは本文に入れ、出所を changelog の版で書く（「changelog 2.1.3xx（docs 未反映）」と明記する）。docs に反映されたら出所を docs に差し替える。値・既定・適用範囲の詳細が changelog から読めないものは docs を待ち、「docs 掲載後に再評価」として追随記録に書く（issue #5 の U-01。2026-11-03 裁定）。
 - **docs だけの変更**: changelog の仕分けでは拾えないので、3. の ③ の docs の差分で拾う。
 - **キットの記述をより正しくする方向の不具合修正**: 記述の変更は不要として、記録だけする。
-- **収録基準**（テンプレに載せるか、理由付きで外すか）: `.claude/launcher/README.md` 付録 A（起動オプション）、`settings-scope.txt` の冒頭（settings のキー）、実装計画 §6-bis（env）に書いてある基準に従う。基準は issue #5 の I-1〜I-3 で 2026-11-03 に裁定された（どれも暫定で、基準の正式な検討・見直しは別途）。新しい環境変数を custom.env.template に載せるかは I-3 の基準どおり docs の env-vars に行があるものに限り、changelog だけの変数は「docs 掲載後に再評価」とする（上の changelog の扱いは、既存の記述を直す話）。
+- **収録基準**（テンプレに載せるか、理由付きで外すか）: `.claude/launcher/README.md` 付録 A（起動オプション）、`settings-scope.txt` の冒頭（settings のキー）、実装計画 §6-bis（env）に書いてある基準に従う。基準は issue #5 の I-1〜I-3 で 2026-11-03 に裁定された（どれも暫定で、基準の正式な検討・見直しは issue #6 の K-1〜K-3）。新しい環境変数を custom.env.template に載せるかは I-3 の基準どおり docs の env-vars に行があるものに限り、changelog だけの変数は「docs 掲載後に再評価」とする（上の changelog の扱いは、既存の記述を直す話）。
 
 ## 6. 検証と期待値
 
