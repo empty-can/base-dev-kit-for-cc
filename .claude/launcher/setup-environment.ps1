@@ -237,8 +237,9 @@ $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1'   # キット動作依�
 # $env:OTEL_METRICS_EXPORTER = 'otlp'                        # 送る信号ごとに exporter を選ぶ（otlp / prometheus / console / none）
 # $env:OTEL_LOGS_EXPORTER = 'otlp'                           # events（logs）の exporter（otlp / console / none）
 # $env:OTEL_EXPORTER_OTLP_PROTOCOL = 'grpc'                  # 既定が無いので otlp には必須（grpc / http/protobuf / http/json）
-# 権限ルール・managed のルール・auto mode・hook・sandbox 等がツール呼び出しを拒否した / 確認を求めた記録は
-# claude_code.safety_event（v2.1.307 以降）として events 側に出る。events（logs）は OTEL_LOGS_EXPORTER を
+# 権限ルール・managed のルール・auto mode・hook・sandbox 等がツール呼び出しを拒否した / 確認を求めた記録の claude_code.safety_event は、
+# v2.1.307 で events 側に追加され、v2.1.312 で送られなくなった（changelog 2.1.312。docs 未反映）。ツール呼び出しの許可 / 拒否と
+# 判断の出どころ（設定・hook・利用者等）は claude_code.tool_decision として events 側に出る。events（logs）は OTEL_LOGS_EXPORTER を
 # 設定したときだけ送られる（SIEM で拒否を監視するならメトリクスだけでは足りない）。
 # ⛔ OTEL_EXPORTER_OTLP_HEADERS（Authorization=Bearer … を載せる）は分類A。ここに書かない。
 # Anthropic への運用テレメトリ / エラー報告の停止（3P プロバイダでは既定で停止済み）。

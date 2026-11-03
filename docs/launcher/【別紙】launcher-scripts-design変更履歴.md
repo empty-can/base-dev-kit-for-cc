@@ -1,5 +1,9 @@
 # 変更履歴:launcher-scripts-design
 
+**2026-11-03**: issue #5 の裁定（U-05・U-07。2026-11-03 裁定。実装計画 §8-septies）の反映  
+- 5.1.3 の「起動環境からしか読まれない変数」の段落の後に、`CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` を列挙に載せない理由の注記を 1 段落足した（U-05 (a)。作業指示者の注記「載せない判断にした理由が後々でも分かる場所に明記すること」による）。理由は、どの settings の `env` でも無視される変数だが、background セッション・分割ペインの teammate・Remote Control のサーバが作るセッションはこの変数を持たずに始まり（permission-modes「Why the critical-path removal prompt stays on」。v2.1.317 の docs で確かめた）、「OS の環境変数なら background にも届く」という段落の説明が成り立たないこと。それまで理由は 5.1 の末尾の確認時点の行（追随のたびに書き換わる）にだけ書いていた。列挙そのものは変えていない。
+- 5.4 の確認時点に、5.4.1 の型を `claude --help`（2.1.317）で確かめた結果（差分なし。`<x...>` の 7 フラグと `[x]` の 8 フラグが 5.4.1 の一覧と一致）を足した（U-07 (a)。追随で `claude --help` の実行を許す）。5.4.1 の本文は変えていない。
+
 **2026-11-03**: Claude Code v2.1.311〜316 の追随（W44。実装計画 §8-quinquies）  
 - 5.1.2 の表に「`claude-cli://` の deep link で開いたセッション」の行を background 起動（ランチャーを通らない）として足した（W44-C-02）。v2.1.316 の docs（corporate-launcher「Processes that start outside the launcher」）で、deep link で開いたセッションはランチャー無しで新しい端末に開く、と書き換わったため（v2.1.310 の docs では「最初のプロセスだけがランチャーの外」）。行の補足には、登録された `claude-cli://` のハンドラが開くこと（deep-links）も書いた。5.1.1 の原則どおりの分類で、表の網羅性を補ったもの。5.1.1〜5.1.2 の確認時点に deep link の行を足した。
 - 5.2 の確認時点を 2026-11-03・v2.1.316 の docs（corporate-launcher）に改めた（W44-C-01。`CLAUDE_CODE_PROCESS_WRAPPER` は Windows では引き続き無視される。5.2.1 の判定と 5.2.3 の契約は不変）。

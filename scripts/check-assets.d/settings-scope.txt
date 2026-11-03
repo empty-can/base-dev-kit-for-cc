@@ -16,9 +16,12 @@
 #                      照合する（大文字小文字を区別する）
 #   キーパスは英数字と _ の名前を . でつないだもの（a.b.c。各段の名前を大文字小文字を区別して照合する。値は見ない）。ツール名は
 #   英数字と _ だけ。u / m の行の順が、WARN に並ぶキーの順になる。
-#   u / m に載せるキーの基準は settings-reference の表の Scope 列（`Any file` / `Global config` 以外のキー）。全量にするかは
-#   裁定中（issue #5 の I-2）。入れ子のキーは親が載っていれば親で拾われる（check-assets の照合はキーパスの前方一致。表の
-#   キーパスを settings.json で 1 段ずつたどれれば該当とする）。
+#   u / m に載せるキーの基準: settings-reference の表で Scope が `Any file` / `Global config` 以外のキーは全量（issue #5 の I-2。
+#   2026-11-03 裁定。基準の正式な検討は別途）。Scope が `Managed` のキーは m、それ以外（`User or managed`・`User, local, or managed`・
+#   `User`）は u に置く（--settings でも無視されると docs が書くキーは m。M 節のコメント）。追随では表の Scope 列の差分だけを見る。
+#   入れ子のキーは親が載っていれば親で拾われる（check-assets の照合はキーパスの前方一致。表のキーパスを settings.json で 1 段ずつ
+#   たどれれば該当とする）ので、親が載っている入れ子のキー（autoMode.classifyAllShell・policyHelper.*・strictPluginOnlyCustomization.*）
+#   は足さない。
 #   書式の誤り（未知のタグ・列の数が 2 でない・空の値・値に使えない文字・同じタグの中での重複・format 行の欠落 / 重複 / 版の違い・
 #   format 行より前のデータ行・u / m / e / wtool のどれかの行が 1 つも無い・NUL バイト）が 1 つでもあれば、check-assets は FAIL に
 #   して settings.json のキーの検査をしない（検査器自身の表が欠けた状態を PASS にしない）。
@@ -37,8 +40,13 @@ format	1
 # U。axScreenReader は v2.1.305 から User or managed（--settings も可。それまでは Any file）。sandbox.allowNestedUserNamespaces は
 # v2.1.305 で新設（User or managed。--settings も可。true にするとサンドボックスの境界を外す）
 # permissions.blockWritesOutsideWorkingDirectories（v2.1.314 以降）は Scope が Any file なので載せない
+# 2026-11-03 に I-2 の裁定で、それまで載せていなかった User or managed / User のキー 14 個を節の末尾に足した（askUserQuestionTimeout
+# 以降。並びは docs の表〔Settings index〕の順。それより前の行は従来の並びのまま）。worktree.location は Scope が User だけ（リモートの
+# マシンの ~/.claude/settings.json。Desktop の SSH セッション）。forceLoginGatewayUrl は docs が読む場所を「マシンの managed のソース、
+# それが無ければ user settings」と書き、--settings に触れていないので u に置く。autoContinueAtUsageLimit・bashEditDiffEnabled は
+# project / local の値も機能を止める向き（false 等）には効く（docs）。
 # 確認時点: 2026-11-03、docs v2.1.317 時点（表の Scope 列は v2.1.316 から permissions.blockWritesOutsideWorkingDirectories〔Any file〕の
-# 行が増えただけ。useAutoModeDuringPlan の Scope は User, local, or managed のまま）
+# 行が増えただけ。useAutoModeDuringPlan の Scope は User, local, or managed のまま。I-2 の裁定の反映で表の Scope 列の全キーと突き合わせた）
 u	skipDangerousModePermissionPrompt
 u	useAutoModeDuringPlan
 u	autoMode
@@ -57,9 +65,26 @@ u	sandbox.network.tlsTerminate
 u	sandbox.credentials.allowPlaintextInject
 u	sandbox.credentials.awsPairs
 u	sandbox.credentials.sigv4
+u	askUserQuestionTimeout
+u	autoContinueAtUsageLimit
+u	bashEditDiffEnabled
+u	desktopSessionCleanupPeriodDays
+u	dialogExpiry
+u	feedbackDrafts
+u	footerLinksRegexes
+u	forceLoginGatewayUrl
+u	modelPicker
+u	spellcheck
+u	sshConfigs
+u	sshHostCommands
+u	vimInsertModeRemaps
+u	worktree.location
 
 # M。prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く
-# 確認時点: 2026-11-03、docs v2.1.317 時点（表の Scope 列の差分は Any file のキーの追加だけ。U の節のコメント）
+# 2026-11-03 に I-2 の裁定で、それまで載せていなかった Managed のキー 14 個を節の末尾に足した（allowAllClaudeAiMcps 以降。並びは
+# docs の表〔Settings index〕の順。それより前の行は従来の並びのまま）。
+# 確認時点: 2026-11-03、docs v2.1.317 時点（表の Scope 列の差分は Any file のキーの追加だけ。U の節のコメント。I-2 の裁定の反映で
+# 表の Scope 列の全キーと突き合わせた）
 m	prependPlugins
 m	appendPlugins
 m	allowManagedPermissionRulesOnly
@@ -87,6 +112,20 @@ m	sandbox.bwrapPath
 m	sandbox.socatPath
 m	sandbox.filesystem.allowManagedReadPathsOnly
 m	sandbox.network.allowManagedDomainsOnly
+m	allowAllClaudeAiMcps
+m	allowClaudeInChromeWithManagedMcp
+m	browserExternalPageTools
+m	disableBrowserExternalNavigation
+m	disableDesktopLocalSessions
+m	disableMobileSimulatorTools
+m	forceRemoteSettingsRefresh
+m	gatewayInternalNetworks
+m	managedSourcesBehavior
+m	modelPricing
+m	parentSettingsBehavior
+m	pluginSuggestionMarketplaces
+m	pluginTrustMessage
+m	wslInheritsWindowsSettings
 
 # E。どの settings ファイルからも読まれず起動環境からしか読まれない変数（CLAUDE_CODE_RESTRICTED 等。settings-reference
 # 「Variables Claude Code ignores in `env`」の各項目）も含める。

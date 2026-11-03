@@ -196,6 +196,8 @@ background 起動のうち supervisor 配下のセッション（`/bg`・`←`�
 
 **起動環境からしか読まれない変数**もある（公式: [settings-reference「Variables Claude Code ignores in `env`」](https://code.claude.com/docs/en/settings-reference#variables-claude-code-ignores-in-env)）。`CLAUDE_CODE_RESTRICTED`・`CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY`・`CLAUDE_CODE_DISABLE_{DANGEROUS_RM_TIMEOUT,SUBSTITUTION_RM_PROMPT,INLINE_SHELL_RM_PROMPT,MOUNTED_DRIVE_RM_PROMPT}`・`CLAUDE_CODE_WARN_{DISK,MEMORY}_FREE_GIB`（v2.1.304〜）などは、managed を含む**どの settings ファイルの `env` でも無視される**。これらは custom.env / setup-environment（foreground のみ）か OS の環境変数（background を含む）でしか効かず、将来 managed settings の `env` へ移す対象にもならない。`CLAUDE_AX_SCREEN_READER` と `CLAUDE_AX_*` は project / local の settings でだけ無視される（v2.1.305〜。user / managed / `--settings` では効く）。
 
+`CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` は project / local / user / managed のどの settings の `env` でも無視される変数だが、background セッション・分割ペインの teammate・Remote Control のサーバが作るセッションはこの変数を持たずに始まる（[permission-modes「Why the critical-path removal prompt stays on」](https://code.claude.com/docs/en/permission-modes#why-the-critical-path-removal-prompt-stays-on)）ので、上の列挙には載せない（OS の環境変数なら background にも届く、という上の説明が成り立たない。issue #5 の U-05。2026-11-03 裁定）。
+
 確認時点: 5.1.3 の経路の表と起動環境からしか読まれない変数は、2026-11-03 に v2.1.317 の docs で確かめた（agent-view「Settings and provider」と network-config「Apply network settings to background agents」は v2.1.310 から差分なし。settings-reference「Variables Claude Code ignores in `env`」には、v2.1.311 以降の docs で `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` が加わったが、background セッションはこの変数を持たずに始まる〔permission-modes〕ので、上の列挙には載せていない。v2.1.317 の docs で加わった claude.ai のサインインの変数〔`CLAUDE_CODE_OAUTH_TOKEN`・`CLAUDE_CODE_OAUTH_REFRESH_TOKEN`・`CLAUDE_CODE_OAUTH_SCOPES`〕は project / local の settings でだけ無視され〔user / managed では効く〕、起動環境からしか読まれない変数ではないので、これも載せていない。supervisor を最初に起動したシェルの env の継承は 2026-10-20 の実測）。
 
 ### 5.2 企業ランチャー（`CLAUDE_CODE_PROCESS_WRAPPER`）との関係
@@ -290,7 +292,7 @@ background service と agent view の全セッションを起動装置に通す�
 
 `--bg` / `--background` は裸の `--` より前でだけフラグとして読まれ、`--` の後ろでは文字列になる（v2.1.299〜。[agent view](https://code.claude.com/docs/en/agent-view) の「Prompts that contain `--bg`」）。ランチャーが `--` を補うのは起動時引数に `-` で始まるものが 1 つも無いときだけなので、`start_claude_code --bg "<prompt>"` の `--bg` は従来どおりフラグとして届く。
 
-確認時点: 5.4.1〜5.4.4 の事実は 2026-10-19 に v2.1.302 で実測した（条件は 5.4.2）。5.4.1 の型（`<x...>`・`[x]`）は `claude --help`（2.1.302）の表記で、cli-reference には型の表記が無いため docs では確かめられない（2026-11-03 には、v2.1.317 の cli-reference の CLI flags の表でフラグの追加・削除が無いこと〔80 のまま。変わったのは 5.4.1 の一覧に無い `--input-format` の例と `--max-turns` の説明だけ〕を確かめた）。5.4.5 は 2026-11-03 に v2.1.317 の docs（agent-view「Prompts that contain `--bg`」）で確かめた（差分なし）。
+確認時点: 5.4.1〜5.4.4 の事実は 2026-10-19 に v2.1.302 で実測した（条件は 5.4.2）。5.4.1 の型（`<x...>`・`[x]`）は `claude --help`（2.1.302）の表記で、cli-reference には型の表記が無いため docs では確かめられない（2026-11-03 には、v2.1.317 の cli-reference の CLI flags の表でフラグの追加・削除が無いこと〔80 のまま。変わったのは 5.4.1 の一覧に無い `--input-format` の例と `--max-turns` の説明だけ〕を確かめた）。5.4.1 の型は 2026-11-03 に `claude --help`（2.1.317）で確かめた（差分なし。`<x...>` は 5.4.1 の 7 フラグ、`[x]` は 8 フラグで、一覧と一致。追随での `claude --help` の実行は issue #5 の U-07 で許可）。5.4.5 は 2026-11-03 に v2.1.317 の docs（agent-view「Prompts that contain `--bg`」）で確かめた（差分なし）。
 
 ### 5.5 ランチャーの出力と起動前の検出
 

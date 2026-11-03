@@ -82,6 +82,7 @@ API キー・認証トークン・パスワード・組織外秘の URL など�
 
 - 現行モデル（Opus 4.7 以降 / Sonnet 5 以降 / Haiku 5.5 / Fable 系）は adaptive reasoning 専用で、思考の量は effort で決まる。
 - `CLAUDE_CODE_EFFORT_LEVEL` を設定すると、`--effort` やセッション内の `/effort` より優先され、起動中に変えられなくなる。都度変えたいなら設定せず `/effort` を使う。max を毎回効かせたい場合は、この環境変数が唯一の手段。
+- 主会話と別のモデルで動くサブエージェントとチームメイトは、セッションの effort ではなく、そのモデルについて保存された effort か、そのモデルの既定で動く（v2.1.317 以降。出所は changelog 2.1.317 で、docs には未反映〔agent-teams はチームメイトが lead の effort を継ぐと書いたまま〕）。
 - `MAX_THINKING_TOKENS` は旧方式の固定思考予算。上記の現行モデルでは正の値は無視される。効くのは Opus 4.6 / Sonnet 4.6 で、adaptive reasoning を止める `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` を 1 にして併用した場合だけ。
 
 #### 自動圧縮ウィンドウ（--autocompact・CLAUDE_CODE_AUTO_COMPACT_WINDOW）
@@ -200,7 +201,11 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 
 ## 付録 A. 収録範囲と、意図的に載せていないオプション
 
-テンプレートは、対話起動で使う Claude Code の起動オプションをほぼ全量載せ、公式の既定値を記している（公式 docs v2.1.317 時点）。この版は、テンプレート 3 本（option-settings の sh / ps1 と custom.env）と付録 B の記述の基準の版でもある。載せていないオプションには、print / stream 専用のもの（print 専用の一部はテンプレートの print 節に載せてある）、端末セッションを始めない・別のモードで動くもの、非推奨・削除済みのもの、キットの前提が黙って崩れるもの（ランチャーが起動前に検出する。理由付きで下の表に載せる）がある。次のものは意図的に載せていない。
+テンプレートは、対話起動で使う Claude Code の起動オプションを載せ、公式の既定値を記している（公式 docs v2.1.317 時点）。この版は、テンプレート 3 本（option-settings の sh / ps1 と custom.env）と付録 B の記述の基準の版でもある。
+
+収録の基準: 対話起動で使えるオプションは、テンプレートに載せるか、下の表に載せない理由を書く。次の種類はテンプレートにも表にも載せず、個別にも挙げない ―― print / stream 専用のもの（print 専用の一部はテンプレートの print 節に載せてある）、端末セッションを始めない・別のモードで動くもの（表の `--desktop` / `--environment` / `--ref` は、この基準より前から理由付きで載せてあるもの）、非推奨・削除済みのもの。
+
+次のものは意図的に載せていない（キットの前提が黙って崩れるものは、ランチャーが起動前に検出する。この付録の末尾の段落）。
 
 | オプション | 載せない理由 |
 |---|---|
@@ -209,6 +214,11 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 | `--restricted` | user・project・local の settings を読まずに起動する（キットの permissions.deny も hooks も効かない）。キットの前提が崩れる |
 | `--bare` / `--safe-mode` | settings は読むが hooks・CLAUDE.md・skills を読まない（.bat 保護の hook が効かない）。キットの前提が崩れる |
 | `--desktop` / `--environment` / `--ref` | 端末セッションを始めずに Desktop を開く、またはクラウドセッションを作って終了する。他の起動オプションと併用できない（ランチャーの用途外） |
+| `--ax-screen-reader` | 画面読み上げ向けの出力にする、個人の支援技術の設定。使う利用者が起動時引数で付ける |
+| `--channels` / `--dangerously-load-development-channels` | チャネル（research preview）は MCP サーバの通知をセッションに届ける機能で、MCP の扱いと同じくキットの MCP ポリシーの範囲。後者は許可リストに無いチャネルを開発用に読み込む |
+| `--chrome` / `--no-chrome` | Claude in Chrome を使うかはセッションごとの選択。使う回だけ起動時引数で付ける |
+| `--exclude-dynamic-system-prompt-sections` | 利用者ごとの文脈（auto memory の場所等）をシステムプロンプトから最初のユーザーメッセージへ移す。複数の利用者・マシンでプロンプトキャッシュを使い回すスクリプト実行（`-p`）向け |
+| `--remote-control` / `--remote-control-session-name-prefix` | Remote Control は、サブコマンド（`claude remote-control`。ランチャー経由だと組み立てたオプションが verb の前に付き、起動を拒否される ―― リポジトリのルートにある `start_claude_code.{sh,ps1}` の冒頭の注記）と同じく `claude` を直接使う |
 | `--post` / `--no-post` / `--trust-workspace`（`claude ultrareview`）、`--discard-unpushed` / `--force-remove-worktree`（`claude rm`） | サブコマンド専用のオプション |
 
 全オプションの説明は公式 docs の CLI reference（https://code.claude.com/docs/en/cli-reference）を参照。
@@ -217,9 +227,11 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 
 ## 付録 B. option-settings の項目ごとの補足
 
+各項目は option-settings のキーの補足で、settings（settings.json のキー）には、キットの資産（settings・rules・hooks）が読まれなくなるものだけ触れる。
+
 ### --model の既定とエイリアス
 
-- 起動時の対話選択は無い。`--model` を指定しないときは、次の順に最初に見つかったものが使われる: 環境変数 `ANTHROPIC_MODEL` → settings の `model`（`/model` の保存先）→ 組織の既定モデル → 環境変数 `ANTHROPIC_DEFAULT_MODEL` → アカウント種別の既定（Pro / Max / Ultra / Team / Enterprise / API・Bedrock・Agent Platform は Opus 5.5、Foundry は Sonnet 4.5）。
+- 起動時の対話選択は無い。`--model` を指定しないときは、次の順に最初に見つかったものが使われる: 環境変数 `ANTHROPIC_MODEL` → settings の `model`（`/model` の保存先）→ 組織の既定モデル → 環境変数 `ANTHROPIC_DEFAULT_MODEL` → アカウント種別の既定（Pro / Max / Ultra / Team / Enterprise / API・Claude Platform on AWS・Bedrock・Agent Platform は Opus 5.5、Foundry は Sonnet 4.5）。
 - エイリアス（`opus` / `sonnet` / `haiku` 等）の指す先は版とプロバイダで変わる（Bedrock 等では `sonnet` / `haiku` が旧版）。版を固定するならフルモデル名を書く。
 
 ### --add-dir とネットワークパス
@@ -256,6 +268,7 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 - 既存の worktree 名を指定すると開き直す。既定では、未コミットの変更が無く作成時のブランチのままで、独自のコミットが無い（または PR がマージ済みで remote ブランチが消えている）ときは、既定ブランチの最新から開き直す。
 - 終了時、変更も新しいコミットも無い worktree は、名前（`--name` / `/rename`）を付けていないセッションなら確認なしでブランチごと削除される。作業が残っている・別ブランチに切り替えてあるときは確認が出る。
 - v2.1.304 未満は、別ブランチや detached HEAD のときも確認なしで消し、コミットを失うことがあった。
+- settings の `worktree.sparsePaths`（worktree に checkout するディレクトリを絞る）を使うなら、列挙に `.claude` を含める。ルート直下のディレクトリは列挙しないと checkout されないので、含めないとその worktree ではキットの settings・rules が読まれない。
 
 ### エージェントチーム（--teammate-mode）
 
@@ -279,3 +292,11 @@ option-settings は bash 版が連想配列、PowerShell 版が順序付きハ�
 - Windows PowerShell 5.1 は、ネイティブ exe（claude.exe）へ渡す引数の中の `"` をすべて落とす（実測）。`--agents` のインライン JSON は `{reviewer:{description:Reviews code,...}}` のように壊れるため、5.1 では使えない。pwsh 7 で起動する（7.3 以降は `"` が保たれる）。
 - 5.1 で値の `"` を `\"` にエスケープしても、値に空白があると引数が空白で分割されて直らない。
 - `option-settings.ps1` は UTF-8（BOM 付き）・CRLF のまま保存する。BOM が無いと 5.1 が日本語を読み違える。
+
+## 付録 D. custom.env に載せていない環境変数
+
+custom.env のテンプレートに載せていない環境変数のうち、載せない理由を書いておくものを挙げる。
+
+| 環境変数 | 載せない理由 |
+|---|---|
+| `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` | bypassPermissions で、重要なパスを対象にする `rm` / `rmdir` の確認を外す。名前に DANGEROUSLY を含む、破壊的な確認を外す変数はテンプレートに載せない（option-settings で `--dangerously-skip-permissions` を「非推奨・破壊的」節に隔離しているのと同じ考え）。加えて、キットの settings を読み込んだセッションでは効かず（Read / Edit を対象にする deny ルールがあるため）、background セッション・分割ペインのチームメイト・Remote Control のサーバが作るセッションにはこの変数が届かない（base-dev-kit の launcher 設計 §5.1.3） |

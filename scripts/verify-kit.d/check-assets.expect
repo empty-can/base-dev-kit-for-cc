@@ -10,7 +10,11 @@
 #                          CLAUDE_AX_…（前方一致）/ 起動環境専用の CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT・
 #                          CLAUDE_CODE_WARN_DISK_FREE_GIB）と、大文字小文字だけが違うもの（systemroot。正本の表記は SystemRoot）と、
 #                          一致してはならないもの（CLAUDE_AXE_…。CLAUDE_AX_ の前方一致に掛からない）を混ぜる。U には v2.1.305 で
-#                          User or managed になった axScreenReader と新設の sandbox.allowNestedUserNamespaces を含める
+#                          User or managed になった axScreenReader と新設の sandbox.allowNestedUserNamespaces を含める。
+#                          issue #5 の I-2（2026-11-03 裁定。Scope が Any file / Global config 以外のキーは全量）で表の節の末尾に
+#                          足したキーから、U に askUserQuestionTimeout（User or managed）と worktree.location（Scope が User だけ・
+#                          入れ子）、M に wslInheritsWindowsSettings（Managed）を含める（WARN の並びは表の行の順なので、足したキーは
+#                          各一覧の末尾に出る）
 #   bom      … settings-clean.json の先頭に UTF-8 BOM を付けたもの
 #   worktree … settings-clean.json ＋ .claude/worktrees/wt/.claude/evals/results/（worktree 内の eval 結果。数えない）
 #   以下は名前の二段階照合（完全一致 → 従来の判定／大文字小文字だけが違う → 成果物は payload で FAIL・git で WARN、env キーは WARN）。
@@ -69,8 +73,8 @@
 #              どちらも辿らず、…/results のディレクトリとしても数えない（bash の find -P と同じ）
 # ⚠ 重複キー（完全一致、または systemroot と SystemRoot のような大文字小文字だけの違い）を 1 つのオブジェクトに並べるのは
 #    dupkey だけにする。両版とも重複キーの FAIL で止まり、U/M/E の検査に進まない。
-ume	0	WARN	無視されるキー: defaultMode:bypassPermissions autoMode skipAutoPermissionPrompt axScreenReader sandbox.allowNestedUserNamespaces sandbox.filesystem.disabled（
-ume	0	WARN	prependPlugins strictKnownMarketplaces sandbox.network.allowManagedDomainsOnly
+ume	0	WARN	無視されるキー: defaultMode:bypassPermissions autoMode skipAutoPermissionPrompt axScreenReader sandbox.allowNestedUserNamespaces sandbox.filesystem.disabled askUserQuestionTimeout worktree.location（
+ume	0	WARN	prependPlugins strictKnownMarketplaces sandbox.network.allowManagedDomainsOnly wslInheritsWindowsSettings（
 ume	0	WARN	env で project / local からは設定できない変数: CLAUDE_CONFIG_DIR OTEL_EXPORTER_OTLP_METRICS_HEADERS ComSpec CLAUDE_AX_SCREEN_READER CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT CLAUDE_CODE_WARN_DISK_FREE_GIB（シェル（OS の環境変数）か、組織で固定するなら managed settings で設定する
 ume	0	WARN	大文字小文字だけが違う変数: systemroot（Windows でのみ同一視される
 ume	0	PASS	settings.json は valid JSON

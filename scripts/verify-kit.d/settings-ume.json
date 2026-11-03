@@ -6,6 +6,9 @@
   "sandbox": { "allowNestedUserNamespaces": true, "filesystem": { "disabled": true }, "network": { "allowManagedDomainsOnly": true } },
   "strictKnownMarketplaces": [],
   "prependPlugins": [],
+  "askUserQuestionTimeout": "5m",
+  "worktree": { "location": "~/verify-kit-worktrees" },
+  "wslInheritsWindowsSettings": true,
   "env": {
     "CLAUDE_CONFIG_DIR": "verify-kit-dummy",
     "OTEL_EXPORTER_OTLP_METRICS_HEADERS": "dummy-not-a-secret",
