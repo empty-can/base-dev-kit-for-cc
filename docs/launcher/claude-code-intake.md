@@ -78,7 +78,7 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
 - **changelog と docs が食い違う**: 本文は docs に従い、食い違いを要確認として追随記録に書く（要実測にするかは作業指示者の判断）。
 - **docs だけの変更**: changelog の仕分けでは拾えないので、3. の ③ の docs の差分で拾う。
 - **キットの記述をより正しくする方向の不具合修正**: 記述の変更は不要として、記録だけする。
-- **収録基準**（テンプレに載せるか、理由付きで外すか）: `.claude/launcher/README.md` 付録 A（起動オプション）、`settings-scope.txt` の冒頭（settings のキー）、実装計画 §6-bis（env）に書いてある基準に従う。基準が未確定の部分は issue #4 の I-1〜I-3（2026-11-03 起票）で裁定中。
+- **収録基準**（テンプレに載せるか、理由付きで外すか）: `.claude/launcher/README.md` 付録 A（起動オプション）、`settings-scope.txt` の冒頭（settings のキー）、実装計画 §6-bis（env）に書いてある基準に従う。基準が未確定の部分は issue #5 の I-1〜I-3（2026-11-03 起票。取り込みの裁定事項は issue #5 に集約）で裁定中。
 
 ## 6. 検証と期待値
 
@@ -119,7 +119,7 @@ Claude Code の新しい版で changelog と公式 docs に入った変更を、
 | 設計書 §5.1.3 | agent-view「[Settings and provider](https://code.claude.com/docs/en/agent-view#settings-and-provider)」、[network-config](https://code.claude.com/docs/en/network-config)「Apply network settings to background agents」、settings-reference「Variables Claude Code ignores in `env`」、[permission-modes](https://code.claude.com/docs/en/permission-modes)「Why the critical-path removal prompt stays on」（background セッションが持たずに始まる変数。列挙に載せるかの判断） | background, supervisor, env | 5.1 の末尾 |
 | 設計書 §5.2 | [corporate-launcher](https://code.claude.com/docs/en/corporate-launcher)（「What the launcher covers」「The launcher contract」） | CLAUDE_CODE_PROCESS_WRAPPER, launcher | 5.2 の末尾 |
 | 設計書 §5.3 | agent-view「Settings, plugins, and MCP servers」（`agents` の前に置けないフラグ）、errors「`<flag>` before `remote-control` is not carried over to the sessions Remote Control starts」、[remote-control](https://code.claude.com/docs/en/remote-control)、cli-reference（サブコマンド） | remote-control, agents | 5.3 の末尾 |
-| 設計書 §5.4 | `claude --help` の型の表記（`<x...>`・`[x]`。cli-reference の表には型の表記が無く、`--file` は行も無い。確かめた版を書く。追随で `claude --help` を実行してよいかは issue #4 の U-07）、agent-view「Prompts that contain `--bg`」 | `--`, positional, `--bg` | 5.4 の末尾 |
+| 設計書 §5.4 | `claude --help` の型の表記（`<x...>`・`[x]`。cli-reference の表には型の表記が無く、`--file` は行も無い。確かめた版を書く。追随で `claude --help` を実行してよいかは issue #5 の U-07）、agent-view「Prompts that contain `--bg`」 | `--`, positional, `--bg` | 5.4 の末尾 |
 | 設計書 §5.5 | [errors](https://code.claude.com/docs/en/errors)「[Configuration warnings](https://code.claude.com/docs/en/errors#configuration-warnings)」「[Working directory is a network path](https://code.claude.com/docs/en/errors#working-directory-is-a-network-path)」 | warning, network path, `--add-dir`, debug log | 5.5 の末尾 |
 | README 付録 B の各項目 | 項目ごと: `--model` → model-config／`--add-dir` → errors「Working directory is a network path」、[skills](https://code.claude.com/docs/en/skills)「Load skills from a directory outside the project」／`--setting-sources` → cli-reference「CLI flags」の行、skills「Load skills from a directory outside the project」、agent-view「What carries over when you background」／`--permission-mode` → permission-modes／`--tools` → [tools-reference](https://code.claude.com/docs/en/tools-reference)／`--worktree` → [worktrees](https://code.claude.com/docs/en/worktrees)／`--teammate-mode` → agent-teams／`--debug-file` → errors「Configuration warnings」 | 同左（項目のフラグ名） | README 付録 A の版の行 |
 | `start_claude_code.ps1` の冒頭コメント | corporate-launcher「[The launcher contract](https://code.claude.com/docs/en/corporate-launcher#the-launcher-contract)」、agent-view「Settings and provider」 | launcher, background | コメント内の版・実測の札（「v2.1.302 で実測」等） |
