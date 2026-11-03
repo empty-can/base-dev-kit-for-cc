@@ -36,7 +36,9 @@ format	1
 
 # U。axScreenReader は v2.1.305 から User or managed（--settings も可。それまでは Any file）。sandbox.allowNestedUserNamespaces は
 # v2.1.305 で新設（User or managed。--settings も可。true にするとサンドボックスの境界を外す）
-# 確認時点: 2026-11-03、docs v2.1.316 時点（表の Scope 列は v2.1.310 から差分なし）
+# permissions.blockWritesOutsideWorkingDirectories（v2.1.314 以降）は Scope が Any file なので載せない
+# 確認時点: 2026-11-03、docs v2.1.317 時点（表の Scope 列は v2.1.316 から permissions.blockWritesOutsideWorkingDirectories〔Any file〕の
+# 行が増えただけ。useAutoModeDuringPlan の Scope は User, local, or managed のまま）
 u	skipDangerousModePermissionPrompt
 u	useAutoModeDuringPlan
 u	autoMode
@@ -57,7 +59,7 @@ u	sandbox.credentials.awsPairs
 u	sandbox.credentials.sigv4
 
 # M。prependPlugins / appendPlugins は Scope 表記こそ User or managed だが --settings でも無視されるので M に置く
-# 確認時点: 2026-11-03、docs v2.1.316 時点（表の Scope 列は v2.1.310 から差分なし）
+# 確認時点: 2026-11-03、docs v2.1.317 時点（表の Scope 列の差分は Any file のキーの追加だけ。U の節のコメント）
 m	prependPlugins
 m	appendPlugins
 m	allowManagedPermissionRulesOnly
@@ -94,9 +96,12 @@ m	sandbox.network.allowManagedDomainsOnly
 # どの settings ファイルからも読まれない（起動環境だけ。MOUNTED_DRIVE_RM_PROMPT と WARN_* は v2.1.304 以降の docs で追加）。
 # CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS（v2.1.311 以降。bypassPermissions で critical-path の rm の確認を外す）も
 # どの settings ファイルからも読まれない（起動環境だけ。v2.1.311 以降の docs で追加）。
+# CLAUDE_CODE_OAUTH_(TOKEN|REFRESH_TOKEN|SCOPES)（claude.ai のサインインを設定する変数）は project / local の settings でだけ
+# 無視される（user / managed では効くので、起動環境からしか読まれない変数ではない。v2.1.317 の docs で追加。changelog に対応する
+# 項目は無く、版の要件も書かれていない）。
 # ホスティング環境・Claude Code 自身が設定する変数（CLAUDE_CODE_REMOTE / CLAUDE_CODE_ACCOUNT_UUID / CLAUDE_CODE_MESSAGING_* 等）は、
 # 利用者が settings に書く動機が無いので含めない。
-# 確認時点: 2026-11-03、docs v2.1.316 時点
+# 確認時点: 2026-11-03、docs v2.1.317 時点
 e	CLAUDE_CONFIG_DIR
 e	CLAUDE_CODE_TMPDIR
 e	HOME
@@ -126,6 +131,7 @@ e	BETA_TRACING_ENDPOINT
 e	CLAUDE_CODE_PROCESS_WRAPPER
 e	CLAUDE_CODE_SYNC_(SKILLS|PLUGINS)
 e	CLAUDE_CODE_PLUGIN_(CACHE|SEED)_DIR
+e	CLAUDE_CODE_OAUTH_(TOKEN|REFRESH_TOKEN|SCOPES)
 e	CLAUDE_AX_.*
 e	CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS
 e	CLAUDE_AFK_(TIMEOUT|COUNTDOWN)_MS
@@ -140,7 +146,7 @@ e	CLAUDE_CODE_WARN_(DISK|MEMORY)_FREE_GIB
 # W。ファイルの権限は Edit(path) / Read(path) ルールだけで照合され、パス付きの Write / NotebookEdit / MultiEdit / Glob はどこに置いても
 # 効かない（permissions「`Write(path)`, `NotebookEdit(path)`, and `Glob(path)` rules never match」）。ツール名だけのルールはツール単位で
 # 効くので対象外（コードの「( ) の中が 1 文字以上」で外れる）
-# 確認時点: 2026-11-03、docs v2.1.316 時点（この節は v2.1.310 から差分なし）
+# 確認時点: 2026-11-03、docs v2.1.317 時点（この節は v2.1.310 から差分なし）
 wtool	Write
 wtool	NotebookEdit
 wtool	MultiEdit

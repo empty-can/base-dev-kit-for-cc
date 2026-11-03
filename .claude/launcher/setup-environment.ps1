@@ -244,7 +244,8 @@ $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1'   # キット動作依�
 # Anthropic への運用テレメトリ / エラー報告の停止（3P プロバイダでは既定で停止済み）。
 # ⚠ どちらも「空でない値なら何でも停止」で、0 や false でも停止する。戻すには行ごと消す。
 # ⚠ DISABLE_TELEMETRY は feature-flag 取得も止めるため、1P（Anthropic API）でも Advisor・
-#    アイドル時コンパクション・claude.ai のスキル同期・Windows での PowerShell ツール既定有効化 等が使えなくなる。
+#    claude.ai のスキル同期・Windows での PowerShell ツール既定有効化 等が使えなくなる（v2.1.314 未満では
+#    アイドル時コンパクションも止まる）。
 #    Advisor をレビュー工程に組み込んでいるチームは有効化しないこと。
 # $env:DISABLE_TELEMETRY = '1'
 # $env:DISABLE_ERROR_REPORTING = '1'
